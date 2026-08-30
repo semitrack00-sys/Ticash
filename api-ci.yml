@@ -1,0 +1,22 @@
+name: API CI
+on:
+  push:
+    paths: ['apps/api/**', '.github/workflows/api-ci.yml']
+  pull_request:
+    paths: ['apps/api/**']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm --workspace apps/api run prisma:generate
+      - run: npm --workspace apps/api run lint
+      - run: npm --workspace apps/api run test
+        env:
+          DATABASE_URL: postgresql://x:x@localhost:5432/x
+          JWT_SECRET: ci-secret-ci-secret-ci-secret-1234

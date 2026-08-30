@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "TiCash",
+    "slug": "ticash",
+    "scheme": "ticash",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.ticash.app" },
+    "android": { "package": "com.ticash.app" },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}

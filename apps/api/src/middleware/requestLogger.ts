@@ -1,0 +1,1 @@
+import pino from 'pino';\nimport pinoHttp from 'pino-http';\n\nconst logger = pino({\n  level: process.env.LOG_LEVEL || 'info',\n});\n\nexport const requestLogger = pinoHttp({\n  logger,\n});\n

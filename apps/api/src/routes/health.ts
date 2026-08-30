@@ -1,0 +1,1 @@
+import { Router, Request, Response } from 'express';\n\nexport const healthRouter = Router();\n\nhealthRouter.get('/', (req: Request, res: Response) => {\n  res.json({\n    status: 'healthy',\n    timestamp: new Date().toISOString(),\n    version: '0.1.0',\n  });\n});\n

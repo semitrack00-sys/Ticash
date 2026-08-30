@@ -1,0 +1,1 @@
+import rateLimit from 'express-rate-limit';\nimport { config } from '../config/index.js';\n\nexport const rateLimiter = rateLimit({\n  windowMs: config.rateLimit.windowMs,\n  max: config.rateLimit.max,\n  message: 'Too many requests, please try again later',\n  standardHeaders: true,\n  legacyHeaders: false,\n});\n

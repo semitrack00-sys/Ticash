@@ -1,49 +1,66 @@
 # TiCash
 
-TiCash is a Haiti-focused money-transfer MVP for routing payouts to MonCash and NatCash wallets.
+TiCash is a mobile-first remittance platform designed to fund transfers and pay recipients in Haiti through approved payout rails such as Digicel MonCash and Natcom NatCash.
 
 ## Safety status
 
-This repository ships in **MOCK provider mode**. It cannot send real money until approved provider credentials and production endpoint mappings are supplied. Never place provider secrets in the mobile app.
+This repository is **not production-money enabled**. MonCash, NatCash, Stripe and PayPal credentials are intentionally blank. `PAYMENTS_MODE` and `PAYOUTS_MODE` default to `mock`. Do not enable real transfers until provider contracts, production credentials, webhook specifications, KYC/AML controls and operational reconciliation are approved.
 
 ## Architecture
 
-- `apps/mobile`: Expo / React Native customer application
-- `apps/api`: Fastify + TypeScript backend
-- `apps/api/prisma`: PostgreSQL data model
-- `docs`: architecture, provider onboarding, security, and launch checklist
+- `apps/web` - Expo/React Native customer client with web support
+- `apps/api` - Express + TypeScript REST API
+- `packages/shared` - shared domain/API types
+- `prisma` - PostgreSQL schema
+- `.github/workflows` - CI validation
 
-## Core flow
+Flow: client -> TiCash API -> risk/KYC/ledger -> funding adapter -> payout adapter -> recipient.
 
-1. Sign in with phone + OTP.
-2. Create a transfer quote.
-3. Confirm the recipient, provider, amount, and fee.
-4. Submit with an idempotency key.
-5. Backend routes the transfer through a provider adapter.
-6. Provider callbacks or status checks finalize the transfer.
-7. Transaction history and receipts are read from TiCash's ledger.
+## Local setup
 
-## Quick start
+1. Install Node.js 20+ and Docker.
+2. Copy `.env.example` to `.env` and replace development secrets locally.
+3. Run `npm install`.
+4. Run `npm run prisma:generate`.
+5. Run `docker compose up postgres -d`.
+6. Run `npm run dev:api`.
+7. Run `npm run dev:web` in another terminal.
 
-Requirements: Node.js 20+, npm, PostgreSQL 15+.
+Health check: `GET /api/v1/health`.
 
-```bash
-cp apps/api/.env.example apps/api/.env
-npm install
-npm --workspace apps/api run prisma:generate
-npm --workspace apps/api run prisma:migrate
-npm run dev:api
-```
+## Validation commands
 
-In another terminal:
+- `npm run prisma:validate`
+- `npm run typecheck`
+- `npm run lint`
+- `npm test`
+- `npm run build`
 
-```bash
-cp apps/mobile/.env.example apps/mobile/.env
-npm run dev:mobile
-```
+## Environment variables
 
-API defaults to `http://localhost:4000`. Android emulators normally need `EXPO_PUBLIC_API_URL=http://10.0.2.2:4000`.
+Never commit `.env`. `.env.example` contains placeholders for database, JWT/encryption, Stripe, PayPal, MonCash, NatCash, email, SMS and Sentry configuration.
+
+## Database migrations
+
+During development use Prisma migrations after reviewing the generated SQL. Never run destructive schema changes against production without a backup and migration plan.
+
+## Security baseline
+
+- Security headers via Helmet
+- Global API rate limiting
+- Strict JSON body size
+- Zod input validation utilities
+- Secrets from environment variables only
+- Server-side idempotency model
+- Audit log model
+- No provider secrets in the client
+
+CSRF protection should be enabled for cookie-authenticated state-changing endpoints. If bearer tokens are used, keep them out of browser-accessible persistent storage and use a documented threat model.
+
+## Provider behavior
+
+MonCash and NatCash must remain behind adapters. Do not invent undocumented production endpoints, signing algorithms or callback behavior. Use mock/sandbox adapters until official provider documentation and credentials are available.
 
 ## Production blockers
 
-Before real-money launch you still need provider/business approval, production credentials, KYC/AML policy, sanctions screening where applicable, transfer limits, reconciliation, dispute/refund procedures, security review, monitoring, and legal/compliance sign-off for the markets where TiCash operates.
+Before handling real money: complete KYC/AML, fraud controls, regulatory/legal review, provider onboarding, payout reconciliation, encrypted secret management, incident response, monitoring, backups, disaster recovery, penetration testing and production webhook verification.

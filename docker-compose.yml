@@ -1,13 +1,1 @@
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ticash
-      POSTGRES_PASSWORD: ticash
-      POSTGRES_DB: ticash
-    ports:
-      - "5432:5432"
-    volumes:
-      - ticash_pg:/var/lib/postgresql/data
-volumes:
-  ticash_pg:
+version: '3.9'\n\nservices:\n  postgres:\n    image: postgres:16-alpine\n    container_name: ticash-postgres\n    environment:\n      POSTGRES_USER: ticash\n      POSTGRES_PASSWORD: ticash_dev_password\n      POSTGRES_DB: ticash\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U ticash\"]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n\n  api:\n    build:\n      context: .\n      dockerfile: apps/api/Dockerfile\n    container_name: ticash-api\n    environment:\n      NODE_ENV: development\n      DATABASE_URL: postgresql://ticash:ticash_dev_password@postgres:5432/ticash\n      PORT: 4000\n      JWT_SECRET: dev-secret-key-change-in-production\n      CORS_ORIGIN: '*'\n    ports:\n      - \"4000:4000\"\n    depends_on:\n      postgres:\n        condition: service_healthy\n    volumes:\n      - ./apps/api/src:/app/src\n    command: npm run dev\n\nvolumes:\n  postgres_data:\n

@@ -18,7 +18,7 @@ class TransactionItem extends StatelessWidget {
       case TransactionStatus.pending:
         return AppColors.pending;
       case TransactionStatus.failed:
-        return AppColors.pending;
+        return AppColors.error;
     }
   }
 

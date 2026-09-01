@@ -24,6 +24,9 @@ class AppColors {
   /// Status color for pending transactions.
   static const Color pending = Color(0xFFFF9800);
 
+  /// Status color for failed transactions.
+  static const Color error = Color(0xFFE53935);
+
   /// Primary text color (used on dark backgrounds).
   static const Color textPrimary = Color(0xFFFFFFFF);
 

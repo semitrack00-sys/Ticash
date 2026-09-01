@@ -1,10 +1,1 @@
-node_modules
-.env
-.env.*
-!.env.example
-.expo
-dist
-coverage
-*.log
-.DS_Store
-apps/api/prisma/dev.db
+node_modules\n.env\n.env.*\n!.env.example\n.expo\ndist\ncoverage\n*.log\n.DS_Store\napps/api/prisma/dev.db\nbuild/\n.tsbuildinfo\n.vscode/\n.idea/\n*.swp\n*.swo\nThumbs.db\n

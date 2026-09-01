@@ -71,7 +71,11 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Note: secrets (API URLs, Firebase config, etc.) must NOT be bundled as
+  # assets, since anything in the `assets` list is packaged inside the
+  # compiled APK/IPA and can be extracted. Pass build-time configuration via
+  # `--dart-define`/`--dart-define-from-file` and read it with
+  # `String.fromEnvironment` (see lib/config/api_config.dart).
   assets:
-    - .env
     - assets/images/
     - assets/icons/

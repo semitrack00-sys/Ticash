@@ -5,6 +5,13 @@ enum KycDocumentType {
   driversLicense,
 }
 
+/// Status of a submitted KYC verification.
+enum KycSubmissionStatus {
+  pending,
+  approved,
+  rejected,
+}
+
 /// A KYC (Know Your Customer) verification submission.
 class KycSubmission {
   final String id;
@@ -13,7 +20,7 @@ class KycSubmission {
   final String documentFrontPath;
   final String? documentBackPath;
   final String selfiePath;
-  final String status;
+  final KycSubmissionStatus status;
   final DateTime submittedAt;
 
   const KycSubmission({
@@ -38,7 +45,10 @@ class KycSubmission {
       documentFrontPath: json['documentFrontPath'] as String,
       documentBackPath: json['documentBackPath'] as String?,
       selfiePath: json['selfiePath'] as String,
-      status: json['status'] as String,
+      status: KycSubmissionStatus.values.firstWhere(
+        (status) => status.name == json['status'],
+        orElse: () => KycSubmissionStatus.pending,
+      ),
       submittedAt: DateTime.parse(json['submittedAt'] as String),
     );
   }
@@ -51,7 +61,7 @@ class KycSubmission {
       'documentFrontPath': documentFrontPath,
       'documentBackPath': documentBackPath,
       'selfiePath': selfiePath,
-      'status': status,
+      'status': status.name,
       'submittedAt': submittedAt.toIso8601String(),
     };
   }

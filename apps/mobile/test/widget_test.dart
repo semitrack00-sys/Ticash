@@ -36,13 +36,15 @@ void main() {
     var tapped = false;
 
     await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.light,
-        home: Scaffold(
-          body: PrimaryButton(
-            label: 'Continue',
-            isLoading: true,
-            onPressed: () => tapped = true,
+      ProviderScope(
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: PrimaryButton(
+              label: 'Continue',
+              isLoading: true,
+              onPressed: () => tapped = true,
+            ),
           ),
         ),
       ),

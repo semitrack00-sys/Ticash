@@ -48,8 +48,17 @@ ios/                     # iOS platform project
 
 ```bash
 cd apps/mobile
-cp .env.example .env      # fill in API_BASE_URL and Firebase values
+cp .env.example .env      # reference values for local tooling only; the
+                           # app itself reads config via --dart-define at
+                           # build/run time (see below), not from this file
 flutter pub get
+```
+
+Configuration such as `API_BASE_URL` is passed at build time so it is never
+bundled into the compiled binary:
+
+```bash
+flutter run --dart-define=API_BASE_URL=http://localhost:4000/api
 ```
 
 ### Run

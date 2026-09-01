@@ -53,6 +53,16 @@ class ApiClient {
 
   late final Dio _dio;
 
+  /// Bare Dio instance (no auth interceptor) used solely for refreshing
+  /// the access token, so refresh requests aren't recursively intercepted.
+  final Dio _refreshDio = Dio(
+    BaseOptions(
+      baseUrl: ApiConfig.baseUrl,
+      connectTimeout: ApiConfig.connectTimeout,
+      receiveTimeout: ApiConfig.receiveTimeout,
+    ),
+  );
+
   Dio get dio => _dio;
 
   Future<bool> _refreshAccessToken() async {
@@ -60,7 +70,7 @@ class ApiClient {
     if (refreshToken == null) return false;
 
     try {
-      final response = await Dio(BaseOptions(baseUrl: ApiConfig.baseUrl)).post(
+      final response = await _refreshDio.post(
         ApiConfig.authRefresh,
         data: {'refreshToken': refreshToken},
       );

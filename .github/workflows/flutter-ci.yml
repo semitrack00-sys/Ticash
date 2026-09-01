@@ -10,6 +10,9 @@ defaults:
   run:
     working-directory: apps/mobile
 
+permissions:
+  contents: read
+
 env:
   FLUTTER_VERSION: '3.19.0'
 

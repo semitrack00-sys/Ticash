@@ -13,10 +13,10 @@ class StorageService {
 
   static const _accessTokenKey = 'ticash_access_token';
   static const _refreshTokenKey = 'ticash_refresh_token';
+  static const _languageCodeKey = 'ticash_language_code';
 
   Future<void> init() async {
-    // Reserved for future local database / cache initialization
-    // (e.g. sqflite) once offline caching is implemented.
+    // Reserved for future secure-storage migrations.
   }
 
   Future<void> saveTokens({
@@ -36,4 +36,10 @@ class StorageService {
     await _secureStorage.delete(key: _accessTokenKey);
     await _secureStorage.delete(key: _refreshTokenKey);
   }
+
+  Future<String?> get languageCode =>
+      _secureStorage.read(key: _languageCodeKey);
+
+  Future<void> saveLanguageCode(String code) =>
+      _secureStorage.write(key: _languageCodeKey, value: code);
 }

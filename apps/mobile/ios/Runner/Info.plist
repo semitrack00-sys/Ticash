@@ -24,6 +24,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>TiCash uses the camera to securely capture identity documents for verification.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TiCash uses the microphone only when required by an identity liveness check.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TiCash lets you select an identity document image when the verification workflow permits it.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -39,10 +45,6 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>TiCash uses the camera to verify your identity documents for KYC compliance.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>TiCash uses Face ID to secure your login and authorize transfers.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 </dict>

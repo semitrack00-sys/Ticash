@@ -7,111 +7,518 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Provider { MONCASH NATCASH }
-enum TransferStatus { PENDING PROCESSING COMPLETED FAILED REVERSED }
-enum KycStatus { NOT_STARTED PENDING APPROVED REJECTED REVIEW_REQUIRED }
-enum NotificationChannel { EMAIL SMS PUSH IN_APP }
+enum Provider {
+  MONCASH
+  NATCASH
+  HAITIAN_BANK
+}
 
-enum NotificationStatus { PENDING SENT FAILED }
+enum FundingProviderName {
+  DWOLLA
+}
+
+enum FundingSourceStatus {
+  UNVERIFIED
+  VERIFIED
+  REMOVED
+}
+
+enum FundingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REVERSED
+}
+
+enum WebhookProcessingStatus {
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum TransferStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum TransferStage {
+  AWAITING_FUNDING
+  FUNDING_PROCESSING
+  COMPLIANCE_REVIEW
+  PAYOUT_PROCESSING
+  DELIVERED
+  FAILED
+  CANCELLED
+  REVERSED
+}
+
+enum ComplianceStatus {
+  CLEAR
+  REVIEW
+  BLOCKED
+}
+
+enum ReconciliationStatus {
+  PASS
+  DISCREPANCIES_FOUND
+  FAILED
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  IN_REVIEW
+  APPROVED
+  DECLINED
+  EXPIRED
+  // Legacy database values retained for a non-destructive migration only.
+  REJECTED
+  REVIEW_REQUIRED
+}
+
+enum UserRole {
+  CUSTOMER
+  SUPER_ADMIN
+  COMPLIANCE
+  OPERATIONS
+  SUPPORT
+  READ_ONLY
+  // Legacy staff role retained for non-destructive upgrades; it maps to SUPER_ADMIN permissions.
+  ADMIN
+}
+
+enum PayoutOperationalState {
+  DISABLED
+  SANDBOX
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+}
+
+enum AdminConfigType {
+  FEES_AND_LIMITS
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
 
 model User {
-  id           String      @id @default(uuid())
-  email        String      @unique
-  phone        String?     @unique
-  passwordHash String
-  firstName    String?
-  lastName     String?
-  kycStatus    KycStatus   @default(NOT_STARTED)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  sessions     Session[]
-  recipients   Recipient[]
-  transfers    Transfer[]
-  notifications Notification[]
-  auditLogs    AuditLog[]
+  id                  String                    @id @default(uuid())
+  email               String                    @unique
+  phone               String?                   @unique
+  passwordHash        String
+  firstName           String?
+  lastName            String?
+  kycStatus           KycStatus                 @default(NOT_STARTED)
+  role                UserRole                  @default(CUSTOMER)
+  accountLocked       Boolean                   @default(false)
+  fundingRestricted   Boolean                   @default(false)
+  payoutRestricted    Boolean                   @default(false)
+  restrictionReason   String?
+  restrictedAt        DateTime?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  sessions            Session[]
+  recipients          Recipient[]
+  transfers           Transfer[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  kycProfile          KycProfile?
+  fundingCustomers    FundingProviderCustomer[]
+  fundingSources      FundingSource[]
+  fundingTransactions FundingTransaction[]
+  ledgerAccounts      LedgerAccount[]
+  fxQuotes            FxQuote[]
+  complianceDecisions ComplianceDecision[]      @relation("ComplianceSubject")
+  complianceReviews   ComplianceDecision[]      @relation("ComplianceReviewer")
+  adminConfigVersions AdminConfigVersion[]       @relation("AdminConfigCreator")
+  payoutConfigChanges PayoutMethodConfig[]       @relation("PayoutConfigUpdater")
+}
+
+model LoginSecurityState {
+  id           String    @id @default(uuid())
+  identityHash String    @unique
+  failedCount  Int       @default(0)
+  lockedUntil  DateTime?
+  lastFailedAt DateTime?
+  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now())
 }
 
 model Session {
-  id           String   @id @default(uuid())
-  userId       String
-  refreshHash  String
-  deviceName   String?
-  ipAddress    String?
-  expiresAt    DateTime
-  revokedAt    DateTime?
-  createdAt    DateTime @default(now())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  userId      String
+  refreshHash String    @unique
+  deviceName  String?
+  ipAddress   String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
 }
 
 model KycProfile {
-  id          String    @id @default(uuid())
-  userId      String    @unique
-  status      KycStatus @default(NOT_STARTED)
-  level       Int       @default(0)
-  documentRef String?
-  selfieRef   String?
-  submittedAt DateTime?
-  reviewedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                   String    @id @default(uuid())
+  userId               String    @unique
+  status               KycStatus @default(NOT_STARTED)
+  level                Int       @default(0)
+  documentRef          String?
+  selfieRef            String?
+  diditSessionId       String?   @unique
+  kycStartedAt         DateTime?
+  kycVerifiedAt        DateTime?
+  kycFailureReason     String?
+  diditStatusUpdatedAt DateTime?
+  submittedAt          DateTime?
+  reviewedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model KycWebhookEvent {
+  id              String                  @id @default(uuid())
+  providerEventId String                  @unique
+  webhookType     String
+  diditSessionId  String?
+  payloadHash     String
+  status          WebhookProcessingStatus @default(PROCESSING)
+  errorCode       String?
+  receivedAt      DateTime                @default(now())
+  lastReceivedAt  DateTime?
+  duplicateDeliveryCount Int              @default(0)
+  processedAt     DateTime?
+
+  @@index([diditSessionId, receivedAt])
 }
 
 model Recipient {
-  id       String   @id @default(uuid())
-  userId   String
-  name     String
-  phone    String
-  provider Provider
-  favorite Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transfers Transfer[]
+  id         String     @id @default(uuid())
+  userId     String
+  name       String
+  phone      String
+  address    String
+  city       String
+  department String
+  provider   Provider
+  favorite   Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transfers  Transfer[]
+
   @@unique([userId, phone, provider])
 }
 
 model Transfer {
-  id                    String         @id @default(uuid())
-  senderUserId          String
-  recipientId           String
-  provider              Provider
-  amountHtg             Decimal        @db.Decimal(18, 2)
-  feeHtg                Decimal        @db.Decimal(18, 2)
-  status                TransferStatus @default(PENDING)
-  idempotencyKey        String         @unique
-  providerTransactionId String?
-  failureCode           String?
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
-  completedAt           DateTime?
-  sender                User           @relation(fields: [senderUserId], references: [id])
-  recipient             Recipient      @relation(fields: [recipientId], references: [id])
+  id                        String               @id @default(uuid())
+  senderUserId              String
+  recipientId               String
+  recipientNameSnapshot     String?
+  recipientPhoneSnapshot    String?
+  payoutDestinationSnapshot String?
+  provider                  Provider
+  amountUsd                 Decimal              @db.Decimal(18, 2)
+  feeUsd                    Decimal              @db.Decimal(18, 2)
+  ticashFeeUsd              Decimal?             @db.Decimal(18, 2)
+  providerFeeUsd            Decimal?             @db.Decimal(18, 2)
+  totalChargeUsd            Decimal?             @db.Decimal(18, 2)
+  exchangeRate              Decimal              @db.Decimal(18, 4)
+  amountHtg                 Decimal              @db.Decimal(18, 2)
+  status                    TransferStatus       @default(PENDING)
+  stage                     TransferStage        @default(AWAITING_FUNDING)
+  referenceNumber           String?              @unique
+  testMode                  Boolean              @default(true)
+  idempotencyKey            String               @unique
+  providerTransactionId     String?
+  quoteId                   String?              @unique
+  failureCode               String?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  completedAt               DateTime?
+  payoutStartedAt           DateTime?
+  complianceStatus          ComplianceStatus     @default(REVIEW)
+  riskFlags                 Json?
+  complianceReviewedAt      DateTime?
+  immutableAt               DateTime?
+  configurationVersionId    String?
+  sender                    User                 @relation(fields: [senderUserId], references: [id])
+  recipient                 Recipient            @relation(fields: [recipientId], references: [id])
+  quote                     FxQuote?             @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  fundingTransaction        FundingTransaction?
+  complianceDecisions       ComplianceDecision[]
+  configurationVersion      AdminConfigVersion?  @relation(fields: [configurationVersionId], references: [id], onDelete: Restrict)
+
   @@index([senderUserId, createdAt])
   @@index([provider, providerTransactionId])
 }
 
+model ComplianceDecision {
+  id                   String           @id @default(uuid())
+  transferId           String
+  subjectUserId        String
+  reviewedByUserId     String?
+  status               ComplianceStatus
+  reasons              Json
+  screeningProvider    String?
+  screeningReferenceId String?
+  screeningPerformed   Boolean          @default(false)
+  createdAt            DateTime         @default(now())
+  transfer             Transfer         @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  subjectUser          User             @relation("ComplianceSubject", fields: [subjectUserId], references: [id], onDelete: Restrict)
+  reviewedByUser       User?            @relation("ComplianceReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([transferId, createdAt])
+  @@index([subjectUserId, createdAt])
+}
+
+model FxQuote {
+  id                  String    @id @default(uuid())
+  userId              String
+  provider            String
+  testMode            Boolean   @default(true)
+  sendCountry         String
+  receiveCountry      String
+  sourceCurrency      String
+  targetCurrency      String
+  payoutMethod        String
+  sendAmount          Decimal   @db.Decimal(18, 2)
+  exchangeRate        Decimal   @db.Decimal(18, 6)
+  ticashFee           Decimal   @db.Decimal(18, 2)
+  providerFee         Decimal   @db.Decimal(18, 2)
+  totalCustomerCharge Decimal   @db.Decimal(18, 2)
+  recipientAmount     Decimal   @db.Decimal(18, 2)
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  configurationVersionId String?
+  createdAt           DateTime  @default(now())
+  user                User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transfer            Transfer?
+  configurationVersion AdminConfigVersion? @relation(fields: [configurationVersionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt, consumedAt])
+  @@index([sendCountry, receiveCountry, sourceCurrency, targetCurrency])
+}
+
+model FundingProviderCustomer {
+  id                  String              @id @default(uuid())
+  userId              String
+  provider            FundingProviderName
+  providerCustomerId  String
+  providerCustomerUrl String
+  status              String
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@unique([provider, providerCustomerId])
+}
+
+model FundingSource {
+  id                       String               @id @default(uuid())
+  userId                   String
+  provider                 FundingProviderName
+  providerCustomerId       String
+  providerFundingSourceId  String
+  providerFundingSourceUrl String
+  name                     String
+  lastFour                 String
+  bankAccountType          String
+  status                   FundingSourceStatus  @default(UNVERIFIED)
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  removedAt                DateTime?
+  user                     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fundingTransactions      FundingTransaction[]
+
+  @@unique([provider, providerFundingSourceId])
+  @@index([userId, provider, status])
+}
+
+model FundingTransaction {
+  id                  String              @id @default(uuid())
+  userId              String
+  fundingSourceId     String
+  transferId          String?             @unique
+  provider            FundingProviderName
+  amount              Decimal             @db.Decimal(18, 2)
+  currency            String              @default("USD")
+  status              FundingStatus       @default(PENDING)
+  idempotencyKey      String
+  requestHash         String
+  providerTransferId  String?
+  providerTransferUrl String?
+  failureCode         String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+  reversedAt          DateTime?
+  user                User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  fundingSource       FundingSource       @relation(fields: [fundingSourceId], references: [id], onDelete: Restrict)
+  ledgerTransactions  LedgerTransaction[]
+  remittanceTransfer  Transfer?           @relation(fields: [transferId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@unique([provider, providerTransferId])
+  @@index([userId, createdAt])
+}
+
+model ProviderWebhookEvent {
+  id              String                  @id @default(uuid())
+  provider        FundingProviderName
+  providerEventId String
+  topic           String
+  payloadHash     String
+  status          WebhookProcessingStatus @default(PROCESSING)
+  errorCode       String?
+  receivedAt      DateTime                @default(now())
+  lastReceivedAt  DateTime?
+  duplicateDeliveryCount Int              @default(0)
+  processedAt     DateTime?
+
+  @@unique([provider, providerEventId])
+  @@index([provider, receivedAt])
+}
+
+model LedgerAccount {
+  id        String            @id @default(uuid())
+  key       String            @unique
+  name      String
+  type      LedgerAccountType
+  currency  String
+  userId    String?
+  createdAt DateTime          @default(now())
+  user      User?             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  entries   LedgerEntry[]
+
+  @@index([userId, currency])
+}
+
+model LedgerTransaction {
+  id                   String              @id @default(uuid())
+  reference            String              @unique
+  type                 String
+  fundingTransactionId String?
+  createdAt            DateTime            @default(now())
+  fundingTransaction   FundingTransaction? @relation(fields: [fundingTransactionId], references: [id], onDelete: Restrict)
+  entries              LedgerEntry[]
+
+  @@index([fundingTransactionId])
+}
+
 model LedgerEntry {
-  id            String   @id @default(uuid())
+  id            String            @id @default(uuid())
   transactionId String
   accountId     String
-  direction     String
-  amount        Decimal  @db.Decimal(18, 2)
-  currency      String   @default("HTG")
-  createdAt     DateTime @default(now())
+  direction     LedgerDirection
+  amount        Decimal           @db.Decimal(18, 2)
+  currency      String            @default("USD")
+  createdAt     DateTime          @default(now())
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  account       LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
   @@index([transactionId])
   @@index([accountId, createdAt])
 }
 
+model CorridorConfig {
+  id                      String              @id @default(uuid())
+  sendCountry             String
+  sourceCurrency          String
+  receiveCountry          String              @default("HT")
+  targetCurrency          String              @default("HTG")
+  fundingProvider         FundingProviderName
+  payoutMethod            Provider
+  enabledForSandbox       Boolean             @default(false)
+  approvedForLiveUse      Boolean             @default(false)
+  fundingProviderApproved Boolean             @default(false)
+  payoutProviderApproved  Boolean             @default(false)
+  regulatoryApproved      Boolean             @default(false)
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  @@unique([sendCountry, sourceCurrency, receiveCountry, targetCurrency, fundingProvider, payoutMethod])
+  @@index([receiveCountry, approvedForLiveUse])
+}
+
+model PayoutMethodConfig {
+  id                   String                  @id @default(uuid())
+  method               Provider                @unique
+  state                PayoutOperationalState  @default(DISABLED)
+  environment          String                  @default("MOCK")
+  providerConfigured   Boolean                 @default(false)
+  providerApproved     Boolean                 @default(false)
+  regulatoryApproved   Boolean                 @default(false)
+  approvedForLiveUse   Boolean                 @default(false)
+  version              Int                     @default(1)
+  statusMessage        String?
+  updatedByUserId      String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  updatedBy            User?                   @relation("PayoutConfigUpdater", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([state, environment])
+}
+
+model AdminConfigVersion {
+  id              String          @id @default(uuid())
+  type            AdminConfigType
+  version         Int
+  values          Json
+  reason          String
+  effectiveAt     DateTime        @default(now())
+  retiredAt       DateTime?
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  createdBy       User?           @relation("AdminConfigCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  quotes          FxQuote[]
+  transfers       Transfer[]
+
+  @@unique([type, version])
+  @@index([type, effectiveAt, retiredAt])
+}
+
 model Notification {
-  id        String             @id @default(uuid())
+  id        String              @id @default(uuid())
   userId    String
   channel   NotificationChannel
   type      String
-  status    NotificationStatus @default(PENDING)
-  createdAt DateTime           @default(now())
+  status    NotificationStatus  @default(PENDING)
+  createdAt DateTime            @default(now())
   sentAt    DateTime?
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model AuditLog {
@@ -123,7 +530,37 @@ model AuditLog {
   metadata  Json?
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   @@index([userId, createdAt])
+}
+
+model ReconciliationRun {
+  id               String                      @id @default(uuid())
+  provider         String
+  status           ReconciliationStatus
+  discrepancyCount Int                         @default(0)
+  startedAt        DateTime                    @default(now())
+  completedAt      DateTime?
+  createdByUserId  String?
+  summary          Json?
+  discrepancies    ReconciliationDiscrepancy[]
+
+  @@index([provider, startedAt])
+}
+
+model ReconciliationDiscrepancy {
+  id        String            @id @default(uuid())
+  runId     String
+  code      String
+  entity    String
+  entityId  String?
+  expected  String?
+  actual    String?
+  details   Json?
+  createdAt DateTime          @default(now())
+  run       ReconciliationRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@index([runId, code])
 }
 
 model IdempotencyKey {

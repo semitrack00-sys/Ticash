@@ -1,4 +1,5 @@
 node_modules/
+.npm-cache/
 dist/
 coverage/
 .env
@@ -6,3 +7,18 @@ coverage/
 !.env.example
 *.log
 *.tsbuildinfo
+.android/
+
+# Local build outputs and install packages
+**/codex_build/
+*.apk
+*.aab
+*.idsig
+
+# IDE and operating-system metadata
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+analytics.settings

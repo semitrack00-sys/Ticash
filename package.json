@@ -1,20 +1,25 @@
 {
-  "name": "@ticash/shared",
-  "version": "0.1.0",
+  "name": "ticash",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/types/index.ts"
-  },
+  "workspaces": ["apps/api", "packages/shared"],
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "tsc -p tsconfig.json",
-    "lint": "eslint src --ext .ts",
-    "test": "vitest run"
+    "dev:api": "npm run dev --workspace @ticash/api",
+    "build": "npm run build --workspace @ticash/shared && npm run build --workspace @ticash/api",
+    "typecheck": "npm run typecheck --workspace @ticash/shared && npm run typecheck --workspace @ticash/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "prisma:validate": "prisma validate --schema schema.prisma",
+    "prisma:generate": "prisma generate --schema schema.prisma",
+    "db:push": "prisma db push --schema schema.prisma",
+    "db:migrate": "prisma migrate dev --schema schema.prisma",
+    "db:seed": "node scripts/seed-corridors.mjs"
   },
   "devDependencies": {
-    "eslint": "^9.16.0",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
-  }
+    "prisma": "^6.16.2",
+    "typescript": "^5.9.2"
+  },
+  "overrides": {"deepmerge-ts": "^8.0.0"},
+  "engines": {"node": ">=20"}
 }

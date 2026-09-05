@@ -8,9 +8,15 @@ final authServiceProvider = Provider<AuthService>((ref) => AuthService());
 
 /// Holds the currently authenticated user, or `null` if signed out.
 class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
-  AuthNotifier(this._authService) : super(const AsyncValue.data(null));
+  AuthNotifier(this._authService) : super(const AsyncValue.loading()) {
+    restoreSession();
+  }
 
   final AuthService _authService;
+
+  Future<void> restoreSession() async {
+    state = await AsyncValue.guard(_authService.restoreSession);
+  }
 
   Future<void> login(String email, String password) async {
     state = const AsyncValue.loading();
@@ -40,9 +46,46 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     await _authService.logout();
     state = const AsyncValue.data(null);
   }
+
+  Future<void> changePassword(String currentPassword, String newPassword) {
+    return _authService.changePassword(
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+  }
+
+  Future<void> updateProfile({
+    required String firstName,
+    required String lastName,
+    String? phoneNumber,
+  }) async {
+    final user = await _authService.updateProfile(
+      firstName: firstName,
+      lastName: lastName,
+      phoneNumber: phoneNumber,
+    );
+    state = AsyncValue.data(user);
+  }
+
+  Future<void> requestKycReview() async {
+    final user = await _authService.requestKycReview();
+    state = AsyncValue.data(user);
+  }
+
+  Future<void> refreshCurrentUser() async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    try {
+      final user = await _authService.getCurrentUser();
+      state = AsyncValue.data(user);
+    } catch (_) {
+      state = AsyncValue.data(current);
+      rethrow;
+    }
+  }
 }
 
 final authNotifierProvider =
     StateNotifierProvider<AuthNotifier, AsyncValue<User?>>((ref) {
-  return AuthNotifier(ref.watch(authServiceProvider));
-});
+      return AuthNotifier(ref.watch(authServiceProvider));
+    });

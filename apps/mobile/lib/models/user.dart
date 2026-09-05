@@ -7,6 +7,7 @@ class User {
   final String? phoneNumber;
   final KycStatus kycStatus;
   final DateTime createdAt;
+  final String role;
 
   const User({
     required this.id,
@@ -15,6 +16,7 @@ class User {
     required this.lastName,
     required this.kycStatus,
     required this.createdAt,
+    this.role = 'CUSTOMER',
     this.phoneNumber,
   });
 
@@ -27,11 +29,9 @@ class User {
       firstName: json['firstName'] as String,
       lastName: json['lastName'] as String,
       phoneNumber: json['phoneNumber'] as String?,
-      kycStatus: KycStatus.values.firstWhere(
-        (status) => status.name == json['kycStatus'],
-        orElse: () => KycStatus.notStarted,
-      ),
+      kycStatus: KycStatus.fromApi(json['kycStatus'] as String?),
       createdAt: DateTime.parse(json['createdAt'] as String),
+      role: json['role'] as String? ?? 'CUSTOMER',
     );
   }
 
@@ -44,6 +44,7 @@ class User {
       'phoneNumber': phoneNumber,
       'kycStatus': kycStatus.name,
       'createdAt': createdAt.toIso8601String(),
+      'role': role,
     };
   }
 }
@@ -52,6 +53,16 @@ class User {
 enum KycStatus {
   notStarted,
   pending,
+  inReview,
   approved,
-  rejected,
+  declined,
+  expired;
+
+  static KycStatus fromApi(String? value) {
+    final normalized = value?.replaceAll('_', '').toLowerCase();
+    return KycStatus.values.firstWhere(
+      (status) => status.name.toLowerCase() == normalized,
+      orElse: () => KycStatus.notStarted,
+    );
+  }
 }

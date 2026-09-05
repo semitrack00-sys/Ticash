@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/transfer.dart';
+import '../services/transfers_service.dart';
 
 /// Tracks the in-progress transfer being created by the user (amount,
 /// recipient, etc.) as they move through the send-money flow.
@@ -50,7 +51,11 @@ class TransferDraftNotifier extends StateNotifier<TransferDraft> {
 
 final transferDraftProvider =
     StateNotifierProvider<TransferDraftNotifier, TransferDraft>(
-  (ref) => TransferDraftNotifier(),
-);
+      (ref) => TransferDraftNotifier(),
+    );
 
-final transferHistoryProvider = StateProvider<List<Transfer>>((ref) => []);
+final transfersServiceProvider = Provider((ref) => TransfersService());
+
+final transferHistoryProvider = FutureProvider<List<Transfer>>((ref) {
+  return ref.watch(transfersServiceProvider).list();
+});

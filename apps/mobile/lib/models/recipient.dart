@@ -5,6 +5,9 @@ class Recipient {
   final String country;
   final String phoneNumber;
   final String? payoutMethod;
+  final String address;
+  final String city;
+  final String department;
 
   const Recipient({
     required this.id,
@@ -12,6 +15,9 @@ class Recipient {
     required this.country,
     required this.phoneNumber,
     this.payoutMethod,
+    this.address = '',
+    this.city = '',
+    this.department = '',
   });
 
   factory Recipient.fromJson(Map<String, dynamic> json) {
@@ -21,6 +27,9 @@ class Recipient {
       country: json['country'] as String,
       phoneNumber: json['phoneNumber'] as String,
       payoutMethod: json['payoutMethod'] as String?,
+      address: json['address'] as String? ?? '',
+      city: json['city'] as String? ?? '',
+      department: json['department'] as String? ?? '',
     );
   }
 
@@ -31,6 +40,9 @@ class Recipient {
       'country': country,
       'phoneNumber': phoneNumber,
       'payoutMethod': payoutMethod,
+      'address': address,
+      'city': city,
+      'department': department,
     };
   }
 }

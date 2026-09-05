@@ -1,3 +1,9 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -15,16 +21,36 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    id "dev.flutter.flutter-gradle-plugin"
-    id "com.google.gms.google-services"
+def requiredReleaseSigningProperties = ['keyAlias', 'keyPassword', 'storeFile', 'storePassword']
+def releaseSigningConfigured = keystorePropertiesFile.exists() &&
+        requiredReleaseSigningProperties.every { propertyName ->
+            keystoreProperties[propertyName]?.toString()?.trim()
+        }
+
+if (releaseSigningConfigured) {
+    def configuredStoreFile = file(keystoreProperties['storeFile'])
+    releaseSigningConfigured = configuredStoreFile.exists() && configuredStoreFile.isFile()
+}
+
+gradle.taskGraph.whenReady { taskGraph ->
+    def releaseBuildRequested = taskGraph.allTasks.any { task ->
+        def taskName = task.name.toLowerCase()
+        taskName.contains('release') &&
+                (taskName.startsWith('assemble') || taskName.startsWith('bundle') ||
+                        taskName.startsWith('package') || taskName.startsWith('sign'))
+    }
+
+    if (releaseBuildRequested && !releaseSigningConfigured) {
+        throw new GradleException(
+                'Release signing is not configured. Provide android/key.properties with '
+                        + 'keyAlias, keyPassword, storeFile, and storePassword, and ensure the keystore exists.'
+        )
+    }
 }
 
 android {
     namespace "com.ticash.app"
-    compileSdk 34
+    compileSdk = 36
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -38,7 +64,7 @@ android {
 
     defaultConfig {
         applicationId "com.ticash.app"
-        minSdk 23
+        minSdkVersion = flutter.minSdkVersion
         targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
@@ -47,10 +73,10 @@ android {
 
     signingConfigs {
         release {
-            if (keystorePropertiesFile.exists()) {
+            if (releaseSigningConfigured) {
                 keyAlias keystoreProperties['keyAlias']
                 keyPassword keystoreProperties['keyPassword']
-                storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+                storeFile file(keystoreProperties['storeFile'])
                 storePassword keystoreProperties['storePassword']
             }
         }
@@ -58,7 +84,9 @@ android {
 
     buildTypes {
         release {
-            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -74,7 +102,5 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
-    implementation platform('com.google.firebase:firebase-bom:33.1.0')
     implementation 'androidx.multidex:multidex:2.0.1'
 }

@@ -1,28 +1,85 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/recipient.dart';
+import '../services/recipients_service.dart';
 
-/// In-memory list of the user's saved recipients.
-///
-/// This will be backed by the API/local cache once the recipients
-/// endpoints are implemented in Phase 2 feature work.
-class RecipientsNotifier extends StateNotifier<List<Recipient>> {
-  RecipientsNotifier() : super(const []);
+/// API-backed list of the user's saved recipients.
+class RecipientsNotifier extends StateNotifier<AsyncValue<List<Recipient>>> {
+  RecipientsNotifier(this._service) : super(const AsyncValue.loading()) {
+    load();
+  }
+
+  final RecipientsService _service;
+
+  Future<void> load() async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(_service.list);
+  }
 
   void setRecipients(List<Recipient> recipients) {
-    state = recipients;
+    state = AsyncValue.data(recipients);
   }
 
-  void addRecipient(Recipient recipient) {
-    state = [...state, recipient];
+  Future<void> addRecipient({
+    required String fullName,
+    required String phoneNumber,
+    required String payoutMethod,
+    required String address,
+    required String city,
+    required String department,
+  }) async {
+    final recipient = await _service.create(
+      fullName: fullName,
+      phoneNumber: phoneNumber,
+      payoutMethod: payoutMethod,
+      address: address,
+      city: city,
+      department: department,
+    );
+    state = AsyncValue.data([
+      ...(state.valueOrNull ?? const <Recipient>[]),
+      recipient,
+    ]);
   }
 
-  void removeRecipient(String recipientId) {
-    state = state.where((r) => r.id != recipientId).toList();
+  Future<void> removeRecipient(String recipientId) async {
+    await _service.delete(recipientId);
+    state = AsyncValue.data(
+      (state.valueOrNull ?? const <Recipient>[])
+          .where((recipient) => recipient.id != recipientId)
+          .toList(),
+    );
+  }
+
+  Future<void> updateRecipient({
+    required String recipientId,
+    required String fullName,
+    required String phoneNumber,
+    required String payoutMethod,
+    required String address,
+    required String city,
+    required String department,
+  }) async {
+    final updated = await _service.update(
+      recipientId: recipientId,
+      fullName: fullName,
+      phoneNumber: phoneNumber,
+      payoutMethod: payoutMethod,
+      address: address,
+      city: city,
+      department: department,
+    );
+    state = AsyncValue.data(
+      (state.valueOrNull ?? const <Recipient>[])
+          .map((item) => item.id == recipientId ? updated : item)
+          .toList(),
+    );
   }
 }
 
+final recipientsServiceProvider = Provider((ref) => RecipientsService());
+
 final recipientsProvider =
-    StateNotifierProvider<RecipientsNotifier, List<Recipient>>(
-  (ref) => RecipientsNotifier(),
-);
+    StateNotifierProvider<RecipientsNotifier, AsyncValue<List<Recipient>>>(
+      (ref) => RecipientsNotifier(ref.watch(recipientsServiceProvider)),
+    );

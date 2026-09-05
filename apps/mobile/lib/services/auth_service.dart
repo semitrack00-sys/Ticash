@@ -13,17 +13,30 @@ class AuthService {
   final Dio _dio;
 
   Future<User> login({required String email, required String password}) async {
-    final response = await _dio.post(
-      ApiConfig.authLogin,
-      data: {'email': email, 'password': password},
-    );
+    try {
+      final response = await _dio.post(
+        ApiConfig.authLogin,
+        data: {'email': email.trim().toLowerCase(), 'password': password},
+      );
 
-    await StorageService.instance.saveTokens(
-      accessToken: response.data['accessToken'] as String,
-      refreshToken: response.data['refreshToken'] as String,
-    );
+      await StorageService.instance.saveTokens(
+        accessToken: response.data['accessToken'] as String,
+        refreshToken: response.data['refreshToken'] as String,
+      );
 
-    return User.fromJson(response.data['user'] as Map<String, dynamic>);
+      return User.fromJson(response.data['user'] as Map<String, dynamic>);
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      final message = data is Map<String, dynamic>
+          ? data['error'] as String?
+          : null;
+      throw AuthException(
+        message ??
+            (error.response == null
+                ? 'Cannot reach TiCash. Check the API connection.'
+                : 'Unable to sign in. Please try again.'),
+      );
+    }
   }
 
   Future<User> register({
@@ -32,22 +45,106 @@ class AuthService {
     required String firstName,
     required String lastName,
   }) async {
-    final response = await _dio.post(
-      ApiConfig.authRegister,
-      data: {
-        'email': email,
-        'password': password,
-        'firstName': firstName,
-        'lastName': lastName,
-      },
-    );
+    try {
+      final response = await _dio.post(
+        ApiConfig.authRegister,
+        data: {
+          'email': email.trim().toLowerCase(),
+          'password': password,
+          'firstName': firstName.trim(),
+          'lastName': lastName.trim(),
+        },
+      );
 
-    await StorageService.instance.saveTokens(
-      accessToken: response.data['accessToken'] as String,
-      refreshToken: response.data['refreshToken'] as String,
-    );
+      await StorageService.instance.saveTokens(
+        accessToken: response.data['accessToken'] as String,
+        refreshToken: response.data['refreshToken'] as String,
+      );
 
-    return User.fromJson(response.data['user'] as Map<String, dynamic>);
+      return User.fromJson(response.data['user'] as Map<String, dynamic>);
+    } on DioException catch (error) {
+      throw AuthException(
+        _messageFor(
+          error,
+          fallback: 'Unable to create your account. Please try again.',
+        ),
+      );
+    }
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _dio.put(
+        '${ApiConfig.users}/me/password',
+        data: {'currentPassword': currentPassword, 'newPassword': newPassword},
+      );
+    } on DioException catch (error) {
+      throw AuthException(
+        _messageFor(
+          error,
+          fallback: 'Unable to change your password. Please try again.',
+        ),
+      );
+    }
+  }
+
+  Future<User> updateProfile({
+    required String firstName,
+    required String lastName,
+    String? phoneNumber,
+  }) async {
+    try {
+      final response = await _dio.patch(
+        '${ApiConfig.users}/me',
+        data: {
+          'firstName': firstName.trim(),
+          'lastName': lastName.trim(),
+          'phoneNumber': phoneNumber?.trim().isEmpty == true
+              ? null
+              : phoneNumber?.trim(),
+        },
+      );
+      return User.fromJson(response.data['user'] as Map<String, dynamic>);
+    } on DioException catch (error) {
+      throw AuthException(
+        _messageFor(
+          error,
+          fallback: 'Unable to update your profile. Please try again.',
+        ),
+      );
+    }
+  }
+
+  Future<User> requestKycReview() async {
+    try {
+      final response = await _dio.post(
+        '${ApiConfig.kyc}/submit',
+        data: {'attested': true},
+      );
+      return User.fromJson(response.data['user'] as Map<String, dynamic>);
+    } on DioException catch (error) {
+      throw AuthException(
+        _messageFor(
+          error,
+          fallback: 'Unable to request identity review. Please try again.',
+        ),
+      );
+    }
+  }
+
+  String _messageFor(DioException error, {required String fallback}) {
+    final data = error.response?.data;
+    final serverMessage = data is Map<String, dynamic>
+        ? data['error'] as String?
+        : null;
+    if (serverMessage != null && serverMessage.isNotEmpty) return serverMessage;
+    if (error.response == null) {
+      return 'Cannot reach TiCash. Make sure the API is running and try again.';
+    }
+    return fallback;
   }
 
   Future<bool> isLoggedIn() async {
@@ -55,13 +152,50 @@ class AuthService {
     return token != null;
   }
 
-  Future<void> logout() async {
+  Future<User> getCurrentUser() async {
     try {
-      await _dio.post(ApiConfig.authLogout);
+      final response = await _dio.get('${ApiConfig.users}/me');
+      final data = response.data as Map<String, dynamic>;
+      return User.fromJson((data['user'] as Map<String, dynamic>?) ?? data);
+    } on DioException catch (error) {
+      throw AuthException(
+        _messageFor(
+          error,
+          fallback: 'Unable to refresh your account. Please try again.',
+        ),
+      );
+    }
+  }
+
+  Future<User?> restoreSession() async {
+    if (!await isLoggedIn()) return null;
+    try {
+      return await getCurrentUser();
+    } catch (_) {
+      await StorageService.instance.clearTokens();
+      return null;
+    }
+  }
+
+  Future<void> logout() async {
+    final refreshToken = await StorageService.instance.refreshToken;
+    try {
+      await _dio.post(
+        ApiConfig.authLogout,
+        data: {'refreshToken': refreshToken},
+      );
     } catch (_) {
       // Ignore network errors on logout; always clear local tokens.
     } finally {
       await StorageService.instance.clearTokens();
     }
   }
+}
+
+class AuthException implements Exception {
+  const AuthException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
 }

@@ -26,14 +26,18 @@ class ApiClient {
           handler.next(options);
         },
         onError: (error, handler) async {
-          if (error.response?.statusCode == 401) {
-            final refreshed = await _refreshAccessToken();
+          final alreadyRetried =
+              error.requestOptions.extra['authRetried'] == true;
+          if (error.response?.statusCode == 401 && !alreadyRetried) {
+            final refreshed = await _refreshOnce();
             if (refreshed) {
               final requestOptions = error.requestOptions;
+              requestOptions.extra['authRetried'] = true;
               final token = await StorageService.instance.accessToken;
               if (token != null) {
-                requestOptions.headers['Authorization'] =
-                    _buildBearerHeader(token);
+                requestOptions.headers['Authorization'] = _buildBearerHeader(
+                  token,
+                );
               }
               try {
                 final response = await _dio.fetch(requestOptions);
@@ -52,6 +56,7 @@ class ApiClient {
   static final ApiClient instance = ApiClient._internal();
 
   late final Dio _dio;
+  Future<bool>? _refreshInFlight;
 
   /// Bare Dio instance (no auth interceptor) used solely for refreshing
   /// the access token, so refresh requests aren't recursively intercepted.
@@ -65,6 +70,17 @@ class ApiClient {
 
   Dio get dio => _dio;
 
+  Future<bool> _refreshOnce() {
+    final current = _refreshInFlight;
+    if (current != null) return current;
+    final refresh = _refreshAccessToken();
+    _refreshInFlight = refresh;
+    refresh.whenComplete(() {
+      if (identical(_refreshInFlight, refresh)) _refreshInFlight = null;
+    });
+    return refresh;
+  }
+
   Future<bool> _refreshAccessToken() async {
     final refreshToken = await StorageService.instance.refreshToken;
     if (refreshToken == null) return false;
@@ -74,9 +90,10 @@ class ApiClient {
         ApiConfig.authRefresh,
         data: {'refreshToken': refreshToken},
       );
-      final newAccessToken = response.data['accessToken'] as String;
-      final newRefreshToken =
-          response.data['refreshToken'] as String? ?? refreshToken;
+      final data = response.data as Map<String, dynamic>;
+      final newAccessToken = data['accessToken'] as String?;
+      if (newAccessToken == null || newAccessToken.isEmpty) return false;
+      final newRefreshToken = data['refreshToken'] as String? ?? refreshToken;
       await StorageService.instance.saveTokens(
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,

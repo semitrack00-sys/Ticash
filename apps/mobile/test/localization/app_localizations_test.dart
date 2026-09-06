@@ -3,8 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ticash/localization/app_localizations.dart';
 
 void main() {
-  testWidgets('all five languages translate the primary sign-in action',
-      (tester) async {
+  testWidgets('all five languages translate the primary sign-in action', (
+    tester,
+  ) async {
     final translations = <AppLanguage, String>{};
 
     for (final language in AppLanguage.values) {
@@ -32,8 +33,9 @@ void main() {
     expect(translations[AppLanguage.portuguese], 'Entrar');
   });
 
-  testWidgets('interpolated translations replace dynamic values',
-      (tester) async {
+  testWidgets('interpolated translations replace dynamic values', (
+    tester,
+  ) async {
     String? result;
     await tester.pumpWidget(
       MaterialApp(

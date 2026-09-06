@@ -8,6 +8,10 @@ const config: FxConfig = {
   mode: 'mock',
   quoteTtlSeconds: 300,
   mockUsdHtgRate: '132.1234567',
+  mockHtgRates: {
+    USD: '132.1234567', CAD: '97.000000', EUR: '145.000000',
+    MXN: '7.500000', BRL: '26.000000', CLP: '0.140000', DOP: '2.200000',
+  },
   ticashFeePercent: '2.5',
   ticashMinimumFeeUsd: '1.99',
   providerFundingFeeUsd: '0.25',
@@ -55,7 +59,7 @@ async function approvedUser(app: ReturnType<typeof createApp>, suffix = 'one') {
 function testApp(clock?: () => Date) {
   return createApp({
     fxConfig: config,
-    fxProvider: new MockTestFxProvider(config.mockUsdHtgRate!),
+    fxProvider: new MockTestFxProvider(config.mockHtgRates!),
     fxClock: clock,
   });
 }
@@ -103,7 +107,7 @@ describe('server-side FX and remittance quotes', () => {
   it('rejects a payout method that backend configuration does not expose', async () => {
     const app = createApp({
       fxConfig: config,
-      fxProvider: new MockTestFxProvider(config.mockUsdHtgRate!),
+      fxProvider: new MockTestFxProvider(config.mockHtgRates!),
       payoutConfig: { mode: 'mock', enabledMethods: ['MONCASH'] },
     });
     const auth = await approvedUser(app, 'disabled-payout');
@@ -142,6 +146,23 @@ describe('server-side FX and remittance quotes', () => {
       .send({ ...quoteInput(), quoteId: quoted.body.quote.quoteId })
       .expect(410);
     expect(expired.body.code).toBe('QUOTE_EXPIRED');
+  });
+
+  it('supports configured international source currencies while keeping Haiti/HTG fixed', async () => {
+    const app = testApp();
+    const auth = await approvedUser(app, 'international-currencies');
+    for (const [sendCountry, sourceCurrency, expectedRate] of [
+      ['CA', 'CAD', 97], ['EU', 'EUR', 145], ['MX', 'MXN', 7.5],
+      ['BR', 'BRL', 26], ['CL', 'CLP', 0.14], ['DO', 'DOP', 2.2],
+    ] as const) {
+      const response = await request(app).post('/api/transfers/quote').set(auth)
+        .send({ ...quoteInput(10), sendCountry, sourceCurrency, amountCurrency: sourceCurrency })
+        .expect(200);
+      expect(response.body.quote.corridor).toEqual({
+        sendCountry, sourceCurrency, receiveCountry: 'HT', targetCurrency: 'HTG',
+      });
+      expect(response.body.quote.exchangeRate).toBe(expectedRate);
+    }
   });
 
   it('rejects unsupported corridors before requesting a provider rate', async () => {

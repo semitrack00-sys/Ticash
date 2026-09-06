@@ -134,6 +134,12 @@ class ProfileScreen extends ConsumerWidget {
     final firstName = TextEditingController(text: user.firstName);
     final lastName = TextEditingController(text: user.lastName);
     final phone = TextEditingController(text: user.phoneNumber ?? '');
+    final country = TextEditingController(text: user.countryCode ?? '');
+    final address1 = TextEditingController(text: user.addressLine1 ?? '');
+    final address2 = TextEditingController(text: user.addressLine2 ?? '');
+    final city = TextEditingController(text: user.city ?? '');
+    final region = TextEditingController(text: user.region ?? '');
+    final postal = TextEditingController(text: user.postalCode ?? '');
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -161,6 +167,53 @@ class ProfileScreen extends ConsumerWidget {
                   helperText: context.tr('includeCountryCode'),
                 ),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: country,
+                textCapitalization: TextCapitalization.characters,
+                maxLength: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Country or territory code',
+                  hintText: 'US, CA, BR, CL, DO, FR…',
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: address1,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Street address'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: address2,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Apartment, suite, unit (optional)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: city,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'City / locality'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: region,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'State / province / region',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: postal,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'ZIP / postal code (if used)',
+                ),
+              ),
             ],
           ),
         ),
@@ -184,6 +237,12 @@ class ProfileScreen extends ConsumerWidget {
               firstName: firstName.text,
               lastName: lastName.text,
               phoneNumber: phone.text,
+              countryCode: country.text,
+              addressLine1: address1.text,
+              addressLine2: address2.text,
+              city: city.text,
+              region: region.text,
+              postalCode: postal.text,
             );
         if (context.mounted) {
           ScaffoldMessenger.of(
@@ -201,6 +260,12 @@ class ProfileScreen extends ConsumerWidget {
     firstName.dispose();
     lastName.dispose();
     phone.dispose();
+    country.dispose();
+    address1.dispose();
+    address2.dispose();
+    city.dispose();
+    region.dispose();
+    postal.dispose();
   }
 
   @override
@@ -279,11 +344,43 @@ class ProfileScreen extends ConsumerWidget {
               child: ListTile(
                 leading: const Icon(Icons.manage_accounts_outlined),
                 title: Text(context.tr('personalInformation')),
-                subtitle: Text(user.phoneNumber ?? context.tr('addMobile')),
+                subtitle: Text(
+                  [
+                        if (user.phoneNumber != null) user.phoneNumber!,
+                        if (user.addressLine1 != null) user.addressLine1!,
+                        if (user.city != null) user.city!,
+                        if (user.region != null) user.region!,
+                        if (user.postalCode != null) user.postalCode!,
+                        if (user.countryCode != null) user.countryCode!,
+                      ].isEmpty
+                      ? context.tr('addMobile')
+                      : [
+                          if (user.phoneNumber != null) user.phoneNumber!,
+                          if (user.addressLine1 != null)
+                            [
+                              user.addressLine1!,
+                              if (user.city != null) user.city!,
+                              if (user.region != null) user.region!,
+                              if (user.postalCode != null) user.postalCode!,
+                              if (user.countryCode != null) user.countryCode!,
+                            ].join(', '),
+                        ].join('\n'),
+                ),
+                isThreeLine:
+                    user.phoneNumber != null && user.addressLine1 != null,
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _editProfile(context, ref, user),
               ),
             ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.account_balance_outlined),
+              title: const Text('Bank accounts'),
+              subtitle: const Text('Manage U.S. Dwolla Sandbox funding'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.go(AppRoutes.wallet),
+            ),
+          ),
           Card(
             child: ListTile(
               leading: const Icon(Icons.password),

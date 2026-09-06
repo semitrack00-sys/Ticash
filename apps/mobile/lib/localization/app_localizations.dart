@@ -92,6 +92,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'registerSubtitle':
         'Create your account. Identity review is required before transfers.',
     'firstName': 'First name',
+    'middleNameOptional': 'Middle name (optional)',
     'lastName': 'Last name',
     'useAtLeast8': 'Use at least 8 characters',
     'testBuildDisclosure':
@@ -136,6 +137,9 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'recipientNotDeleted': 'Recipient was not deleted.',
     'editRecipient': 'Edit recipient',
     'fullName': 'Full name',
+    'loadingHaitiPayoutMethods': 'Loading Haiti payout methods…',
+    'payoutMethodsLoadFailed':
+        'TiCash could not reach the API to load Haiti payout methods.',
     'haitiPhone': 'Haiti phone number',
     'streetAddress': 'Street address',
     'city': 'City',
@@ -218,7 +222,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'payment': 'Payment',
     'review': 'Review',
     'done': 'Done',
-    'amountError': 'Enter an amount between 1 and 10,000 USD.',
+    'amountError': 'Enter a valid amount in the selected currency.',
     'recipientError':
         'Complete all recipient details using a valid Haiti phone number.',
     'quoteUnavailable':
@@ -228,7 +232,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'confirmSend': 'Confirm & send',
     'howMuch': 'How much are you sending?',
     'amountSubtitle':
-        'Enter USD. Fees and the HTG amount are calculated by TiCash before review.',
+        'Choose your sending currency. TiCash calculates fees and the HTG amount before review.',
     'whoReceiving': 'Who is receiving?',
     'recipientLegal':
         'Use the recipient’s legal name and Haiti contact details.',
@@ -337,6 +341,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'registerSubtitle':
         'Crea tu cuenta. Se requiere revisión de identidad antes de transferir.',
     'firstName': 'Nombre',
+    'middleNameOptional': 'Segundo nombre (opcional)',
     'lastName': 'Apellido',
     'useAtLeast8': 'Usa al menos 8 caracteres',
     'testBuildDisclosure':
@@ -345,7 +350,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'there': 'amigo',
     'sendSupportHome': 'Envía apoyo a casa',
     'quoteSubtitle':
-        'Obtén una cotización USD a HTG calculada por el servidor antes de enviar.',
+        'Consulta el tipo de cambio, las tarifas y el monto que recibirá el destinatario antes de enviar.',
     'startTransfer': 'Iniciar transferencia',
     'transferSummaryUnavailable':
         'El resumen de transferencias no está disponible.',
@@ -383,6 +388,9 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'recipientNotDeleted': 'No se eliminó el destinatario.',
     'editRecipient': 'Editar destinatario',
     'fullName': 'Nombre completo',
+    'loadingHaitiPayoutMethods': 'Cargando métodos de pago de Haití…',
+    'payoutMethodsLoadFailed':
+        'TiCash no pudo comunicarse con la API para cargar los métodos de pago de Haití.',
     'haitiPhone': 'Teléfono de Haití',
     'streetAddress': 'Dirección',
     'city': 'Ciudad',
@@ -464,7 +472,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'payment': 'Pago',
     'review': 'Revisar',
     'done': 'Listo',
-    'amountError': 'Ingresa un monto entre 1 y 10.000 USD.',
+    'amountError': 'Ingresa un monto válido en la moneda seleccionada.',
     'recipientError': 'Completa los datos con un teléfono válido de Haití.',
     'quoteUnavailable':
         'El servicio de cotización no está disponible. No se envió ninguna transferencia.',
@@ -473,7 +481,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'confirmSend': 'Confirmar y enviar',
     'howMuch': '¿Cuánto quieres enviar?',
     'amountSubtitle':
-        'Ingresa USD. TiCash calcula las tarifas y el monto en HTG antes de revisar.',
+        'Elige la moneda de envío. TiCash calcula las tarifas y el monto en HTG antes de revisar.',
     'whoReceiving': '¿Quién recibe?',
     'recipientLegal': 'Usa el nombre legal y los datos de contacto de Haití.',
     'haitiPhoneHelper': '+509 seguido de 8 dígitos',
@@ -580,6 +588,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'registerSubtitle':
         'Créez votre compte. Une vérification d’identité est requise avant les transferts.',
     'firstName': 'Prénom',
+    'middleNameOptional': 'Deuxième prénom (facultatif)',
     'lastName': 'Nom',
     'useAtLeast8': 'Utilisez au moins 8 caractères',
     'testBuildDisclosure':
@@ -588,7 +597,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'there': 'vous',
     'sendSupportHome': 'Soutenez vos proches',
     'quoteSubtitle':
-        'Obtenez un taux USD vers HTG calculé par le serveur avant l’envoi.',
+        'Consultez le taux, les frais et le montant reçu avant l’envoi.',
     'startTransfer': 'Démarrer un transfert',
     'transferSummaryUnavailable': 'Le résumé des transferts est indisponible.',
     'viewAll': 'Voir tout',
@@ -625,6 +634,9 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'recipientNotDeleted': 'Le bénéficiaire n’a pas été supprimé.',
     'editRecipient': 'Modifier le bénéficiaire',
     'fullName': 'Nom complet',
+    'loadingHaitiPayoutMethods': 'Chargement des modes de paiement en Haïti…',
+    'payoutMethodsLoadFailed':
+        'TiCash ne peut pas joindre l’API pour charger les modes de paiement en Haïti.',
     'haitiPhone': 'Téléphone en Haïti',
     'streetAddress': 'Adresse',
     'city': 'Ville',
@@ -706,7 +718,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'payment': 'Paiement',
     'review': 'Vérifier',
     'done': 'Terminé',
-    'amountError': 'Saisissez un montant entre 1 et 10 000 USD.',
+    'amountError': 'Saisissez un montant valide dans la devise choisie.',
     'recipientError':
         'Complétez les informations avec un numéro haïtien valide.',
     'quoteUnavailable':
@@ -716,7 +728,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'confirmSend': 'Confirmer et envoyer',
     'howMuch': 'Combien envoyez-vous ?',
     'amountSubtitle':
-        'Saisissez des USD. TiCash calcule les frais et le montant HTG.',
+        'Choisissez la devise d’envoi. TiCash calcule les frais et le montant en HTG.',
     'whoReceiving': 'Qui reçoit ?',
     'recipientLegal': 'Utilisez le nom légal et les coordonnées en Haïti.',
     'haitiPhoneHelper': '+509 suivi de 8 chiffres',
@@ -820,6 +832,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'registerSubtitle':
         'Kreye kont ou. Yo dwe verifye idantite ou anvan transfè.',
     'firstName': 'Prenon',
+    'middleNameOptional': 'Dezyèm non (opsyonèl)',
     'lastName': 'Siyati',
     'useAtLeast8': 'Itilize omwen 8 karaktè',
     'testBuildDisclosure':
@@ -827,7 +840,8 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'hiName': 'Bonjou, {name}',
     'there': 'zanmi',
     'sendSupportHome': 'Voye sipò lakay',
-    'quoteSubtitle': 'Jwenn yon pri USD pou HTG sèvè a kalkile anvan ou voye.',
+    'quoteSubtitle':
+        'Gade to echanj la, frè yo ak kantite benefisyè a ap resevwa anvan ou voye.',
     'startTransfer': 'Kòmanse yon transfè',
     'transferSummaryUnavailable': 'Rezime transfè yo pa disponib.',
     'viewAll': 'Wè tout',
@@ -862,6 +876,9 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'recipientNotDeleted': 'Benefisyè a pa t efase.',
     'editRecipient': 'Modifye benefisyè',
     'fullName': 'Non konplè',
+    'loadingHaitiPayoutMethods': 'N ap chaje metòd peman Ayiti yo…',
+    'payoutMethodsLoadFailed':
+        'TiCash pa ka jwenn API a pou chaje metòd peman Ayiti yo.',
     'haitiPhone': 'Nimewo telefòn Ayiti',
     'streetAddress': 'Adrès',
     'city': 'Vil',
@@ -941,7 +958,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'payment': 'Peman',
     'review': 'Verifye',
     'done': 'Fini',
-    'amountError': 'Antre yon kantite ant 1 ak 10,000 USD.',
+    'amountError': 'Antre yon kantite ki valab nan lajan ou chwazi a.',
     'recipientError':
         'Ranpli tout detay yo ak yon nimewo telefòn Ayiti ki valab.',
     'quoteUnavailable': 'Sèvis pri a pa disponib. Pa gen transfè ki voye.',
@@ -950,7 +967,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'confirmSend': 'Konfime epi voye',
     'howMuch': 'Konbyen ou ap voye?',
     'amountSubtitle':
-        'Antre USD. TiCash kalkile frè ak kantite HTG anvan verifikasyon.',
+        'Chwazi lajan pou voye a. TiCash kalkile frè ak kantite HTG anvan verifikasyon.',
     'whoReceiving': 'Kilès k ap resevwa?',
     'recipientLegal': 'Itilize non legal ak kontak Ayiti benefisyè a.',
     'haitiPhoneHelper': '+509 epi 8 chif',
@@ -1051,6 +1068,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'registerSubtitle':
         'Crie sua conta. A verificação de identidade é necessária antes das transferências.',
     'firstName': 'Nome',
+    'middleNameOptional': 'Nome do meio (opcional)',
     'lastName': 'Sobrenome',
     'useAtLeast8': 'Use pelo menos 8 caracteres',
     'testBuildDisclosure':
@@ -1059,7 +1077,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'there': 'amigo',
     'sendSupportHome': 'Envie apoio para casa',
     'quoteSubtitle':
-        'Obtenha uma cotação de USD para HTG calculada pelo servidor antes de enviar.',
+        'Veja a taxa de câmbio, as tarifas e o valor que o destinatário receberá antes de enviar.',
     'startTransfer': 'Iniciar transferência',
     'transferSummaryUnavailable':
         'O resumo de transferências não está disponível.',
@@ -1097,6 +1115,9 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'recipientNotDeleted': 'O destinatário não foi excluído.',
     'editRecipient': 'Editar destinatário',
     'fullName': 'Nome completo',
+    'loadingHaitiPayoutMethods': 'Carregando métodos de pagamento do Haiti…',
+    'payoutMethodsLoadFailed':
+        'O TiCash não conseguiu acessar a API para carregar os métodos de pagamento do Haiti.',
     'haitiPhone': 'Telefone do Haiti',
     'streetAddress': 'Endereço',
     'city': 'Cidade',
@@ -1177,7 +1198,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'payment': 'Pagamento',
     'review': 'Revisar',
     'done': 'Concluído',
-    'amountError': 'Digite um valor entre 1 e 10.000 USD.',
+    'amountError': 'Digite um valor válido na moeda selecionada.',
     'recipientError': 'Preencha os dados com um telefone válido do Haiti.',
     'quoteUnavailable':
         'O serviço de cotação está indisponível. Nenhuma transferência foi enviada.',
@@ -1186,7 +1207,7 @@ const Map<AppLanguage, Map<String, String>> _translations = {
     'confirmSend': 'Confirmar e enviar',
     'howMuch': 'Quanto você está enviando?',
     'amountSubtitle':
-        'Digite USD. O TiCash calcula taxas e o valor em HTG antes da revisão.',
+        'Escolha a moeda de envio. O TiCash calcula taxas e o valor em HTG antes da revisão.',
     'whoReceiving': 'Quem vai receber?',
     'recipientLegal': 'Use o nome legal e os dados de contato do Haiti.',
     'haitiPhoneHelper': '+509 seguido de 8 dígitos',

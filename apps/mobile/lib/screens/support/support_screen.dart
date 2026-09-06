@@ -43,6 +43,11 @@ class SupportScreen extends StatelessWidget {
             title: context.tr('termsFees'),
             body: context.tr('termsFeesBody'),
           ),
+          const _SupportCard(
+            icon: Icons.alternate_email_rounded,
+            title: 'Official TiCash support',
+            body: 'contact@ticash-app.com',
+          ),
           const SizedBox(height: 12),
           Text(
             context.tr('testingHelp'),

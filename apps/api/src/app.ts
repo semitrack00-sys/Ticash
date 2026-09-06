@@ -30,7 +30,7 @@ import {
   resetFxQuoteStore,
   type FxQuoteRepository,
 } from './fx/repository.js';
-import { FxService, type QuoteRequest } from './fx/service.js';
+import { FxService, supportedCorridors, type QuoteRequest } from './fx/service.js';
 import { FxError, type FxConfig, type FxProvider } from './fx/types.js';
 import { loadDiditConfig } from './kyc/config.js';
 import { DiditRestProvider } from './kyc/didit-provider.js';
@@ -43,6 +43,23 @@ import {
 import { createDiditWebhookHandler, createKycRouter } from './kyc/router.js';
 import { KycService } from './kyc/service.js';
 import { KycError, type DiditConfig, type DiditProvider, type KycStatus } from './kyc/types.js';
+import { loadMobileTopUpConfig } from './topup/config.js';
+import { ReloadlySandboxTopUpProvider } from './topup/reloadly-provider.js';
+import {
+  MemoryMobileTopUpRepository,
+  PrismaMobileTopUpRepository,
+  resetMobileTopUpStore,
+  type MobileTopUpRepository,
+} from './topup/repository.js';
+import { createMobileTopUpRouter } from './topup/router.js';
+import { MobileTopUpService } from './topup/service.js';
+import {
+  MockMobileTopUpPaymentProvider,
+  MobileTopUpError,
+  type MobileTopUpConfig,
+  type MobileTopUpPaymentProvider,
+  type MobileTopUpProvider,
+} from './topup/types.js';
 import {
   assessRisk,
   enforceTransactionLimits,
@@ -136,9 +153,23 @@ const credentialsSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
   password: z.string().min(8).max(128),
 });
+const internationalAddressShape = {
+  countryCode: z.string().trim().length(2).transform((value) => value.toUpperCase()),
+  addressLine1: z.string().trim().min(3).max(180),
+  addressLine2: z.string().trim().max(180).nullable().optional(),
+  city: z.string().trim().min(1).max(100),
+  region: z.string().trim().max(100).nullable().optional(),
+  postalCode: z.string().trim().max(24).nullable().optional(),
+};
 const registerSchema = credentialsSchema.extend({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
+  countryCode: internationalAddressShape.countryCode.optional(),
+  addressLine1: internationalAddressShape.addressLine1.optional(),
+  addressLine2: internationalAddressShape.addressLine2,
+  city: internationalAddressShape.city.optional(),
+  region: internationalAddressShape.region,
+  postalCode: internationalAddressShape.postalCode,
 });
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(8).max(128),
@@ -151,6 +182,12 @@ const profileSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
   phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/).nullable().optional(),
+  countryCode: internationalAddressShape.countryCode.nullable().optional(),
+  addressLine1: internationalAddressShape.addressLine1.nullable().optional(),
+  addressLine2: internationalAddressShape.addressLine2,
+  city: internationalAddressShape.city.nullable().optional(),
+  region: internationalAddressShape.region,
+  postalCode: internationalAddressShape.postalCode,
 });
 const kycDecisionSchema = z.object({
   status: z.enum(['APPROVED', 'DECLINED', 'IN_REVIEW', 'EXPIRED']),
@@ -182,18 +219,39 @@ const staffRoleSchema = z.object({
   reason: z.string().trim().min(5).max(500),
 }).strict();
 const recipientSchema = z.object({
-  fullName: z.string().trim().min(1).max(160),
+  firstName: z.string().trim().min(1).max(80).optional(),
+  middleName: z.string().trim().max(80).optional(),
+  lastName: z.string().trim().min(1).max(80).optional(),
+  fullName: z.string().trim().min(3).max(240).optional(),
   country: z.literal('HT'),
   phoneNumber: z.string().regex(/^\+509\d{8}$/),
   address: z.string().trim().min(3).max(180),
   city: z.string().trim().min(2).max(100),
   department: z.string().trim().min(2).max(100),
   payoutMethod: z.enum(['MONCASH', 'NATCASH']),
+}).strict().superRefine((value, context) => {
+  if (value.firstName && value.lastName) return;
+  const legacyParts = value.fullName?.split(/\s+/).filter(Boolean) ?? [];
+  if (legacyParts.length < 2) {
+    context.addIssue({
+      code: 'custom',
+      path: ['lastName'],
+      message: 'Recipient first name and last name are required',
+    });
+  }
+}).transform((value) => {
+  const legacyParts = value.fullName?.split(/\s+/).filter(Boolean) ?? [];
+  const firstName = value.firstName ?? legacyParts[0] ?? '';
+  const lastName = value.lastName ?? legacyParts.at(-1) ?? '';
+  const middleName = value.middleName?.trim() ||
+    (value.firstName ? undefined : legacyParts.slice(1, -1).join(' ') || undefined);
+  const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ');
+  return { ...value, firstName, middleName, lastName, fullName };
 });
 const transferDetailsSchema = z.object({
   recipient: recipientSchema,
   amount: z.number().positive().max(1_000_000),
-  amountCurrency: z.enum(['USD', 'HTG']).default('USD'),
+  amountCurrency: z.enum(['USD', 'CAD', 'EUR', 'MXN', 'BRL', 'CLP', 'DOP', 'HTG']).default('USD'),
   sendCountry: z.string().trim().length(2).transform((value) => value.toUpperCase()).default('US'),
   sourceCurrency: z.string().trim().length(3).transform((value) => value.toUpperCase()),
   targetCurrency: z.string().trim().length(3).transform((value) => value.toUpperCase()),
@@ -208,6 +266,9 @@ function publicUser(user: StoredUser): PublicUser {
   return {
     id: user.id, email: user.email, firstName: user.firstName,
     lastName: user.lastName, phoneNumber: user.phoneNumber,
+    countryCode: user.countryCode, addressLine1: user.addressLine1,
+    addressLine2: user.addressLine2, city: user.city,
+    region: user.region, postalCode: user.postalCode,
     kycStatus: user.kycStatus, role: user.role, createdAt: user.createdAt,
   };
 }
@@ -215,6 +276,8 @@ function publicUser(user: StoredUser): PublicUser {
 function storedUserFromDb(user: {
   id: string; email: string; phone: string | null; passwordHash: string;
   firstName: string | null; lastName: string | null; kycStatus: string;
+  countryCode: string | null; addressLine1: string | null; addressLine2: string | null;
+  city: string | null; region: string | null; postalCode: string | null;
   role: string; createdAt: Date; accountLocked: boolean; fundingRestricted: boolean;
   payoutRestricted: boolean; restrictionReason: string | null;
 }): StoredUser {
@@ -225,6 +288,12 @@ function storedUserFromDb(user: {
     passwordHash: user.passwordHash,
     firstName: user.firstName ?? '',
     lastName: user.lastName ?? '',
+    countryCode: user.countryCode ?? undefined,
+    addressLine1: user.addressLine1 ?? undefined,
+    addressLine2: user.addressLine2 ?? undefined,
+    city: user.city ?? undefined,
+    region: user.region ?? undefined,
+    postalCode: user.postalCode ?? undefined,
     kycStatus: normalizedKycStatus(user.kycStatus),
     role: user.role as PublicUser['role'],
     createdAt: user.createdAt.toISOString(),
@@ -236,12 +305,21 @@ function storedUserFromDb(user: {
 }
 
 function recipientFromDb(recipient: {
-  id: string; name: string; phone: string; address: string; city: string;
+  id: string; name: string; firstName: string | null; middleName: string | null;
+  lastName: string | null; phone: string; address: string; city: string;
   department: string; provider: string;
 }): Recipient {
+  const legacyParts = recipient.name.split(/\s+/).filter(Boolean);
+  const firstName = recipient.firstName ?? legacyParts[0] ?? '';
+  const lastName = recipient.lastName ?? legacyParts.at(-1) ?? '';
+  const middleName = recipient.middleName ??
+    (legacyParts.slice(1, -1).join(' ') || undefined);
   return {
     id: recipient.id,
-    fullName: recipient.name,
+    firstName,
+    middleName,
+    lastName,
+    fullName: [firstName, middleName, lastName].filter(Boolean).join(' '),
     country: 'HT',
     phoneNumber: recipient.phone,
     address: recipient.address,
@@ -259,12 +337,23 @@ function transferFromDb(transfer: {
   ticashFeeUsd: unknown | null; providerFeeUsd: unknown | null; totalChargeUsd: unknown | null;
   recipient: { phone: string; name: string };
   fundingTransaction?: { id: string } | null;
+  quote?: {
+    sourceCurrency: string; targetCurrency: string; sendAmount: unknown;
+    ticashFee: unknown; providerFee: unknown; totalCustomerCharge: unknown;
+    recipientAmount: unknown;
+  } | null;
   recipientNameSnapshot?: string | null; recipientPhoneSnapshot?: string | null;
   configurationVersionId?: string | null;
 }): Transfer {
-  const combinedFee = Number(transfer.feeUsd);
-  const ticashFee = transfer.ticashFeeUsd == null ? combinedFee : Number(transfer.ticashFeeUsd);
-  const providerFundingFee = transfer.providerFeeUsd == null ? 0 : Number(transfer.providerFeeUsd);
+  const combinedFee = transfer.quote
+    ? Number(transfer.quote.ticashFee) + Number(transfer.quote.providerFee)
+    : Number(transfer.feeUsd);
+  const ticashFee = transfer.quote
+    ? Number(transfer.quote.ticashFee)
+    : transfer.ticashFeeUsd == null ? combinedFee : Number(transfer.ticashFeeUsd);
+  const providerFundingFee = transfer.quote
+    ? Number(transfer.quote.providerFee)
+    : transfer.providerFeeUsd == null ? 0 : Number(transfer.providerFeeUsd);
   return {
     id: transfer.id,
     referenceNumber: transfer.referenceNumber ?? `TC-${transfer.id.replaceAll('-', '').slice(0, 12).toUpperCase()}`,
@@ -272,15 +361,17 @@ function transferFromDb(transfer: {
     recipientName: transfer.recipientNameSnapshot ?? transfer.recipient.name,
     recipientPhone: transfer.recipientPhoneSnapshot ?? transfer.recipient.phone,
     payoutMethod: transfer.provider as Transfer['payoutMethod'],
-    amount: Number(transfer.amountUsd),
-    sourceCurrency: 'USD',
-    targetCurrency: 'HTG',
+    amount: transfer.quote ? Number(transfer.quote.sendAmount) : Number(transfer.amountUsd),
+    sourceCurrency: (transfer.quote?.sourceCurrency ?? 'USD') as Transfer['sourceCurrency'],
+    targetCurrency: (transfer.quote?.targetCurrency ?? 'HTG') as Transfer['targetCurrency'],
     fee: combinedFee,
     ticashFee,
     providerFundingFee,
-    totalCharged: transfer.totalChargeUsd == null ? Number(transfer.amountUsd) + combinedFee : Number(transfer.totalChargeUsd),
+    totalCharged: transfer.quote
+      ? Number(transfer.quote.totalCustomerCharge)
+      : transfer.totalChargeUsd == null ? Number(transfer.amountUsd) + combinedFee : Number(transfer.totalChargeUsd),
     exchangeRate: Number(transfer.exchangeRate),
-    amountReceived: Number(transfer.amountHtg),
+    amountReceived: transfer.quote ? Number(transfer.quote.recipientAmount) : Number(transfer.amountHtg),
     status: transfer.status as Transfer['status'],
     stage: transfer.stage as Transfer['stage'],
     complianceStatus: transfer.complianceStatus as Transfer['complianceStatus'],
@@ -296,7 +387,9 @@ function transferFromDb(transfer: {
 
 function publicRecipient(recipient: Recipient & { userId: string }): Recipient {
   return {
-    id: recipient.id, fullName: recipient.fullName, country: recipient.country,
+    id: recipient.id, firstName: recipient.firstName,
+    middleName: recipient.middleName, lastName: recipient.lastName,
+    fullName: recipient.fullName, country: recipient.country,
     phoneNumber: recipient.phoneNumber, address: recipient.address,
     city: recipient.city, department: recipient.department,
     payoutMethod: recipient.payoutMethod,
@@ -441,6 +534,7 @@ export function resetStore() {
   resetFundingStore();
   resetKycStore();
   resetFxQuoteStore();
+  resetMobileTopUpStore();
 }
 
 export interface CreateAppOptions {
@@ -457,6 +551,11 @@ export interface CreateAppOptions {
   payoutConfig?: PayoutConfig;
   securityConfig?: SecurityConfig;
   sanctionsAmlProvider?: SanctionsAmlProvider;
+  mobileTopUpConfig?: MobileTopUpConfig;
+  mobileTopUpProvider?: MobileTopUpProvider;
+  mobileTopUpPaymentProvider?: MobileTopUpPaymentProvider;
+  mobileTopUpRepository?: MobileTopUpRepository;
+  mobileTopUpClock?: () => Date;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -724,11 +823,25 @@ export function createApp(options: CreateAppOptions = {}) {
     databaseEnabled ? new PrismaFxQuoteRepository(prisma) : new MemoryFxQuoteRepository()
   );
   const fxProvider = options.fxProvider ?? (
-    fxConfig.mode === 'mock' && fxConfig.mockUsdHtgRate
-      ? new MockTestFxProvider(fxConfig.mockUsdHtgRate)
+    fxConfig.mode === 'mock' && (fxConfig.mockHtgRates || fxConfig.mockUsdHtgRate)
+      ? new MockTestFxProvider(fxConfig.mockHtgRates ?? fxConfig.mockUsdHtgRate!)
       : undefined
   );
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
+  const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
+  const mobileTopUpRepository = options.mobileTopUpRepository ?? (
+    databaseEnabled ? new PrismaMobileTopUpRepository(prisma) : new MemoryMobileTopUpRepository()
+  );
+  const mobileTopUpProvider = options.mobileTopUpProvider ?? new ReloadlySandboxTopUpProvider(mobileTopUpConfig);
+  const mobileTopUpPaymentProvider = options.mobileTopUpPaymentProvider ?? new MockMobileTopUpPaymentProvider();
+  const mobileTopUpService = new MobileTopUpService(
+    mobileTopUpConfig,
+    mobileTopUpProvider,
+    mobileTopUpPaymentProvider,
+    mobileTopUpRepository,
+    recordAudit,
+    options.mobileTopUpClock,
+  );
   const effectiveQuotePricing = async () => {
     let active = await activeAdminConfiguration();
     if (!active) {
@@ -800,6 +913,7 @@ export function createApp(options: CreateAppOptions = {}) {
       payouts: { mode: payoutConfig.mode, testMode: true, methods: publicPayoutMethods(payoutConfig) },
       kyc: kycService.availability(),
       fx: fxService.availability(),
+      mobileTopUps: mobileTopUpService.availability(),
       timestamp: new Date().toISOString(),
     });
   });
@@ -813,29 +927,27 @@ export function createApp(options: CreateAppOptions = {}) {
       : [];
     res.json({
       receivingMarkets: [{ country: 'HT', currencies: ['HTG'] }],
-      corridors: persistedCorridors.length > 0 ? persistedCorridors.map((corridor) => ({
-        sendCountry: corridor.sendCountry,
-        sourceCurrency: corridor.sourceCurrency,
-        receiveCountry: corridor.receiveCountry,
-        targetCurrency: corridor.targetCurrency,
-        fundingProvider: corridor.fundingProvider,
-        payoutMethods: [corridor.payoutMethod],
-        enabledForSandbox: corridor.enabledForSandbox,
-        approvedForLiveUse: corridor.approvedForLiveUse,
-        fundingProviderApproved: corridor.fundingProviderApproved,
-        payoutProviderApproved: corridor.payoutProviderApproved,
-        regulatoryApproved: corridor.regulatoryApproved,
-      })) : [
-        {
-          sendCountry: 'US', sourceCurrency: 'USD', receiveCountry: 'HT', targetCurrency: 'HTG',
-          fundingProvider: 'DWOLLA', payoutMethods: payoutConfig.enabledMethods,
-          enabledForSandbox: fundingConfig.enabled && fundingConfig.environment === 'sandbox',
-          approvedForLiveUse: false,
-          fundingProviderApproved: false,
-          payoutProviderApproved: false,
-          regulatoryApproved: false,
-        },
-      ],
+      corridors: supportedCorridors.map((supported) => {
+        const persisted = persistedCorridors.filter((candidate) =>
+          candidate.sendCountry === supported.sendCountry &&
+          candidate.sourceCurrency === supported.sourceCurrency &&
+          candidate.receiveCountry === supported.receiveCountry &&
+          candidate.targetCurrency === supported.targetCurrency);
+        return {
+          ...supported,
+          fundingProvider: supported.sourceCurrency === 'USD' ? 'DWOLLA' : 'UNCONFIGURED',
+          payoutMethods: persisted.length > 0
+            ? persisted.map((candidate) => candidate.payoutMethod)
+            : payoutConfig.enabledMethods,
+          quoteEnabled: fxConfig.mode === 'mock',
+          fundingEnabled: supported.sourceCurrency === 'USD' && fundingConfig.enabled && fundingConfig.environment === 'sandbox',
+          enabledForSandbox: fxConfig.mode === 'mock',
+          approvedForLiveUse: persisted.length > 0 && persisted.every((candidate) => candidate.approvedForLiveUse),
+          fundingProviderApproved: persisted.length > 0 && persisted.every((candidate) => candidate.fundingProviderApproved),
+          payoutProviderApproved: persisted.length > 0 && persisted.every((candidate) => candidate.payoutProviderApproved),
+          regulatoryApproved: persisted.length > 0 && persisted.every((candidate) => candidate.regulatoryApproved),
+        };
+      }),
     });
   });
 
@@ -875,6 +987,12 @@ export function createApp(options: CreateAppOptions = {}) {
     service: kycService,
   }));
 
+  app.use('/api/mobile-topups', createMobileTopUpRouter({
+    authenticate,
+    requireFundingAllowed,
+    service: mobileTopUpService,
+  }));
+
   app.post('/api/auth/register', authenticationLimiter, async (req, res) => {
     const input = registerSchema.parse(req.body);
     const existingUser = databaseEnabled
@@ -890,11 +1008,18 @@ export function createApp(options: CreateAppOptions = {}) {
           data: {
             email: input.email, firstName: input.firstName,
             lastName: input.lastName, passwordHash,
+            countryCode: input.countryCode, addressLine1: input.addressLine1,
+            addressLine2: input.addressLine2, city: input.city,
+            region: input.region, postalCode: input.postalCode,
           },
         }))
       : {
           id: randomUUID(), email: input.email, firstName: input.firstName,
-          lastName: input.lastName, kycStatus: 'NOT_STARTED', role: 'CUSTOMER',
+           lastName: input.lastName, countryCode: input.countryCode,
+           addressLine1: input.addressLine1, addressLine2: input.addressLine2 ?? undefined,
+           city: input.city, region: input.region ?? undefined,
+           postalCode: input.postalCode ?? undefined,
+           kycStatus: 'NOT_STARTED', role: 'CUSTOMER',
           createdAt: new Date().toISOString(), passwordHash,
           accountLocked: false, fundingRestricted: false, payoutRestricted: false,
         };
@@ -1029,6 +1154,12 @@ export function createApp(options: CreateAppOptions = {}) {
           firstName: input.firstName,
           lastName: input.lastName,
           phone: input.phoneNumber ?? null,
+          countryCode: input.countryCode ?? null,
+          addressLine1: input.addressLine1 ?? null,
+          addressLine2: input.addressLine2 ?? null,
+          city: input.city ?? null,
+          region: input.region ?? null,
+          postalCode: input.postalCode ?? null,
         },
       });
       await recordAudit(req.userId, 'PROFILE_UPDATED', 'User', req.userId);
@@ -1046,6 +1177,12 @@ export function createApp(options: CreateAppOptions = {}) {
     const updated = {
       ...user, firstName: input.firstName, lastName: input.lastName,
       phoneNumber: input.phoneNumber ?? undefined,
+      countryCode: input.countryCode ?? undefined,
+      addressLine1: input.addressLine1 ?? undefined,
+      addressLine2: input.addressLine2 ?? undefined,
+      city: input.city ?? undefined,
+      region: input.region ?? undefined,
+      postalCode: input.postalCode ?? undefined,
     };
     users.set(user.id, updated);
     await recordAudit(req.userId, 'PROFILE_UPDATED', 'User', req.userId);
@@ -1126,7 +1263,9 @@ export function createApp(options: CreateAppOptions = {}) {
       if (duplicate) return res.status(409).json({ error: 'Recipient already exists', code: 'RECIPIENT_EXISTS' });
       const created = await prisma.recipient.create({
         data: {
-          userId: req.userId!, name: input.fullName, phone: input.phoneNumber,
+          userId: req.userId!, name: input.fullName,
+          firstName: input.firstName, middleName: input.middleName,
+          lastName: input.lastName, phone: input.phoneNumber,
           address: input.address, city: input.city, department: input.department,
           provider: input.payoutMethod,
         },
@@ -1166,7 +1305,9 @@ export function createApp(options: CreateAppOptions = {}) {
       const updated = await prisma.recipient.update({
         where: { id: recipientId },
         data: {
-          name: input.fullName, phone: input.phoneNumber,
+          name: input.fullName, firstName: input.firstName,
+          middleName: input.middleName, lastName: input.lastName,
+          phone: input.phoneNumber,
           address: input.address, city: input.city,
           department: input.department, provider: input.payoutMethod,
         },
@@ -1209,7 +1350,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.get('/api/transfers', authenticate, async (req: AuthRequest, res) => {
     if (databaseEnabled) {
       const result = await prisma.transfer.findMany({
-        where: { senderUserId: req.userId! }, include: { recipient: true, fundingTransaction: true },
+        where: { senderUserId: req.userId! }, include: { recipient: true, fundingTransaction: true, quote: true },
         orderBy: { createdAt: 'desc' },
       });
       return res.json({ transfers: result.map(transferFromDb) });
@@ -1224,7 +1365,7 @@ export function createApp(options: CreateAppOptions = {}) {
     if (databaseEnabled) {
       const transfer = await prisma.transfer.findFirst({
         where: { id: req.params.id as string, senderUserId: req.userId! },
-        include: { recipient: true, fundingTransaction: true },
+        include: { recipient: true, fundingTransaction: true, quote: true },
       });
       return transfer ? res.json({ transfer: transferFromDb(transfer) }) : res.status(404).json({ error: 'Transfer not found', code: 'TRANSFER_NOT_FOUND' });
     }
@@ -1276,17 +1417,28 @@ export function createApp(options: CreateAppOptions = {}) {
           },
         },
         update: {
-          name: input.recipient.fullName, address: input.recipient.address,
+          name: input.recipient.fullName,
+          firstName: input.recipient.firstName,
+          middleName: input.recipient.middleName,
+          lastName: input.recipient.lastName,
+          address: input.recipient.address,
           city: input.recipient.city, department: input.recipient.department,
         },
         create: {
           userId: req.userId!, name: input.recipient.fullName,
+          firstName: input.recipient.firstName,
+          middleName: input.recipient.middleName,
+          lastName: input.recipient.lastName,
           phone: input.recipient.phoneNumber, address: input.recipient.address,
           city: input.recipient.city, department: input.recipient.department,
           provider: input.recipient.payoutMethod,
         },
       });
-      const riskFlags = await evaluateRisk(req.userId!, recipientRow.id, recipientRow.phone, quote.sendAmount.toNumber());
+      const amountUsd = fxService.toUsdEquivalent(quote.sendAmount, quote.sourceCurrency, quote.exchangeRate);
+      const ticashFeeUsd = fxService.toUsdEquivalent(quote.ticashFee, quote.sourceCurrency, quote.exchangeRate);
+      const providerFeeUsd = fxService.toUsdEquivalent(quote.providerFee, quote.sourceCurrency, quote.exchangeRate);
+      const totalChargeUsd = fxService.toUsdEquivalent(quote.totalCustomerCharge, quote.sourceCurrency, quote.exchangeRate);
+      const riskFlags = await evaluateRisk(req.userId!, recipientRow.id, recipientRow.phone, amountUsd.toNumber());
       const referenceNumber = `TC-${transferId.replaceAll('-', '').slice(0, 12).toUpperCase()}`;
       const created = await prisma.transfer.create({
         data: {
@@ -1294,10 +1446,10 @@ export function createApp(options: CreateAppOptions = {}) {
           recipientNameSnapshot: recipientRow.name,
           recipientPhoneSnapshot: recipientRow.phone,
           payoutDestinationSnapshot: recipientRow.phone,
-          provider: input.recipient.payoutMethod, amountUsd: quote.sendAmount,
-          feeUsd: quote.ticashFee.plus(quote.providerFee), exchangeRate: quote.exchangeRate,
-          ticashFeeUsd: quote.ticashFee, providerFeeUsd: quote.providerFee,
-          totalChargeUsd: quote.totalCustomerCharge,
+          provider: input.recipient.payoutMethod, amountUsd,
+          feeUsd: ticashFeeUsd.plus(providerFeeUsd), exchangeRate: quote.exchangeRate,
+          ticashFeeUsd, providerFeeUsd,
+          totalChargeUsd,
           amountHtg: quote.recipientAmount, status: 'PENDING', stage: 'AWAITING_FUNDING',
           referenceNumber, testMode: true,
           quoteId: quote.id,
@@ -1306,7 +1458,7 @@ export function createApp(options: CreateAppOptions = {}) {
           riskFlags: riskFlags as Prisma.InputJsonValue,
           configurationVersionId: quote.configurationVersionId,
         },
-        include: { recipient: true, fundingTransaction: true },
+        include: { recipient: true, fundingTransaction: true, quote: true },
       });
       const safeTransfer = transferFromDb(created);
       await prisma.idempotencyKey.create({
@@ -1345,13 +1497,16 @@ export function createApp(options: CreateAppOptions = {}) {
       recipient = { id: randomUUID(), userId: req.userId!, ...input.recipient };
       recipients.set(recipient.id, recipient);
     }
-    const riskFlags = await evaluateRisk(req.userId!, recipient.id, recipient.phoneNumber, quote.sendAmount.toNumber());
+    const amountUsd = fxService.toUsdEquivalent(quote.sendAmount, quote.sourceCurrency, quote.exchangeRate);
+    const riskFlags = await evaluateRisk(req.userId!, recipient.id, recipient.phoneNumber, amountUsd.toNumber());
     memoryCompliance.set(transferId, { status: 'REVIEW', reasons: riskFlags });
     const transfer: Transfer & { userId: string } = {
       id: transferId, referenceNumber: `TC-${transferId.replaceAll('-', '').slice(0, 12).toUpperCase()}`,
       userId: req.userId!, recipientId: recipient.id, recipientName: recipient.fullName,
       recipientPhone: recipient.phoneNumber, payoutMethod: recipient.payoutMethod,
-      amount: quote.sendAmount.toNumber(), sourceCurrency: 'USD', targetCurrency: 'HTG',
+      amount: quote.sendAmount.toNumber(),
+      sourceCurrency: quote.sourceCurrency as Transfer['sourceCurrency'],
+      targetCurrency: quote.targetCurrency as Transfer['targetCurrency'],
       fee: quote.ticashFee.plus(quote.providerFee).toNumber(),
       ticashFee: quote.ticashFee.toNumber(), providerFundingFee: quote.providerFee.toNumber(),
       totalCharged: quote.totalCustomerCharge.toNumber(),
@@ -1375,8 +1530,17 @@ export function createApp(options: CreateAppOptions = {}) {
     const transferId = req.params.id as string;
     let amount: number;
     if (databaseEnabled) {
-      const transfer = await prisma.transfer.findFirst({ where: { id: transferId, senderUserId: req.userId! }, include: { fundingTransaction: true } });
+      const transfer = await prisma.transfer.findFirst({
+        where: { id: transferId, senderUserId: req.userId! },
+        include: { fundingTransaction: true, quote: true },
+      });
       if (!transfer) return res.status(404).json({ error: 'Transfer not found', code: 'TRANSFER_NOT_FOUND' });
+      if (transfer.quote?.sourceCurrency !== 'USD') {
+        return res.status(409).json({
+          error: `Funding is not configured for ${transfer.quote?.sourceCurrency ?? 'this currency'}`,
+          code: 'FUNDING_PROVIDER_UNAVAILABLE',
+        });
+      }
       if (transfer.fundingTransaction) {
         return res.json({ transaction: await fundingService.getFunding(req.userId!, transfer.fundingTransaction.id), idempotentReplay: true });
       }
@@ -1385,6 +1549,12 @@ export function createApp(options: CreateAppOptions = {}) {
     } else {
       const transfer = transfers.get(transferId);
       if (!transfer || transfer.userId !== req.userId) return res.status(404).json({ error: 'Transfer not found', code: 'TRANSFER_NOT_FOUND' });
+      if (transfer.sourceCurrency !== 'USD') {
+        return res.status(409).json({
+          error: `Funding is not configured for ${transfer.sourceCurrency}`,
+          code: 'FUNDING_PROVIDER_UNAVAILABLE',
+        });
+      }
       if (transfer.fundingTransactionId) {
         return res.json({ transaction: await fundingService.getFunding(req.userId!, transfer.fundingTransactionId), idempotentReplay: true });
       }
@@ -1405,7 +1575,7 @@ export function createApp(options: CreateAppOptions = {}) {
       const [dbUsers, dbRecipients, dbTransfers, dbAuditLogs] = await Promise.all([
         prisma.user.findMany({ orderBy: { createdAt: 'desc' } }),
         prisma.recipient.count(),
-        prisma.transfer.findMany({ include: { recipient: true }, orderBy: { createdAt: 'desc' } }),
+        prisma.transfer.findMany({ include: { recipient: true, quote: true }, orderBy: { createdAt: 'desc' } }),
         prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
       ]);
       const safeTransfers = dbTransfers.map(transferFromDb);
@@ -1512,7 +1682,7 @@ export function createApp(options: CreateAppOptions = {}) {
     if (databaseEnabled) {
       const customer = await prisma.user.findUnique({ where: { id: userId }, include: {
         kycProfile: true, recipients: { orderBy: { createdAt: 'desc' } },
-        transfers: { include: { recipient: true, fundingTransaction: true }, orderBy: { createdAt: 'desc' }, take: 100 },
+        transfers: { include: { recipient: true, fundingTransaction: true, quote: true }, orderBy: { createdAt: 'desc' }, take: 100 },
       } });
       if (!customer || customer.role !== 'CUSTOMER') return res.status(404).json({ error: 'Customer not found', code: 'CUSTOMER_NOT_FOUND' });
       await recordAudit(req.userId, 'ADMIN_CUSTOMER_RECORD_VIEWED', 'User', userId);
@@ -1558,7 +1728,7 @@ export function createApp(options: CreateAppOptions = {}) {
             ] }] : []),
           ],
         },
-        include: { recipient: true, sender: true, fundingTransaction: true }, orderBy: { createdAt: 'desc' }, take: query.limit,
+        include: { recipient: true, sender: true, fundingTransaction: true, quote: true }, orderBy: { createdAt: 'desc' }, take: query.limit,
       });
       return res.json({ transfers: rows.map((row) => ({ ...adminTransfer(transferFromDb(row)), sender: maskEmail(row.sender.email),
         fundingStatus: row.fundingTransaction?.status ?? 'NOT_STARTED' })) });
@@ -1574,7 +1744,7 @@ export function createApp(options: CreateAppOptions = {}) {
     const transferId = req.params.id as string;
     if (databaseEnabled) {
       const row = await prisma.transfer.findUnique({ where: { id: transferId }, include: {
-        sender: true, recipient: true, fundingTransaction: true,
+        sender: true, recipient: true, fundingTransaction: true, quote: true,
         complianceDecisions: { orderBy: { createdAt: 'asc' } },
       } });
       if (!row) return res.status(404).json({ error: 'Transfer not found', code: 'TRANSFER_NOT_FOUND' });
@@ -1598,7 +1768,7 @@ export function createApp(options: CreateAppOptions = {}) {
     if (databaseEnabled) {
       const [reviewTransfers, reviewUsers] = await Promise.all([
         prisma.transfer.findMany({ where: { OR: [{ complianceStatus: 'REVIEW' }, { stage: 'COMPLIANCE_REVIEW' }] },
-          include: { sender: true, recipient: true, fundingTransaction: true }, orderBy: { updatedAt: 'asc' } }),
+          include: { sender: true, recipient: true, fundingTransaction: true, quote: true }, orderBy: { updatedAt: 'asc' } }),
         prisma.user.findMany({ where: { kycStatus: { in: ['PENDING', 'IN_REVIEW', 'REVIEW_REQUIRED'] } }, orderBy: { updatedAt: 'asc' } }),
       ]);
       return res.json({ transfers: reviewTransfers.map((row) => ({ ...adminTransfer(transferFromDb(row)), sender: maskEmail(row.sender.email),
@@ -1699,7 +1869,7 @@ export function createApp(options: CreateAppOptions = {}) {
     const transferId = req.params.id as string;
     if (databaseEnabled) {
       const transfer = await prisma.transfer.findUnique({
-        where: { id: transferId }, include: { recipient: true, fundingTransaction: true, sender: true },
+        where: { id: transferId }, include: { recipient: true, fundingTransaction: true, sender: true, quote: true },
       });
       if (!transfer) return res.status(404).json({ error: 'Transfer not found', code: 'TRANSFER_NOT_FOUND' });
       if (transfer.immutableAt && input.status !== transfer.complianceStatus) {
@@ -1737,7 +1907,7 @@ export function createApp(options: CreateAppOptions = {}) {
         } });
       }
       const updated = await prisma.transfer.findUniqueOrThrow({
-        where: { id: transferId }, include: { recipient: true, fundingTransaction: true },
+        where: { id: transferId }, include: { recipient: true, fundingTransaction: true, quote: true },
       });
       await recordAudit(req.userId, `COMPLIANCE_${input.status}`, 'Transfer', transferId, { reason: input.reason });
       return res.json({ transfer: transferFromDb(updated) });
@@ -1935,7 +2105,7 @@ export function createApp(options: CreateAppOptions = {}) {
       }
       await fundingRepository.releaseWalletForTransfer(transfer.senderUserId, transfer.id, Number(transfer.totalChargeUsd ?? transfer.amountUsd.plus(transfer.feeUsd)));
       const updated = await prisma.transfer.update({ where: { id: transferId }, data: { status: 'REVERSED', stage: 'REVERSED',
-        failureCode: `REVERSAL_${input.reasonCode}` }, include: { recipient: true, fundingTransaction: true } });
+        failureCode: `REVERSAL_${input.reasonCode}` }, include: { recipient: true, fundingTransaction: true, quote: true } });
       await recordAudit(req.userId, 'TRANSFER_REVERSAL_CREATED', 'Transfer', transferId, input);
       return res.json({ transfer: transferFromDb(updated) });
     }
@@ -2036,7 +2206,7 @@ export function createApp(options: CreateAppOptions = {}) {
           failureCode: status === 'FAILED' ? 'MOCK_PAYOUT_FAILED' : existing.failureCode,
           completedAt: status === 'COMPLETED' ? new Date() : existing.completedAt,
         },
-        include: { recipient: true },
+        include: { recipient: true, quote: true },
       });
       await recordAudit(req.userId, `TRANSFER_${status}`, 'Transfer', transferId);
       return res.json({ transfer: transferFromDb(updated) });
@@ -2072,6 +2242,10 @@ export function createApp(options: CreateAppOptions = {}) {
       return;
     }
     if (error instanceof FxError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    if (error instanceof MobileTopUpError) {
       res.status(error.statusCode).json({ error: error.message, code: error.code });
       return;
     }

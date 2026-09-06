@@ -13,9 +13,15 @@ import type { FundingRepository, FundingTransactionRecord } from './repository.j
 export interface PublicFundingSource {
   id: string;
   name: string;
+  bankName?: string;
   lastFour: string;
   bankAccountType: string;
-  status: string;
+  status: 'PENDING' | 'VERIFIED' | 'FAILED' | 'REMOVED';
+  isDefault: boolean;
+  microDepositsInitiatedAt?: string;
+  verificationAttempts: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PublicFundingTransaction {
@@ -30,14 +36,22 @@ export interface PublicFundingTransaction {
 }
 
 function publicSource(source: {
-  id: string; name: string; lastFour: string; bankAccountType: string; status: string;
+  id: string; name: string; bankName?: string; lastFour: string; bankAccountType: string;
+  status: string; isDefault: boolean; microDepositsInitiatedAt?: string;
+  verificationAttempts: number; createdAt: string; updatedAt: string;
 }): PublicFundingSource {
   return {
     id: source.id,
     name: source.name,
+    bankName: source.bankName,
     lastFour: source.lastFour,
     bankAccountType: source.bankAccountType,
-    status: source.status,
+    status: source.status === 'UNVERIFIED' ? 'PENDING' : source.status as PublicFundingSource['status'],
+    isDefault: source.isDefault,
+    microDepositsInitiatedAt: source.microDepositsInitiatedAt,
+    verificationAttempts: source.verificationAttempts,
+    createdAt: source.createdAt,
+    updatedAt: source.updatedAt,
   };
 }
 
@@ -58,6 +72,23 @@ function providerIdFromUrl(url: string): string {
   const id = new URL(url).pathname.split('/').filter(Boolean).at(-1);
   if (!id) throw new FundingError('INVALID_WEBHOOK_RESOURCE', 'Webhook resource URL is invalid', 400);
   return id;
+}
+
+function fundingSourceUrlFromWebhook(url: string): string {
+  const resource = new URL(url);
+  const segments = resource.pathname.split('/').filter(Boolean);
+  if (segments.at(-1) === 'micro-deposits') {
+    segments.pop();
+    resource.pathname = `/${segments.join('/')}`;
+  }
+  if (segments.at(-2) !== 'funding-sources' || !segments.at(-1)) {
+    throw new FundingError(
+      'INVALID_WEBHOOK_RESOURCE',
+      'Webhook funding-source resource URL is invalid',
+      400,
+    );
+  }
+  return resource.toString();
 }
 
 function isTransferLifecycleTopic(topic: string): boolean {
@@ -117,8 +148,31 @@ export class FundingService {
   }
 
   async listFundingSources(userId: string) {
-    this.requireProvider();
-    return (await this.repository.listSources(userId)).map(publicSource);
+    const provider = this.requireProvider();
+    const customer = await this.repository.getCustomer(userId);
+    if (!customer) return [];
+    const localSources = await this.repository.listSources(userId);
+    const remoteSources = await provider.listFundingSources(customer.providerCustomerUrl);
+    for (const remote of remoteSources) {
+      const local = localSources.find((item) => item.providerFundingSourceId === remote.id);
+      if (!local) continue;
+      await this.repository.updateSource(userId, local.id, {
+        name: remote.name,
+        bankName: remote.bankName,
+        bankAccountType: remote.bankAccountType,
+        status: local.status === 'FAILED' ? 'FAILED' : remote.status,
+        removedAt: remote.status === 'REMOVED' ? new Date().toISOString() : undefined,
+      });
+    }
+    let refreshed = await this.repository.listSources(userId);
+    if (!refreshed.some((item) => item.isDefault && item.status === 'VERIFIED')) {
+      const verified = refreshed.find((item) => item.status === 'VERIFIED');
+      if (verified) {
+        await this.repository.setDefaultSource(userId, verified.id);
+        refreshed = await this.repository.listSources(userId);
+      }
+    }
+    return refreshed.map(publicSource);
   }
 
   async createFundingSource(
@@ -137,9 +191,15 @@ export class FundingService {
       providerFundingSourceId: source.id,
       providerFundingSourceUrl: source.url,
       name: source.name,
+      bankName: source.bankName,
       lastFour: input.accountNumber.slice(-4),
       bankAccountType: source.bankAccountType,
       status: source.status,
+      isDefault: false,
+      microDepositsInitiatedAt: undefined,
+      verificationAttempts: 0,
+      verificationFailureCode: undefined,
+      removedAt: undefined,
     });
     await this.audit(userId, 'DWOLLA_FUNDING_SOURCE_CREATED', 'FundingSource', saved.id);
     return publicSource(saved);
@@ -149,8 +209,19 @@ export class FundingService {
     const provider = this.requireProvider();
     const source = await this.repository.getSource(userId, fundingSourceId);
     if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    if (source.status === 'VERIFIED') return { fundingSource: publicSource(source), alreadyInitiated: true };
+    if (source.status === 'REMOVED' || source.status === 'FAILED') {
+      throw new FundingError('FUNDING_SOURCE_NOT_VERIFIABLE', 'This bank account cannot be verified', 409);
+    }
+    if (source.microDepositsInitiatedAt) {
+      return { fundingSource: publicSource(source), alreadyInitiated: true };
+    }
     await provider.initiateMicroDeposits(source.providerFundingSourceUrl);
+    const updated = await this.repository.updateSource(userId, source.id, {
+      microDepositsInitiatedAt: new Date().toISOString(),
+    });
     await this.audit(userId, 'DWOLLA_MICRO_DEPOSITS_INITIATED', 'FundingSource', source.id);
+    return { fundingSource: publicSource(updated), alreadyInitiated: false };
   }
 
   async verifyMicroDeposits(
@@ -162,11 +233,41 @@ export class FundingService {
     const provider = this.requireProvider();
     const source = await this.repository.getSource(userId, fundingSourceId);
     if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
-    const providerSource = await provider.verifyMicroDeposits(
-      source.providerFundingSourceUrl,
-      amount1,
-      amount2,
-    );
+    if (source.status === 'VERIFIED') return publicSource(source);
+    if (source.status === 'REMOVED' || source.status === 'FAILED') {
+      throw new FundingError('FUNDING_SOURCE_NOT_VERIFIABLE', 'This bank account cannot be verified', 409);
+    }
+    if (!source.microDepositsInitiatedAt) {
+      throw new FundingError('MICRO_DEPOSITS_NOT_INITIATED', 'Start micro-deposit verification first', 409);
+    }
+    if (source.verificationAttempts >= 3) {
+      throw new FundingError('MICRO_DEPOSIT_ATTEMPTS_EXCEEDED', 'Micro-deposit verification attempts are exhausted', 429);
+    }
+    const attempted = await this.repository.updateSource(userId, source.id, {
+      verificationAttempts: source.verificationAttempts + 1,
+    });
+    await this.audit(userId, 'DWOLLA_MICRO_DEPOSITS_VERIFICATION_ATTEMPTED', 'FundingSource', source.id);
+    let providerSource;
+    try {
+      providerSource = await provider.verifyMicroDeposits(
+        source.providerFundingSourceUrl,
+        amount1,
+        amount2,
+      );
+    } catch (error) {
+      const failedPermanently = attempted.verificationAttempts >= 3;
+      if (failedPermanently) {
+        await this.repository.updateSource(userId, source.id, {
+          status: 'FAILED',
+          verificationFailureCode: 'MAX_ATTEMPTS',
+        });
+      }
+      await this.audit(userId, 'DWOLLA_MICRO_DEPOSITS_VERIFICATION_FAILED', 'FundingSource', source.id);
+      if (failedPermanently) {
+        throw new FundingError('MICRO_DEPOSIT_ATTEMPTS_EXCEEDED', 'Micro-deposit verification attempts are exhausted', 429);
+      }
+      throw error;
+    }
     if (providerSource.status !== 'VERIFIED') {
       throw new FundingError(
         'FUNDING_SOURCE_VERIFICATION_PENDING',
@@ -174,9 +275,55 @@ export class FundingService {
         409,
       );
     }
-    const verified = await this.repository.updateSourceStatus(source.id, providerSource.status);
+    let verified = await this.repository.updateSource(userId, source.id, {
+      status: providerSource.status,
+      bankName: providerSource.bankName,
+    });
+    const existingDefault = (await this.repository.listSources(userId)).some(
+      (item) => item.isDefault && item.status === 'VERIFIED',
+    );
+    if (!existingDefault) verified = await this.repository.setDefaultSource(userId, source.id);
     await this.audit(userId, 'DWOLLA_FUNDING_SOURCE_VERIFIED', 'FundingSource', source.id);
     return publicSource(verified);
+  }
+
+  async setDefaultFundingSource(userId: string, fundingSourceId: string) {
+    this.requireProvider();
+    const source = await this.repository.getSource(userId, fundingSourceId);
+    if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    if (source.status === 'REMOVED') {
+      throw new FundingError('FUNDING_SOURCE_REMOVED', 'The bank account has been removed', 409);
+    }
+    if (source.status !== 'VERIFIED') {
+      throw new FundingError('FUNDING_SOURCE_UNVERIFIED', 'Only a verified bank account can be the default', 409);
+    }
+    const updated = await this.repository.setDefaultSource(userId, source.id);
+    await this.audit(userId, 'DWOLLA_DEFAULT_FUNDING_SOURCE_CHANGED', 'FundingSource', source.id);
+    return publicSource(updated);
+  }
+
+  async removeFundingSource(userId: string, fundingSourceId: string) {
+    const provider = this.requireProvider();
+    const source = await this.repository.getSource(userId, fundingSourceId);
+    if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    if (source.status === 'REMOVED') return publicSource(source);
+    if (await this.repository.hasActiveTransactions(source.id)) {
+      throw new FundingError('FUNDING_SOURCE_IN_USE', 'This bank has a pending funding transaction', 409);
+    }
+    await provider.removeFundingSource(source.providerFundingSourceUrl);
+    const removed = await this.repository.updateSource(userId, source.id, {
+      status: 'REMOVED',
+      isDefault: false,
+      removedAt: new Date().toISOString(),
+    });
+    if (source.isDefault) {
+      const replacement = (await this.repository.listSources(userId)).find(
+        (item) => item.status === 'VERIFIED',
+      );
+      if (replacement) await this.repository.setDefaultSource(userId, replacement.id);
+    }
+    await this.audit(userId, 'DWOLLA_FUNDING_SOURCE_REMOVED', 'FundingSource', source.id);
+    return publicSource(removed);
   }
 
   async initiateFunding(
@@ -196,6 +343,9 @@ export class FundingService {
     }
     const source = await this.repository.getSource(userId, fundingSourceId);
     if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    if (source.status === 'REMOVED') {
+      throw new FundingError('FUNDING_SOURCE_REMOVED', 'The bank account has been removed', 409);
+    }
     if (source.status !== 'VERIFIED') {
       throw new FundingError('FUNDING_SOURCE_UNVERIFIED', 'The bank account must be verified before funding', 409);
     }
@@ -283,6 +433,38 @@ export class FundingService {
     const reservation = await this.repository.reserveWebhook(envelope.id, envelope.topic, payloadHash);
     if (reservation.duplicate) return { duplicate: true };
     try {
+      if (/^customer_(?:funding_source_|microdeposits_)/.test(envelope.topic) && envelope.resourceUrl) {
+        const sourceUrl = fundingSourceUrlFromWebhook(envelope.resourceUrl);
+        const providerSource = await provider.getFundingSource(sourceUrl);
+        const local = await this.repository.getSourceByProviderId(
+          providerSource.id || providerIdFromUrl(sourceUrl),
+        );
+        if (local) {
+          const failed = envelope.topic === 'customer_microdeposits_failed' ||
+            envelope.topic === 'customer_microdeposits_maxattempts';
+          const status = envelope.topic === 'customer_funding_source_removed'
+            ? 'REMOVED'
+            : failed ? 'FAILED' : providerSource.status;
+          await this.repository.updateSource(local.userId, local.id, {
+            status,
+            name: providerSource.name,
+            bankName: providerSource.bankName,
+            bankAccountType: providerSource.bankAccountType,
+            isDefault: status === 'REMOVED' || status === 'FAILED' ? false : local.isDefault,
+            verificationFailureCode: failed ? envelope.topic : undefined,
+            removedAt: status === 'REMOVED' ? new Date().toISOString() : undefined,
+          });
+          if (status === 'VERIFIED') {
+            const hasDefault = (await this.repository.listSources(local.userId)).some(
+              (item) => item.isDefault && item.status === 'VERIFIED',
+            );
+            if (!hasDefault) await this.repository.setDefaultSource(local.userId, local.id);
+          }
+          await this.audit(local.userId, `DWOLLA_${envelope.topic.toUpperCase()}`, 'FundingSource', local.id);
+        }
+        await this.repository.completeWebhook(reservation.eventId);
+        return { duplicate: false, ignored: !local };
+      }
       if (!isTransferLifecycleTopic(envelope.topic) || !envelope.resourceUrl) {
         await this.repository.completeWebhook(reservation.eventId);
         return { duplicate: false, ignored: true };

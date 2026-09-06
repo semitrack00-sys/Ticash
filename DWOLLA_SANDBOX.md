@@ -26,19 +26,23 @@ not connected; the existing KYC state was a manual test workflow.
 
 ## Funding lifecycle
 
-1. An authenticated, backend-KYC-approved user creates or reuses their Dwolla
-   personal verified-customer record.
+1. An authenticated, backend-KYC-approved user creates or reuses a Dwolla
+   unverified-customer record. TiCash KYC remains an independent backend gate; final
+   Dwolla customer/funds-flow configuration still requires Dwolla review before launch.
 2. Bank details are sent directly from the API process to Dwolla. TiCash persists
    only the provider resource identifier, display name, account type, and last four.
 3. The API initiates and verifies micro-deposits using the Dwolla funding-source
-   resource. The client cannot set a source to verified.
-4. An ACH request reserves a unique `(userId, idempotencyKey)` record before the
+   resource. The client cannot set a source to verified. Provider-side verification
+   events are verified and synchronized, and three failed attempts lock verification.
+4. A verified source can be selected as the account default. Removal uses Dwolla's
+   soft-removal API and is rejected while a TiCash ACH request is pending.
+5. An ACH request reserves a unique `(userId, idempotencyKey)` record before the
    provider call and forwards an `Idempotency-Key` to Dwolla.
-5. The request stays pending/processing until an authenticated provider status
+6. The request stays pending/processing until an authenticated provider status
    fetch or verified webhook confirms the authoritative state.
-6. A first confirmed `processed` state creates one balanced ledger transaction:
+7. A first confirmed `processed` state creates one balanced ledger transaction:
    debit `DWOLLA_CLEARING_USD`, credit `USER_WALLET_USD:<userId>`.
-7. Dwolla reports an ACH return as a `failed` transfer. If the transfer had
+8. Dwolla reports an ACH return as a `failed` transfer. If the transfer had
    already settled, TiCash records the internal state as `REVERSED` and creates
    one inverse ledger transaction. Unique references prevent duplicate settlement
    or reversal entries.
@@ -79,6 +83,12 @@ Use the placeholders documented in `.env.example`. Required values when enabled:
 Keep `PAYMENTS_MODE=mock`, `PAYOUTS_MODE=mock`, and every production flag false.
 Apply the reviewed Prisma schema with `npm run db:push`, then seed disabled
 Haiti corridor candidates with `npm run db:seed`.
+
+The mobile Bank Accounts screen calls the backend only. It does not persist full bank
+numbers locally, and API responses contain only provider references, last four digits,
+bank/account display metadata, verification state, timestamps, and default status.
+Memory-mode storage is suitable only for automated tests and disposable demos; restart
+recovery testing requires PostgreSQL via `DATABASE_URL`.
 
 ## Production blockers
 

@@ -8,7 +8,7 @@ export type FundingStatus =
   | 'CANCELLED'
   | 'REVERSED';
 
-export type FundingSourceStatus = 'UNVERIFIED' | 'VERIFIED' | 'REMOVED';
+export type FundingSourceStatus = 'UNVERIFIED' | 'VERIFIED' | 'FAILED' | 'REMOVED';
 
 export interface FundingConfig {
   enabled: boolean;
@@ -26,12 +26,6 @@ export interface DwollaCustomerInput {
   firstName: string;
   lastName: string;
   email: string;
-  address1: string;
-  city: string;
-  state: string;
-  postalCode: string;
-  dateOfBirth: string;
-  ssn: string;
 }
 
 export interface DwollaCustomer {
@@ -52,6 +46,7 @@ export interface DwollaFundingSource {
   id: string;
   url: string;
   name: string;
+  bankName?: string;
   bankAccountType: string;
   status: FundingSourceStatus;
 }
@@ -74,6 +69,8 @@ export interface DwollaFundingProvider {
   getCustomer(customerUrl: string): Promise<DwollaCustomer>;
   createFundingSource(input: DwollaFundingSourceInput): Promise<DwollaFundingSource>;
   listFundingSources(customerUrl: string): Promise<DwollaFundingSource[]>;
+  getFundingSource(fundingSourceUrl: string): Promise<DwollaFundingSource>;
+  removeFundingSource(fundingSourceUrl: string): Promise<DwollaFundingSource>;
   initiateMicroDeposits(fundingSourceUrl: string): Promise<void>;
   verifyMicroDeposits(
     fundingSourceUrl: string,

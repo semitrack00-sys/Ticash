@@ -20,7 +20,9 @@ class RecipientsService {
   }
 
   Future<Recipient> create({
-    required String fullName,
+    required String firstName,
+    String? middleName,
+    required String lastName,
     required String phoneNumber,
     required String payoutMethod,
     required String address,
@@ -30,7 +32,9 @@ class RecipientsService {
     final response = await _dio.post(
       ApiConfig.recipients,
       data: {
-        'fullName': fullName,
+        'firstName': firstName,
+        'middleName': middleName,
+        'lastName': lastName,
         'country': 'HT',
         'phoneNumber': phoneNumber,
         'payoutMethod': payoutMethod,
@@ -51,7 +55,9 @@ class RecipientsService {
 
   Future<Recipient> update({
     required String recipientId,
-    required String fullName,
+    required String firstName,
+    String? middleName,
+    required String lastName,
     required String phoneNumber,
     required String payoutMethod,
     required String address,
@@ -61,7 +67,9 @@ class RecipientsService {
     final response = await _dio.patch(
       '${ApiConfig.recipients}/$recipientId',
       data: {
-        'fullName': fullName,
+        'firstName': firstName,
+        'middleName': middleName,
+        'lastName': lastName,
         'country': 'HT',
         'phoneNumber': phoneNumber,
         'payoutMethod': payoutMethod,

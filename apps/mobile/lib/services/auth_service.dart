@@ -44,6 +44,12 @@ class AuthService {
     required String password,
     required String firstName,
     required String lastName,
+    required String countryCode,
+    required String addressLine1,
+    String? addressLine2,
+    required String city,
+    String? region,
+    String? postalCode,
   }) async {
     try {
       final response = await _dio.post(
@@ -53,6 +59,16 @@ class AuthService {
           'password': password,
           'firstName': firstName.trim(),
           'lastName': lastName.trim(),
+          'countryCode': countryCode.trim().toUpperCase(),
+          'addressLine1': addressLine1.trim(),
+          'addressLine2': addressLine2?.trim().isEmpty == true
+              ? null
+              : addressLine2?.trim(),
+          'city': city.trim(),
+          'region': region?.trim().isEmpty == true ? null : region?.trim(),
+          'postalCode': postalCode?.trim().isEmpty == true
+              ? null
+              : postalCode?.trim(),
         },
       );
 
@@ -95,6 +111,12 @@ class AuthService {
     required String firstName,
     required String lastName,
     String? phoneNumber,
+    String? countryCode,
+    String? addressLine1,
+    String? addressLine2,
+    String? city,
+    String? region,
+    String? postalCode,
   }) async {
     try {
       final response = await _dio.patch(
@@ -105,6 +127,20 @@ class AuthService {
           'phoneNumber': phoneNumber?.trim().isEmpty == true
               ? null
               : phoneNumber?.trim(),
+          'countryCode': countryCode?.trim().isEmpty == true
+              ? null
+              : countryCode?.trim().toUpperCase(),
+          'addressLine1': addressLine1?.trim().isEmpty == true
+              ? null
+              : addressLine1?.trim(),
+          'addressLine2': addressLine2?.trim().isEmpty == true
+              ? null
+              : addressLine2?.trim(),
+          'city': city?.trim().isEmpty == true ? null : city?.trim(),
+          'region': region?.trim().isEmpty == true ? null : region?.trim(),
+          'postalCode': postalCode?.trim().isEmpty == true
+              ? null
+              : postalCode?.trim(),
         },
       );
       return User.fromJson(response.data['user'] as Map<String, dynamic>);

@@ -1,0 +1,85 @@
+import { describe, expect, it, vi } from 'vitest';
+import { ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
+import type { MobileTopUpConfig } from '../src/topup/types.js';
+
+const config: MobileTopUpConfig = {
+  enabled: true,
+  environment: 'sandbox',
+  clientId: 'sandbox-id',
+  clientSecret: 'sandbox-secret',
+  authUrl: 'https://auth.reloadly.com/oauth/token',
+  airtimeBaseUrl: 'https://topups-sandbox.reloadly.com',
+  billingCurrency: 'USD',
+  feeUsd: '0.00',
+  quoteTtlSeconds: 300,
+  paymentMode: 'mock',
+  productionEnabled: false,
+  approvedForLiveUse: false,
+};
+
+function json(value: unknown, status = 200) {
+  return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+describe('Reloadly Sandbox top-up provider', () => {
+  it('uses server-side OAuth and provider-returned Haiti operator data', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json([{ operatorId: 12, name: 'Sandbox Haiti Mobile', status: true,
+        country: { isoName: 'HT' }, denominationType: 'FIXED', senderCurrencyCode: 'USD',
+        destinationCurrencyCode: 'HTG', fixedAmounts: [5], localFixedAmounts: [650] }]));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+    const operators = await provider.listOperators('HT');
+    expect(operators).toHaveLength(1);
+    expect(operators[0]).toMatchObject({ id: 12, countryCode: 'HT', fixedAmounts: [5] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(config.authUrl);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      client_id: 'sandbox-id', grant_type: 'client_credentials', audience: config.airtimeBaseUrl,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/HT`);
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer token');
+  });
+
+  it('submits a provider purchase without exposing credentials in its body', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json({ transactionId: 44, status: 'PROCESSING', requestedAmount: 5,
+        requestedAmountCurrencyCode: 'USD' }));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+    await provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+50937123456',
+      recipientCountryCode: 'HT', customIdentifier: 'ticash-topup-test' });
+    const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(body).toMatchObject({ operatorId: 12, amount: 5, useLocalAmount: false,
+      recipientPhone: { countryCode: 'HT', number: '50937123456' } });
+    expect(body.client_secret).toBeUndefined();
+  });
+
+  it('accepts the current Reloadly status response transaction field', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json({
+        transaction: {
+          transactionId: 179204,
+          status: 'SUCCESSFUL',
+          requestedAmount: 4,
+          requestedAmountCurrencyCode: 'USD',
+          deliveredAmount: 523.57,
+          deliveredAmountCurrencyCode: 'HTG',
+        },
+        status: 'SUCCESSFUL',
+        code: 'TOPUP_SUCCESSFUL',
+        message: 'The top-up was completed',
+      }));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.getTopUpStatus('179204')).resolves.toMatchObject({
+      transactionId: '179204',
+      status: 'SUCCESSFUL',
+      requestedAmount: 4,
+      deliveredAmount: 523.57,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `${config.airtimeBaseUrl}/topups/179204/status`,
+    );
+  });
+});

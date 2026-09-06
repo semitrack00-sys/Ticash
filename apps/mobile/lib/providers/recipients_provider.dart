@@ -21,7 +21,9 @@ class RecipientsNotifier extends StateNotifier<AsyncValue<List<Recipient>>> {
   }
 
   Future<void> addRecipient({
-    required String fullName,
+    required String firstName,
+    String? middleName,
+    required String lastName,
     required String phoneNumber,
     required String payoutMethod,
     required String address,
@@ -29,7 +31,9 @@ class RecipientsNotifier extends StateNotifier<AsyncValue<List<Recipient>>> {
     required String department,
   }) async {
     final recipient = await _service.create(
-      fullName: fullName,
+      firstName: firstName,
+      middleName: middleName,
+      lastName: lastName,
       phoneNumber: phoneNumber,
       payoutMethod: payoutMethod,
       address: address,
@@ -53,7 +57,9 @@ class RecipientsNotifier extends StateNotifier<AsyncValue<List<Recipient>>> {
 
   Future<void> updateRecipient({
     required String recipientId,
-    required String fullName,
+    required String firstName,
+    String? middleName,
+    required String lastName,
     required String phoneNumber,
     required String payoutMethod,
     required String address,
@@ -62,7 +68,9 @@ class RecipientsNotifier extends StateNotifier<AsyncValue<List<Recipient>>> {
   }) async {
     final updated = await _service.update(
       recipientId: recipientId,
-      fullName: fullName,
+      firstName: firstName,
+      middleName: middleName,
+      lastName: lastName,
       phoneNumber: phoneNumber,
       payoutMethod: payoutMethod,
       address: address,

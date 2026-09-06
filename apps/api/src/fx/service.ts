@@ -1,6 +1,13 @@
 import { Prisma } from '@prisma/client';
 import type { FxQuoteRecord, FxQuoteRepository } from './repository.js';
-import { FxError, type FxConfig, type FxCorridor, type FxProvider } from './types.js';
+import {
+  FxError,
+  supportedSourceCurrencies,
+  type FxConfig,
+  type FxCorridor,
+  type FxProvider,
+  type SupportedSourceCurrency,
+} from './types.js';
 
 export interface QuoteRequest {
   sendCountry: string;
@@ -9,7 +16,7 @@ export interface QuoteRequest {
   targetCurrency: string;
   payoutMethod: string;
   sendAmount: number;
-  amountCurrency?: 'USD' | 'HTG';
+  amountCurrency?: string;
 }
 
 export interface PublicFxQuote {
@@ -35,12 +42,22 @@ export interface QuotePricingConfiguration {
   providerFundingFeeUsd: string;
 }
 
-const supportedCorridor: FxCorridor = {
-  sendCountry: 'US',
-  receiveCountry: 'HT',
-  sourceCurrency: 'USD',
-  targetCurrency: 'HTG',
+const sendCountryByCurrency: Record<SupportedSourceCurrency, string> = {
+  USD: 'US',
+  CAD: 'CA',
+  EUR: 'EU',
+  MXN: 'MX',
+  BRL: 'BR',
+  CLP: 'CL',
+  DOP: 'DO',
 };
+
+export const supportedCorridors: FxCorridor[] = supportedSourceCurrencies.map((sourceCurrency) => ({
+  sendCountry: sendCountryByCurrency[sourceCurrency],
+  receiveCountry: 'HT',
+  sourceCurrency,
+  targetCurrency: 'HTG',
+}));
 
 function money(value: Prisma.Decimal.Value): Prisma.Decimal {
   return new Prisma.Decimal(value).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
@@ -82,23 +99,42 @@ export class FxService {
       mode: this.config.mode,
       provider: this.config.mode === 'mock' ? 'mock_test_fx' : null,
       testMode: this.config.mode === 'mock',
-      corridor: supportedCorridor,
+      corridor: supportedCorridors[0],
+      corridors: supportedCorridors,
     };
   }
 
-  private assertSupported(input: QuoteRequest) {
-    if (
-      input.sendCountry !== supportedCorridor.sendCountry ||
-      input.receiveCountry !== supportedCorridor.receiveCountry ||
-      input.sourceCurrency !== supportedCorridor.sourceCurrency ||
-      input.targetCurrency !== supportedCorridor.targetCurrency
-    ) {
-      throw new FxError('UNSUPPORTED_CORRIDOR', 'Only the U.S. to Haiti USD/HTG corridor is available', 422);
+  private supportedCorridor(input: QuoteRequest): FxCorridor {
+    const corridor = supportedCorridors.find((candidate) =>
+      input.sendCountry === candidate.sendCountry &&
+      input.receiveCountry === candidate.receiveCountry &&
+      input.sourceCurrency === candidate.sourceCurrency &&
+      input.targetCurrency === candidate.targetCurrency);
+    if (!corridor) {
+      throw new FxError(
+        'UNSUPPORTED_CORRIDOR',
+        'The selected sending currency is not enabled for Haiti HTG payout',
+        422,
+      );
     }
+    const amountCurrency = input.amountCurrency ?? input.sourceCurrency;
+    if (amountCurrency !== input.sourceCurrency && amountCurrency !== input.targetCurrency) {
+      throw new FxError('INVALID_AMOUNT_CURRENCY', 'Amount currency must match the send or receive currency', 400);
+    }
+    return corridor;
+  }
+
+  toUsdEquivalent(value: Prisma.Decimal.Value, sourceCurrency: string, sourceHtgRate: Prisma.Decimal.Value) {
+    if (sourceCurrency === 'USD') return money(value);
+    const usdHtgRate = this.config.mockHtgRates?.USD ?? this.config.mockUsdHtgRate;
+    if (!usdHtgRate) {
+      throw new FxError('USD_EQUIVALENT_UNAVAILABLE', 'USD-equivalent risk calculation is unavailable', 503);
+    }
+    return money(new Prisma.Decimal(value).mul(sourceHtgRate).div(usdHtgRate));
   }
 
   async createQuote(userId: string, input: QuoteRequest, pricing?: QuotePricingConfiguration): Promise<PublicFxQuote> {
-    this.assertSupported(input);
+    const corridor = this.supportedCorridor(input);
     if (this.config.mode === 'disabled' || !this.provider) {
       throw new FxError('FX_UNAVAILABLE', 'FX quoting is not configured', 503);
     }
@@ -108,8 +144,10 @@ export class FxService {
       throw new FxError('INVALID_SEND_AMOUNT', 'Amount must have no more than two decimal places', 400);
     }
     const rateResult = await this.provider.getRate({
-      corridor: supportedCorridor,
-      sendAmount: (input.amountCurrency ?? 'USD') === 'USD' ? enteredAmount.toFixed(2) : '1.00',
+      corridor,
+      sendAmount: (input.amountCurrency ?? input.sourceCurrency) === input.sourceCurrency
+        ? enteredAmount.toFixed(2)
+        : '1.00',
       requestedAt: now,
     });
     const exchangeRate = new Prisma.Decimal(rateResult.rate)
@@ -117,19 +155,27 @@ export class FxService {
     if (!exchangeRate.isPositive()) {
       throw new FxError('INVALID_FX_RATE', 'FX provider returned an invalid exchange rate', 502);
     }
-    const sendAmount = (input.amountCurrency ?? 'USD') === 'HTG'
+    const sendAmount = (input.amountCurrency ?? input.sourceCurrency) === input.targetCurrency
       ? enteredAmount.div(exchangeRate).toDecimalPlaces(2, Prisma.Decimal.ROUND_CEIL)
       : enteredAmount;
-    if (sendAmount.greaterThan(5000)) throw new FxError('SEND_LIMIT_EXCEEDED', 'Send amount exceeds the $5,000 sandbox limit', 422);
+    if (this.toUsdEquivalent(sendAmount, input.sourceCurrency, exchangeRate).greaterThan(5000)) {
+      throw new FxError('SEND_LIMIT_EXCEEDED', 'Send amount exceeds the 5,000 USD-equivalent sandbox limit', 422);
+    }
     const percentageFee = sendAmount
       .mul(pricing?.ticashFeePercent ?? this.config.ticashFeePercent)
       .div(100);
     const ticashFee = money(Prisma.Decimal.max(
       percentageFee,
-      new Prisma.Decimal(pricing?.ticashMinimumFeeUsd ?? this.config.ticashMinimumFeeUsd),
+      new Prisma.Decimal(input.sourceCurrency === 'USD'
+        ? pricing?.ticashMinimumFeeUsd ?? this.config.ticashMinimumFeeUsd
+        : this.config.minimumFeesByCurrency?.[input.sourceCurrency as SupportedSourceCurrency] ?? this.config.ticashMinimumFeeUsd),
     ));
-    const providerFee = money(pricing?.providerFundingFeeUsd ?? this.config.providerFundingFeeUsd);
-    const recipientAmount = (input.amountCurrency ?? 'USD') === 'HTG' ? enteredAmount : money(sendAmount.mul(exchangeRate));
+    const providerFee = money(input.sourceCurrency === 'USD'
+      ? pricing?.providerFundingFeeUsd ?? this.config.providerFundingFeeUsd
+      : this.config.providerFeesByCurrency?.[input.sourceCurrency as SupportedSourceCurrency] ?? '0');
+    const recipientAmount = (input.amountCurrency ?? input.sourceCurrency) === input.targetCurrency
+      ? enteredAmount
+      : money(sendAmount.mul(exchangeRate));
     const totalCustomerCharge = money(sendAmount.plus(ticashFee).plus(providerFee));
     const configuredExpiry = new Date(now.getTime() + this.config.quoteTtlSeconds * 1000);
     const expiresAt = rateResult.expiresAt && rateResult.expiresAt < configuredExpiry
@@ -139,7 +185,7 @@ export class FxService {
       userId,
       provider: rateResult.provider,
       testMode: rateResult.testMode,
-      ...supportedCorridor,
+      ...corridor,
       payoutMethod: input.payoutMethod,
       sendAmount,
       exchangeRate,
@@ -154,7 +200,7 @@ export class FxService {
   }
 
   async consumeQuote(userId: string, quoteId: string, input: QuoteRequest): Promise<FxQuoteRecord> {
-    this.assertSupported(input);
+    this.supportedCorridor(input);
     const quote = await this.repository.findById(quoteId);
     if (!quote || quote.userId !== userId) {
       throw new FxError('QUOTE_NOT_FOUND', 'Quote was not found', 404);
@@ -176,7 +222,7 @@ export class FxService {
       quote.sourceCurrency === input.sourceCurrency &&
       quote.targetCurrency === input.targetCurrency &&
       quote.payoutMethod === input.payoutMethod &&
-      ((input.amountCurrency ?? 'USD') === 'HTG'
+      ((input.amountCurrency ?? input.sourceCurrency) === input.targetCurrency
         ? quote.recipientAmount.equals(requestedAmount)
         : quote.sendAmount.equals(requestedAmount));
     if (!matches) {

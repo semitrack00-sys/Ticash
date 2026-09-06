@@ -21,4 +21,11 @@ describe('FX configuration', () => {
     expect(() => loadFxConfig({ TICASH_FEE_PERCENT: '-1' })).toThrow();
     expect(() => loadFxConfig({ FX_PROVIDER_FUNDING_FEE_USD: 'free' })).toThrow();
   });
+
+  it('loads a separate test HTG rate for every supported sending currency', () => {
+    const config = loadFxConfig({ NODE_ENV: 'development', FX_MODE: 'mock' });
+    expect(Object.keys(config.mockHtgRates ?? {})).toEqual([
+      'USD', 'CAD', 'EUR', 'MXN', 'BRL', 'CLP', 'DOP',
+    ]);
+  });
 });

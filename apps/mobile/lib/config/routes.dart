@@ -14,6 +14,8 @@ import '../screens/activity/transaction_detail_screen.dart';
 import '../screens/splash/splash_screen.dart';
 import '../screens/support/support_screen.dart';
 import '../screens/kyc/kyc_onboarding_screen.dart';
+import '../screens/wallet/wallet_screen.dart';
+import '../screens/topup/mobile_top_up_screen.dart';
 import '../models/user.dart';
 
 /// Named route paths used throughout the app.
@@ -23,6 +25,8 @@ class AppRoutes {
   static const String login = '/login';
   static const String register = '/register';
   static const String home = '/';
+  static const String send = '/send';
+  static const String recharge = '/recharge';
   static const String transfer = '/transfer';
   static const String recipients = '/recipients';
   static const String profile = '/profile';
@@ -31,6 +35,25 @@ class AppRoutes {
   static const String splash = '/splash';
   static const String support = '/support';
   static const String kyc = '/kyc';
+  static const String wallet = '/wallet';
+  static const String mobileTopUp = '/mobile-recharge';
+
+  /// Public website paths that are safe to preserve through authentication.
+  /// No arbitrary redirect URL or query data is accepted.
+  static const Set<String> supportedAppLinkPaths = {send, recharge, support};
+  static const Set<String> kycProtectedAppLinkPaths = {send, recharge};
+
+  static String? safeContinuation(String? path) {
+    return supportedAppLinkPaths.contains(path) ? path : null;
+  }
+
+  static bool requiresKyc(String path) {
+    return kycProtectedAppLinkPaths.contains(path);
+  }
+
+  static String withContinuation(String route, String continuation) {
+    return '$route?continue=${Uri.encodeQueryComponent(continuation)}';
+  }
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -39,14 +62,19 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final auth = ref.read(authNotifierProvider);
       if (auth.isLoading) {
-        return state.matchedLocation == AppRoutes.splash
-            ? null
-            : AppRoutes.splash;
+        if (state.matchedLocation == AppRoutes.splash) return null;
+        final continuation = AppRoutes.safeContinuation(state.matchedLocation);
+        return continuation == null
+            ? AppRoutes.splash
+            : AppRoutes.withContinuation(AppRoutes.splash, continuation);
       }
       final isAuthRoute =
           state.matchedLocation == AppRoutes.login ||
           state.matchedLocation == AppRoutes.register;
       final isLoggedIn = auth.valueOrNull != null;
+      final continuation = AppRoutes.safeContinuation(
+        state.uri.queryParameters['continue'],
+      );
       const staffRoles = {
         'ADMIN',
         'SUPER_ADMIN',
@@ -57,16 +85,43 @@ final routerProvider = Provider<GoRouter>((ref) {
       };
       final isAdmin = staffRoles.contains(auth.valueOrNull?.role);
       if (state.matchedLocation == AppRoutes.splash) {
-        return isLoggedIn
-            ? (isAdmin ? AppRoutes.admin : AppRoutes.home)
-            : AppRoutes.login;
+        if (!isLoggedIn) {
+          return continuation == null
+              ? AppRoutes.login
+              : AppRoutes.withContinuation(AppRoutes.login, continuation);
+        }
+        if (isAdmin) return AppRoutes.admin;
+        if (auth.valueOrNull?.kycStatus != KycStatus.approved) {
+          return continuation == null
+              ? AppRoutes.kyc
+              : AppRoutes.withContinuation(AppRoutes.kyc, continuation);
+        }
+        return continuation ?? AppRoutes.home;
       }
-      if (!isLoggedIn && !isAuthRoute) return AppRoutes.login;
+      if (!isLoggedIn && !isAuthRoute) {
+        final continuation = AppRoutes.safeContinuation(state.matchedLocation);
+        return continuation == null
+            ? AppRoutes.login
+            : AppRoutes.withContinuation(AppRoutes.login, continuation);
+      }
       if (isLoggedIn && isAuthRoute) {
         if (isAdmin) return AppRoutes.admin;
-        return auth.valueOrNull?.kycStatus == KycStatus.approved
-            ? AppRoutes.home
-            : AppRoutes.kyc;
+        if (auth.valueOrNull?.kycStatus != KycStatus.approved) {
+          return continuation == null
+              ? AppRoutes.kyc
+              : AppRoutes.withContinuation(AppRoutes.kyc, continuation);
+        }
+        return continuation ?? AppRoutes.home;
+      }
+      if (isLoggedIn &&
+          AppRoutes.requiresKyc(state.matchedLocation) &&
+          auth.valueOrNull?.kycStatus != KycStatus.approved) {
+        return AppRoutes.withContinuation(AppRoutes.kyc, state.matchedLocation);
+      }
+      if (isLoggedIn &&
+          state.matchedLocation == AppRoutes.kyc &&
+          auth.valueOrNull?.kycStatus == KycStatus.approved) {
+        return continuation ?? AppRoutes.home;
       }
       if (state.matchedLocation == AppRoutes.admin && !isAdmin) {
         return AppRoutes.home;
@@ -92,6 +147,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.transfer,
+        builder: (context, state) => const TransferScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.send,
         builder: (context, state) => const TransferScreen(),
       ),
       GoRoute(
@@ -122,6 +181,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.kyc,
         builder: (context, state) => const KycOnboardingScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.wallet,
+        builder: (context, state) => const WalletScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.mobileTopUp,
+        builder: (context, state) => const MobileTopUpScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.recharge,
+        builder: (context, state) => const MobileTopUpScreen(),
       ),
     ],
   );

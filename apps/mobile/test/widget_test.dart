@@ -31,8 +31,9 @@ void main() {
     expect(tapped, isTrue);
   });
 
-  testWidgets('PrimaryButton shows a spinner and disables tap while loading',
-      (tester) async {
+  testWidgets('PrimaryButton shows a spinner and disables tap while loading', (
+    tester,
+  ) async {
     var tapped = false;
 
     await tester.pumpWidget(

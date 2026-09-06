@@ -23,6 +23,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _last = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _country = TextEditingController();
+  final _address1 = TextEditingController();
+  final _address2 = TextEditingController();
+  final _city = TextEditingController();
+  final _region = TextEditingController();
+  final _postal = TextEditingController();
   bool _obscure = true;
 
   @override
@@ -31,6 +37,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     _last.dispose();
     _email.dispose();
     _password.dispose();
+    _country.dispose();
+    _address1.dispose();
+    _address2.dispose();
+    _city.dispose();
+    _region.dispose();
+    _postal.dispose();
     super.dispose();
   }
 
@@ -43,6 +55,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           password: _password.text,
           firstName: _first.text.trim(),
           lastName: _last.text.trim(),
+          countryCode: _country.text.trim(),
+          addressLine1: _address1.text.trim(),
+          addressLine2: _address2.text.trim(),
+          city: _city.text.trim(),
+          region: _region.text.trim(),
+          postalCode: _postal.text.trim(),
         );
   }
 
@@ -59,7 +77,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          onPressed: () => context.go(AppRoutes.login),
+          onPressed: () {
+            final continuation = AppRoutes.safeContinuation(
+              GoRouterState.of(context).uri.queryParameters['continue'],
+            );
+            context.go(
+              continuation == null
+                  ? AppRoutes.login
+                  : AppRoutes.withContinuation(AppRoutes.login, continuation),
+            );
+          },
           icon: const Icon(Icons.arrow_back_rounded),
         ),
         title: Text(context.tr('createAccount')),
@@ -119,6 +146,88 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           value == null || !value.contains('@')
                           ? context.tr('enterValidEmail')
                           : null,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _country,
+                      textCapitalization: TextCapitalization.characters,
+                      maxLength: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Country or territory code',
+                        hintText: 'US, CA, BR, CL, DO, FR…',
+                        helperText:
+                            'Use the 2-letter country code for your home address.',
+                        prefixIcon: Icon(Icons.public_outlined),
+                        counterText: '',
+                      ),
+                      validator: (value) =>
+                          value == null ||
+                              !RegExp(r'^[A-Za-z]{2}$').hasMatch(value.trim())
+                          ? 'Enter a valid 2-letter country code.'
+                          : null,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _address1,
+                      textCapitalization: TextCapitalization.words,
+                      autofillHints: const [AutofillHints.streetAddressLine1],
+                      decoration: const InputDecoration(
+                        labelText: 'Street address',
+                        prefixIcon: Icon(Icons.home_outlined),
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().length < 3
+                          ? 'Enter your street address.'
+                          : null,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _address2,
+                      textCapitalization: TextCapitalization.words,
+                      autofillHints: const [AutofillHints.streetAddressLine2],
+                      decoration: const InputDecoration(
+                        labelText: 'Apartment, suite, unit (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _city,
+                            textCapitalization: TextCapitalization.words,
+                            autofillHints: const [AutofillHints.addressCity],
+                            decoration: const InputDecoration(
+                              labelText: 'City / locality',
+                            ),
+                            validator: (value) =>
+                                value == null || value.trim().isEmpty
+                                ? 'Required'
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _region,
+                            textCapitalization: TextCapitalization.words,
+                            autofillHints: const [AutofillHints.addressState],
+                            decoration: const InputDecoration(
+                              labelText: 'State / province / region',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _postal,
+                      textCapitalization: TextCapitalization.characters,
+                      autofillHints: const [AutofillHints.postalCode],
+                      decoration: const InputDecoration(
+                        labelText: 'ZIP / postal code (if used)',
+                        prefixIcon: Icon(Icons.local_post_office_outlined),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     TextFormField(

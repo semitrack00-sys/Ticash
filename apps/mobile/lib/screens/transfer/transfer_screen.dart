@@ -21,6 +21,82 @@ class TransferScreen extends ConsumerStatefulWidget {
 }
 
 class _TransferScreenState extends ConsumerState<TransferScreen> {
+  static const _currencyNames = {
+    'USD': 'US Dollar',
+    'CAD': 'Canadian Dollar',
+    'EUR': 'Euro',
+    'MXN': 'Mexican Peso',
+    'BRL': 'Brazilian Real',
+    'CLP': 'Chilean Peso',
+    'DOP': 'Dominican Peso',
+  };
+  static const _currencySymbols = {
+    'USD': r'$',
+    'CAD': r'CA$',
+    'EUR': '€',
+    'MXN': r'MX$',
+    'BRL': r'R$',
+    'CLP': r'CLP$',
+    'DOP': r'RD$',
+  };
+  static const _defaultCorridors = [
+    SendCorridor(
+      sendCountry: 'US',
+      sourceCurrency: 'USD',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+    SendCorridor(
+      sendCountry: 'CA',
+      sourceCurrency: 'CAD',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+    SendCorridor(
+      sendCountry: 'EU',
+      sourceCurrency: 'EUR',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+    SendCorridor(
+      sendCountry: 'MX',
+      sourceCurrency: 'MXN',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+    SendCorridor(
+      sendCountry: 'BR',
+      sourceCurrency: 'BRL',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+    SendCorridor(
+      sendCountry: 'CL',
+      sourceCurrency: 'CLP',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+    SendCorridor(
+      sendCountry: 'DO',
+      sourceCurrency: 'DOP',
+      receiveCountry: 'HT',
+      targetCurrency: 'HTG',
+      quoteEnabled: true,
+      fundingEnabled: false,
+    ),
+  ];
   static const _departments = [
     'Artibonite',
     'Centre',
@@ -35,15 +111,22 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
   ];
 
   final _amount = TextEditingController();
-  final _name = TextEditingController();
+  final _recipientFirstName = TextEditingController();
+  final _recipientMiddleName = TextEditingController();
+  final _recipientLastName = TextEditingController();
   final _phone = TextEditingController(text: '+509');
   final _address = TextEditingController();
   final _city = TextEditingController();
   int _step = 0;
   String _department = 'Ouest';
   String _provider = 'MONCASH';
+  String _sourceCurrency = 'USD';
+  String _sendCountry = 'US';
   String _amountCurrency = 'USD';
+  List<SendCorridor> _corridors = _defaultCorridors;
   List<PayoutChoice> _payoutChoices = const [];
+  bool _payoutMethodsLoading = true;
+  bool _payoutMethodsLoadFailed = false;
   List<FundingSource> _fundingSources = const [];
   String? _fundingSourceId;
   bool _busy = false;
@@ -62,11 +145,19 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
   Future<void> _loadConfiguration() async {
     final service = ref.read(transfersServiceProvider);
     List<PayoutChoice> payouts = const [];
+    var payoutMethodsLoadFailed = false;
     List<FundingSource> sources = const [];
+    List<SendCorridor> corridors = const [];
     try {
       payouts = await service.payoutMethods();
     } catch (_) {
       payouts = const [];
+      payoutMethodsLoadFailed = true;
+    }
+    try {
+      corridors = await service.corridors();
+    } catch (_) {
+      corridors = const [];
     }
     try {
       sources = (await service.fundingSources())
@@ -78,6 +169,18 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
     if (!mounted) return;
     setState(() {
       _payoutChoices = payouts;
+      _payoutMethodsLoading = false;
+      _payoutMethodsLoadFailed = payoutMethodsLoadFailed;
+      if (corridors.isNotEmpty) {
+        _corridors = corridors;
+        final selected = corridors.firstWhere(
+          (item) => item.sourceCurrency == _sourceCurrency,
+          orElse: () => corridors.first,
+        );
+        _sourceCurrency = selected.sourceCurrency;
+        _sendCountry = selected.sendCountry;
+        if (_amountCurrency != 'HTG') _amountCurrency = _sourceCurrency;
+      }
       if (payouts.isNotEmpty && !payouts.any((item) => item.id == _provider)) {
         _provider = payouts.first.id;
       }
@@ -87,7 +190,11 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
   }
 
   Map<String, dynamic> get _recipient => {
-    'fullName': _name.text.trim(),
+    'firstName': _recipientFirstName.text.trim(),
+    'middleName': _recipientMiddleName.text.trim().isEmpty
+        ? null
+        : _recipientMiddleName.text.trim(),
+    'lastName': _recipientLastName.text.trim(),
     'country': 'HT',
     'phoneNumber': _phone.text.trim(),
     'address': _address.text.trim(),
@@ -96,10 +203,19 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
     'payoutMethod': _provider,
   };
 
+  String get _recipientFullName => [
+    _recipientFirstName.text.trim(),
+    if (_recipientMiddleName.text.trim().isNotEmpty)
+      _recipientMiddleName.text.trim(),
+    _recipientLastName.text.trim(),
+  ].join(' ');
+
   @override
   void dispose() {
     _amount.dispose();
-    _name.dispose();
+    _recipientFirstName.dispose();
+    _recipientMiddleName.dispose();
+    _recipientLastName.dispose();
     _phone.dispose();
     _address.dispose();
     _city.dispose();
@@ -113,16 +229,14 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
     setState(() => _error = null);
     if (_step == 0) {
       final value = _amountValue;
-      if (value == null ||
-          value <= 0 ||
-          (_amountCurrency == 'USD' && value > 5000) ||
-          (_amountCurrency == 'HTG' && value > 1000000)) {
+      if (value == null || value <= 0) {
         setState(() => _error = context.tr('amountError'));
         return;
       }
     }
     if (_step == 1) {
-      if (_name.text.trim().length < 2 ||
+      if (_recipientFirstName.text.trim().isEmpty ||
+          _recipientLastName.text.trim().isEmpty ||
           !RegExp(r'^\+509\d{8}$').hasMatch(_phone.text.trim()) ||
           _address.text.trim().length < 3 ||
           _city.text.trim().length < 2) {
@@ -131,7 +245,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
       }
     }
     if (_step == 3) {
-      if (_fundingSourceId == null) {
+      if (_sourceCurrency == 'USD' && _fundingSourceId == null) {
         setState(
           () => _error =
               'Add and verify a U.S. bank account in Wallet before continuing.',
@@ -157,6 +271,8 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
             recipient: _recipient,
             amount: _amountValue!,
             amountCurrency: _amountCurrency,
+            sendCountry: _sendCountry,
+            sourceCurrency: _sourceCurrency,
           );
       if (mounted) {
         setState(() {
@@ -189,14 +305,18 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
             quoteId: quote.quoteId,
             idempotencyKey: _idempotencyKey,
             amountCurrency: _amountCurrency,
+            sendCountry: _sendCountry,
+            sourceCurrency: _sourceCurrency,
           );
-      await ref
-          .read(transfersServiceProvider)
-          .fundTransfer(
-            transferId: result.id,
-            fundingSourceId: _fundingSourceId!,
-            idempotencyKey: 'fund-$_idempotencyKey',
-          );
+      if (_sourceCurrency == 'USD' && _fundingSourceId != null) {
+        await ref
+            .read(transfersServiceProvider)
+            .fundTransfer(
+              transferId: result.id,
+              fundingSourceId: _fundingSourceId!,
+              idempotencyKey: 'fund-$_idempotencyKey',
+            );
+      }
       final refreshed = await ref.read(transfersServiceProvider).get(result.id);
       ref.invalidate(transferHistoryProvider);
       ref.invalidate(recipientsProvider);
@@ -228,7 +348,9 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
 
   void _startOver() {
     _amount.clear();
-    _name.clear();
+    _recipientFirstName.clear();
+    _recipientMiddleName.clear();
+    _recipientLastName.clear();
     _phone.text = '+509';
     _address.clear();
     _city.clear();
@@ -372,6 +494,36 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       _heading(context, context.tr('howMuch'), context.tr('amountSubtitle')),
+      DropdownButtonFormField<String>(
+        initialValue: _sourceCurrency,
+        decoration: const InputDecoration(
+          labelText: 'Sending currency',
+          prefixIcon: Icon(Icons.currency_exchange_rounded),
+        ),
+        items: _corridors
+            .map(
+              (corridor) => DropdownMenuItem(
+                value: corridor.sourceCurrency,
+                child: Text(
+                  '${_currencyNames[corridor.sourceCurrency] ?? corridor.sourceCurrency} (${corridor.sourceCurrency})',
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          if (value == null) return;
+          final corridor = _corridors.firstWhere(
+            (item) => item.sourceCurrency == value,
+          );
+          setState(() {
+            _sourceCurrency = corridor.sourceCurrency;
+            _sendCountry = corridor.sendCountry;
+            if (_amountCurrency != 'HTG') _amountCurrency = _sourceCurrency;
+            _quote = null;
+          });
+        },
+      ),
+      const SizedBox(height: 14),
       Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
@@ -388,10 +540,12 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
             fontWeight: FontWeight.w900,
           ),
           decoration: InputDecoration(
-            labelText: _amountCurrency == 'USD'
+            labelText: _amountCurrency == _sourceCurrency
                 ? context.tr('youSend')
                 : context.tr('recipientGets'),
-            prefixText: _amountCurrency == 'USD' ? '\$ ' : '',
+            prefixText: _amountCurrency == _sourceCurrency
+                ? '${_currencySymbols[_sourceCurrency] ?? ''} '
+                : '',
             suffixText: _amountCurrency,
             fillColor: const Color(0xFF162A47),
             labelStyle: const TextStyle(color: Color(0xFFCBD5E1)),
@@ -402,9 +556,15 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
       ),
       const SizedBox(height: 14),
       SegmentedButton<String>(
-        segments: const [
-          ButtonSegment(value: 'USD', label: Text('Enter USD to send')),
-          ButtonSegment(value: 'HTG', label: Text('Enter HTG to receive')),
+        segments: [
+          ButtonSegment(
+            value: _sourceCurrency,
+            label: Text('Enter $_sourceCurrency to send'),
+          ),
+          const ButtonSegment(
+            value: 'HTG',
+            label: Text('Enter HTG to receive'),
+          ),
         ],
         selected: {_amountCurrency},
         onSelectionChanged: (value) => setState(() {
@@ -424,10 +584,28 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
         context.tr('recipientLegal'),
       ),
       TextField(
-        controller: _name,
+        controller: _recipientFirstName,
         textCapitalization: TextCapitalization.words,
         decoration: InputDecoration(
-          labelText: context.tr('fullName'),
+          labelText: context.tr('firstName'),
+          prefixIcon: const Icon(Icons.person_outline),
+        ),
+      ),
+      const SizedBox(height: 14),
+      TextField(
+        controller: _recipientMiddleName,
+        textCapitalization: TextCapitalization.words,
+        decoration: InputDecoration(
+          labelText: context.tr('middleNameOptional'),
+          prefixIcon: const Icon(Icons.person_outline),
+        ),
+      ),
+      const SizedBox(height: 14),
+      TextField(
+        controller: _recipientLastName,
+        textCapitalization: TextCapitalization.words,
+        decoration: InputDecoration(
+          labelText: context.tr('lastName'),
           prefixIcon: const Icon(Icons.person_outline),
         ),
       ),
@@ -487,7 +665,47 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
         context.tr('chooseDelivery'),
         context.tr('deliverySubtitle'),
       ),
-      if (_payoutChoices.isEmpty)
+      if (_payoutMethodsLoading)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                const SizedBox(width: 14),
+                Expanded(child: Text(context.tr('loadingHaitiPayoutMethods'))),
+              ],
+            ),
+          ),
+        )
+      else if (_payoutMethodsLoadFailed)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(context.tr('payoutMethodsLoadFailed')),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _payoutMethodsLoading = true;
+                      _payoutMethodsLoadFailed = false;
+                    });
+                    _loadConfiguration();
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: Text(context.tr('tryAgain')),
+                ),
+              ],
+            ),
+          ),
+        )
+      else if (_payoutChoices.isEmpty)
         const Card(
           child: Padding(
             padding: EdgeInsets.all(18),
@@ -518,12 +736,32 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       _heading(context, context.tr('payment'), context.tr('paymentSubtitle')),
-      if (_fundingSources.isEmpty)
-        const Card(
+      if (_sourceCurrency != 'USD')
+        Card(
           child: Padding(
-            padding: EdgeInsets.all(20),
+            padding: const EdgeInsets.all(20),
             child: Text(
-              'No verified U.S. bank account is available. Add and verify one in Wallet.',
+              '$_sourceCurrency quote preview is available in Sandbox. A funding provider for this currency is not connected yet, so no account will be charged.',
+            ),
+          ),
+        )
+      else if (_fundingSources.isEmpty)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'No verified U.S. bank account is available. Add and verify one before continuing.',
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => context.go(AppRoutes.wallet),
+                  icon: const Icon(Icons.account_balance_outlined),
+                  label: const Text('Manage bank accounts'),
+                ),
+              ],
             ),
           ),
         )
@@ -569,9 +807,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      context.tr('usdRequested', {
-                        'amount': _amountValue?.toStringAsFixed(2) ?? '0.00',
-                      }),
+                      '${_amountValue?.toStringAsFixed(2) ?? '0.00'} $_amountCurrency entered',
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ],
@@ -600,7 +836,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
-                _reviewRow(context.tr('recipient'), _name.text.trim()),
+                _reviewRow(context.tr('recipient'), _recipientFullName),
                 _reviewRow(context.tr('phone'), _phone.text.trim()),
                 _reviewRow(
                   context.tr('delivery'),
@@ -609,24 +845,24 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
                 const Divider(height: 28),
                 _reviewRow(
                   context.tr('youSend'),
-                  '\$${quote.amount.toStringAsFixed(2)} USD',
+                  '${_currencySymbols[quote.sourceCurrency] ?? ''}${quote.amount.toStringAsFixed(2)} ${quote.sourceCurrency}',
                 ),
                 _reviewRow(
                   'TiCash fee',
-                  '\$${quote.ticashFee.toStringAsFixed(2)} USD',
+                  '${_currencySymbols[quote.sourceCurrency] ?? ''}${quote.ticashFee.toStringAsFixed(2)} ${quote.sourceCurrency}',
                 ),
                 _reviewRow(
                   'Funding/provider fee',
-                  '\$${quote.providerFundingFee.toStringAsFixed(2)} USD',
+                  '${_currencySymbols[quote.sourceCurrency] ?? ''}${quote.providerFundingFee.toStringAsFixed(2)} ${quote.sourceCurrency}',
                 ),
                 _reviewRow(
                   context.tr('total'),
-                  '\$${quote.totalCost.toStringAsFixed(2)} USD',
+                  '${_currencySymbols[quote.sourceCurrency] ?? ''}${quote.totalCost.toStringAsFixed(2)} ${quote.sourceCurrency}',
                   strong: true,
                 ),
                 _reviewRow(
                   context.tr('exchangeRate'),
-                  '1 USD = ${quote.exchangeRate.toStringAsFixed(2)} HTG',
+                  '1 ${quote.sourceCurrency} = ${quote.exchangeRate.toStringAsFixed(4)} HTG',
                 ),
                 _reviewRow(
                   context.tr('recipientGets'),
@@ -684,10 +920,12 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
           ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'ACH funding was requested in Dwolla Sandbox. Delivery is shown only after the backend confirms the Haiti mock payout succeeded.',
+        Text(
+          transfer.sourceCurrency == 'USD'
+              ? 'ACH funding was requested in Dwolla Sandbox. Delivery is shown only after the backend confirms the Haiti mock payout succeeded.'
+              : '${transfer.sourceCurrency} funding is not connected. This Sandbox transfer is awaiting a compatible funding provider and no money was charged.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: AppTheme.muted),
+          style: const TextStyle(color: AppTheme.muted),
         ),
         const SizedBox(height: 24),
         Card(
@@ -702,7 +940,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
                 _reviewRow(context.tr('reference'), transfer.referenceNumber),
                 _reviewRow(
                   context.tr('youSent'),
-                  '\$${transfer.amount.toStringAsFixed(2)} USD',
+                  '${_currencySymbols[transfer.sourceCurrency] ?? ''}${transfer.amount.toStringAsFixed(2)} ${transfer.sourceCurrency}',
                 ),
                 _reviewRow(
                   context.tr('recipientGets'),

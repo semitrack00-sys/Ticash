@@ -7,14 +7,7 @@ import { FundingError, type DwollaWebhookEnvelope } from './types.js';
 
 type AuthRequest = Request & { userId?: string };
 
-const customerSchema = z.object({
-  address1: z.string().trim().min(3).max(50),
-  city: z.string().trim().min(2).max(50),
-  state: z.string().trim().regex(/^[A-Z]{2}$/),
-  postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/),
-  dateOfBirth: z.iso.date(),
-  ssn: z.string().regex(/^\d{4}$|^\d{9}$/),
-});
+const customerSchema = z.object({}).strict();
 
 const fundingSourceSchema = z.object({
   routingNumber: z.string().regex(/^\d{9}$/),
@@ -61,10 +54,11 @@ export function createFundingRouter(options: {
   }));
 
   router.post('/dwolla/customer', ...protectedFunding, asyncRoute(async (req, res) => {
+    customerSchema.parse(req.body ?? {});
     const identity = await options.resolveUserIdentity(req.userId!);
     if (!identity) throw new FundingError('USER_NOT_FOUND', 'User was not found', 404);
     const result = await options.service.createCustomer(
-      req.userId!, { ...customerSchema.parse(req.body), ...identity },
+      req.userId!, identity,
     );
     res.status(result.created ? 201 : 200).json({
       customer: { status: result.customer.status },
@@ -84,14 +78,28 @@ export function createFundingRouter(options: {
   }));
 
   router.post('/dwolla/funding-sources/:id/micro-deposits', ...protectedFunding, asyncRoute(async (req, res) => {
-    await options.service.initiateMicroDeposits(req.userId!, req.params.id as string);
-    res.status(202).json({ status: 'pending' });
+    const result = await options.service.initiateMicroDeposits(req.userId!, req.params.id as string);
+    res.status(result.alreadyInitiated ? 200 : 202).json(result);
   }));
 
   router.post('/dwolla/funding-sources/:id/micro-deposits/verify', ...protectedFunding, asyncRoute(async (req, res) => {
     const input = microDepositSchema.parse(req.body);
     const fundingSource = await options.service.verifyMicroDeposits(
       req.userId!, req.params.id as string, input.amount1, input.amount2,
+    );
+    res.json({ fundingSource });
+  }));
+
+  router.put('/dwolla/funding-sources/:id/default', ...protectedFunding, asyncRoute(async (req, res) => {
+    const fundingSource = await options.service.setDefaultFundingSource(
+      req.userId!, req.params.id as string,
+    );
+    res.json({ fundingSource });
+  }));
+
+  router.delete('/dwolla/funding-sources/:id', ...protectedFunding, asyncRoute(async (req, res) => {
+    const fundingSource = await options.service.removeFundingSource(
+      req.userId!, req.params.id as string,
     );
     res.json({ fundingSource });
   }));

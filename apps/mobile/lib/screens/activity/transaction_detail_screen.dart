@@ -151,22 +151,25 @@ class _TransactionDetailScreenState
               _row('Reference', transfer.referenceNumber),
               _row('Recipient', transfer.recipientName),
               _row('Payout method', transfer.payoutMethod ?? '—'),
-              _row('You send', '\$${transfer.amount.toStringAsFixed(2)} USD'),
+              _row(
+                'You send',
+                '${transfer.amount.toStringAsFixed(2)} ${transfer.sourceCurrency}',
+              ),
               _row(
                 'Exchange rate',
-                '1 USD = ${transfer.exchangeRate.toStringAsFixed(4)} HTG',
+                '1 ${transfer.sourceCurrency} = ${transfer.exchangeRate.toStringAsFixed(4)} HTG',
               ),
               _row(
                 'TiCash fee',
-                '\$${transfer.ticashFee.toStringAsFixed(2)} USD',
+                '${transfer.ticashFee.toStringAsFixed(2)} ${transfer.sourceCurrency}',
               ),
               _row(
                 'Funding/provider fee',
-                '\$${transfer.providerFundingFee.toStringAsFixed(2)} USD',
+                '${transfer.providerFundingFee.toStringAsFixed(2)} ${transfer.sourceCurrency}',
               ),
               _row(
                 'Total charged',
-                '\$${transfer.totalCharged.toStringAsFixed(2)} USD',
+                '${transfer.totalCharged.toStringAsFixed(2)} ${transfer.sourceCurrency}',
               ),
               _row(
                 'Recipient amount',

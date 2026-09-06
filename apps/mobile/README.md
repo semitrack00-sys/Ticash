@@ -96,6 +96,44 @@ Run `pod install` inside `ios/` after `flutter pub get` to install CocoaPods
 dependencies. Configure signing in Xcode (`ios/Runner.xcworkspace`) with your
 Apple Developer team before archiving a release build.
 
+## Website links
+
+The official public domain is `https://ticash-app.com`. The app supports these
+public paths without placing authenticated or financial data in the URL:
+
+- `/send` opens the existing Send Money screen
+- `/recharge` opens the existing Mobile Recharge screen
+- `/login` opens sign in
+- `/support` opens support
+
+The Android declaration also accepts the equivalent trailing-slash paths used
+by static hosting (for example `/send/` and `/recharge/`).
+
+The legacy internal paths `/transfer` and `/mobile-recharge` remain available
+for existing in-app navigation.
+
+Android App Links are declared for the production HTTPS domain. They will not
+verify until the website's `assetlinks.json` contains the SHA-256 fingerprint
+of the real release/Play App Signing certificate. Do not use the debug signing
+certificate for production.
+
+The iOS associated-domains entitlement is prepared in
+`ios/Runner/Runner.entitlements`. The checked-out iOS project does not include
+an Xcode project or a final bundle/team identifier, so the entitlement still
+must be attached to the Runner target on macOS. The website's Apple association
+file must then be populated with the real Apple Team ID and final bundle ID.
+
+The app accepts only an allowlisted local path as a post-login continuation.
+It preserves that path through registration and required KYC, then opens it
+only after the account reaches the authoritative approved KYC state. It never
+accepts an arbitrary URL, avoiding an open-redirect path. KYC and all backend
+authorization requirements remain in force after a deep link.
+
 Live funding and MonCash/NatCash payouts are intentionally unavailable until
 official provider contracts, sandbox certification, webhook verification, and
 reconciliation controls are completed.
+
+The public website repository contains the full
+`PRODUCTION_ACTIVATION_CHECKLIST.md`. Release identifiers, signing-certificate
+fingerprints, store URLs, and Apple account values must be supplied from the
+real enrolled accounts; placeholders must never be activated.

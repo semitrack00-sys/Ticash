@@ -30,6 +30,12 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     required String password,
     required String firstName,
     required String lastName,
+    required String countryCode,
+    required String addressLine1,
+    String? addressLine2,
+    required String city,
+    String? region,
+    String? postalCode,
   }) async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(
@@ -38,6 +44,12 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
         password: password,
         firstName: firstName,
         lastName: lastName,
+        countryCode: countryCode,
+        addressLine1: addressLine1,
+        addressLine2: addressLine2,
+        city: city,
+        region: region,
+        postalCode: postalCode,
       ),
     );
   }
@@ -58,11 +70,23 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     required String firstName,
     required String lastName,
     String? phoneNumber,
+    String? countryCode,
+    String? addressLine1,
+    String? addressLine2,
+    String? city,
+    String? region,
+    String? postalCode,
   }) async {
     final user = await _authService.updateProfile(
       firstName: firstName,
       lastName: lastName,
       phoneNumber: phoneNumber,
+      countryCode: countryCode,
+      addressLine1: addressLine1,
+      addressLine2: addressLine2,
+      city: city,
+      region: region,
+      postalCode: postalCode,
     );
     state = AsyncValue.data(user);
   }

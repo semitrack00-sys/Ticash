@@ -104,6 +104,15 @@ npm run db:push
 npm run db:seed
 ```
 
+Use `DATABASE_URL` for the pooled application connection and `DIRECT_URL` for
+Prisma schema operations. For Neon, obtain both values from the dashboard and
+keep `sslmode=require`; the API normalizes that setting to explicit full
+certificate/hostname verification. On Windows, the schema command uses an
+ephemeral loopback bridge when connecting to Neon. The external Neon connection
+still uses verified TLS; database credentials are never printed or stored by the
+bridge. This avoids a machine-level Schannel credential failure without disabling
+TLS or certificate validation.
+
 The seed creates only U.S.-USD-to-Haiti-HTG Dwolla/MonCash and Dwolla/NatCash
 candidate corridors. Every sandbox and live approval field is `false`.
 
@@ -135,6 +144,8 @@ Implemented sandbox endpoints:
 - `GET|POST /api/funding/dwolla/funding-sources`
 - `POST /api/funding/dwolla/funding-sources/:id/micro-deposits`
 - `POST /api/funding/dwolla/funding-sources/:id/micro-deposits/verify`
+- `PUT /api/funding/dwolla/funding-sources/:id/default`
+- `DELETE /api/funding/dwolla/funding-sources/:id`
 - `POST /api/funding/dwolla/transfers` (requires `Idempotency-Key`)
 - `GET /api/funding/dwolla/transfers/:id?refresh=true`
 - `POST /api/funding/dwolla/transfers/:id/cancel`
@@ -145,6 +156,13 @@ Implemented sandbox endpoints:
 Provider webhooks and explicit provider-status refreshes are the only paths that may
 settle a pending ACH into the double-entry ledger. A settled ACH debits Dwolla clearing
 and credits the user's USD wallet liability; a confirmed return posts the exact inverse.
+
+The Flutter **Bank accounts** screen is available from Profile and from the Send Money
+funding step. It submits routing/account values only for the active request, displays
+only masked metadata afterward, supports checking/savings, micro-deposit verification,
+default-bank selection, provider-side removal, and reloads provider-authoritative state.
+Do not use memory mode for durable UAT: when `DATABASE_URL` is absent, bank enrollment,
+verification attempts, defaults, and funding records are lost when the API restarts.
 
 ## Server-side FX quote engine
 
@@ -223,6 +241,13 @@ flutter run --dart-define=API_BASE_URL=http://localhost:4000/api
 Use `http://10.0.2.2:4000/api` from an Android emulator. A physical device must
 use the development machine's reachable LAN address and an appropriate firewall rule.
 
+The Sandbox quote engine supports USD, CAD, EUR, MXN, BRL, CLP, and DOP as
+sending currencies. Haiti remains the only receiving market and HTG remains the
+only receiving currency. These rates are explicit mock/test configuration; no
+non-USD production funding provider is enabled. Customer profiles use an
+international address shape: country code, street lines, city/locality,
+state/province/region, and ZIP/postal code.
+
 ## Validation
 
 ```bash
@@ -255,6 +280,11 @@ flutter build apk --debug
 - Backend-only Didit v3 session creation, signed/idempotent webhook status handling,
   server-side decision reconciliation, and native Flutter KYC onboarding.
 - Haiti-only corridor discovery with every live-approval flag disabled.
+- Haiti-only Mobile Recharge foundation with provider-returned Reloadly Sandbox
+  operators/products, server-side quotes, saved recharge recipients,
+  idempotent purchase submission, authoritative status refresh, history,
+  receipts, and separate balanced ledger references. Payment remains mock and
+  production is fail-closed; see [MOBILE_TOPUP_SANDBOX.md](MOBILE_TOPUP_SANDBOX.md).
 
 ## Production blockers
 

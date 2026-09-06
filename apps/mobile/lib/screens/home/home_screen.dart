@@ -100,6 +100,50 @@ class _HomeBody extends ConsumerWidget {
               ],
             ),
           ),
+          const SizedBox(height: 14),
+          Card(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () => context.go(AppRoutes.mobileTopUp),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF4D6),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: const Icon(
+                        Icons.phone_android_rounded,
+                        color: AppTheme.navy,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Mobile Recharge',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Haiti airtime & data plans · Sandbox',
+                            style: TextStyle(color: AppTheme.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded),
+                  ],
+                ),
+              ),
+            ),
+          ),
           const SizedBox(height: 22),
           history.when(
             loading: () => const _MetricsSkeleton(),

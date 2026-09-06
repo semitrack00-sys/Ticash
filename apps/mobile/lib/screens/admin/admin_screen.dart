@@ -386,7 +386,7 @@ class _ReviewPage extends StatelessWidget {
                 item['referenceNumber'] as String? ?? item['id'] as String,
               ),
               subtitle: Text(
-                '${item['recipientName']} · \$${(item['amount'] as num).toStringAsFixed(2)} · ${item['complianceStatus'] ?? 'REVIEW'}',
+                '${item['recipientName']} · ${(item['amount'] as num).toStringAsFixed(2)} ${item['sourceCurrency'] ?? 'USD'} · ${item['complianceStatus'] ?? 'REVIEW'}',
               ),
               trailing: FilledButton.tonal(
                 onPressed: () =>
@@ -498,7 +498,7 @@ class _TransfersPage extends StatelessWidget {
   Widget build(BuildContext context) => _PageShell(
     title: 'Transfers',
     subtitle:
-        'U.S. (USD) → Haiti (HTG) · actual funding, compliance, and payout states',
+        'USD · CAD · EUR · MXN · BRL · CLP · DOP → Haiti (HTG) · actual states',
     children: [
       if (data.overview.transfers.isEmpty)
         const _EmptyCard(message: 'No transfer records found.'),
@@ -520,7 +520,7 @@ class _TransfersPage extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
             subtitle: Text(
-              '${transfer.recipientName} · \$${transfer.amount.toStringAsFixed(2)} → ${transfer.amountReceived.toStringAsFixed(2)} HTG\n${transfer.stage.name}',
+              '${transfer.recipientName} · ${transfer.amount.toStringAsFixed(2)} ${transfer.sourceCurrency} → ${transfer.amountReceived.toStringAsFixed(2)} HTG\n${transfer.stage.name}',
             ),
             isThreeLine: true,
             trailing: Chip(label: Text(transfer.status.name.toUpperCase())),
@@ -555,6 +555,7 @@ class _TransfersPage extends StatelessWidget {
               );
             }
             final item = snapshot.data!['transfer'] as JsonMap;
+            final sourceCurrency = item['sourceCurrency'] as String? ?? 'USD';
             final timeline = (item['timeline'] as List<dynamic>? ?? const [])
                 .cast<JsonMap>();
             return SingleChildScrollView(
@@ -567,19 +568,19 @@ class _TransfersPage extends StatelessWidget {
                   ),
                   _Detail(
                     'Sender amount',
-                    '\$${(item['amount'] as num).toStringAsFixed(2)} USD',
+                    '${(item['amount'] as num).toStringAsFixed(2)} $sourceCurrency',
                   ),
                   _Detail(
                     'Exchange rate',
-                    '1 USD = ${(item['exchangeRate'] as num).toStringAsFixed(4)} HTG',
+                    '1 $sourceCurrency = ${(item['exchangeRate'] as num).toStringAsFixed(4)} HTG',
                   ),
                   _Detail(
                     'TiCash fee',
-                    '\$${(item['ticashFee'] as num).toStringAsFixed(2)}',
+                    '${(item['ticashFee'] as num).toStringAsFixed(2)} $sourceCurrency',
                   ),
                   _Detail(
                     'Provider fee',
-                    '\$${(item['providerFundingFee'] as num).toStringAsFixed(2)}',
+                    '${(item['providerFundingFee'] as num).toStringAsFixed(2)} $sourceCurrency',
                   ),
                   _Detail('Recipient', item['recipientName'] as String? ?? '—'),
                   _Detail(
@@ -1137,7 +1138,7 @@ class _SafetyBanner extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'U.S. (USD) → Haiti (HTG)',
+                'USD · CAD · EUR · MXN · BRL · CLP · DOP → Haiti (HTG)',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w800,

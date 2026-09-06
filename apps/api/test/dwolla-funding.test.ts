@@ -39,6 +39,12 @@ class MockDwollaProvider implements DwollaFundingProvider {
   cancelCalls = 0;
   getTransferFailuresRemaining = 0;
   transferFailureCode: string | undefined;
+  verificationFailuresRemaining = 0;
+  private sourceCount = 0;
+  private readonly sources = new Map<string, {
+    id: string; url: string; name: string; bankName: string;
+    bankAccountType: string; status: 'UNVERIFIED' | 'VERIFIED' | 'REMOVED';
+  }>();
 
   async createCustomer(_input: DwollaCustomerInput) {
     void _input;
@@ -54,18 +60,42 @@ class MockDwollaProvider implements DwollaFundingProvider {
   }
 
   async createFundingSource(input: DwollaFundingSourceInput) {
-    return {
-      id: 'source-1',
-      url: 'https://api-sandbox.dwolla.com/funding-sources/source-1',
+    this.sourceCount += 1;
+    const source = {
+      id: `source-${this.sourceCount}`,
+      url: `https://api-sandbox.dwolla.com/funding-sources/source-${this.sourceCount}`,
       name: input.name,
+      bankName: 'SANDBOX TEST BANK',
       bankAccountType: input.bankAccountType,
       status: 'UNVERIFIED' as const,
     };
+    this.sources.set(source.id, source);
+    return source;
   }
 
   async listFundingSources(_customerUrl: string) {
     void _customerUrl;
-    return [];
+    return [...this.sources.values()].filter((source) => source.status !== 'REMOVED');
+  }
+
+  async getFundingSource(fundingSourceUrl: string) {
+    const id = fundingSourceUrl.split('/').at(-1)!;
+    const source = this.sources.get(id);
+    if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Missing test source', 404);
+    return source;
+  }
+
+  async removeFundingSource(fundingSourceUrl: string) {
+    const source = await this.getFundingSource(fundingSourceUrl);
+    const removed = { ...source, status: 'REMOVED' as const };
+    this.sources.set(source.id, removed);
+    return removed;
+  }
+
+  setSourceStatus(id: string, status: 'UNVERIFIED' | 'VERIFIED' | 'REMOVED') {
+    const source = this.sources.get(id);
+    if (!source) throw new Error(`Missing test source ${id}`);
+    this.sources.set(id, { ...source, status });
   }
 
   async initiateMicroDeposits(_fundingSourceUrl: string) {
@@ -73,16 +103,16 @@ class MockDwollaProvider implements DwollaFundingProvider {
   }
 
   async verifyMicroDeposits(_fundingSourceUrl: string, _amount1: string, _amount2: string) {
-    const url = _fundingSourceUrl;
+    if (this.verificationFailuresRemaining > 0) {
+      this.verificationFailuresRemaining -= 1;
+      throw new FundingError('DWOLLA_VALIDATIONERROR', 'Dwolla rejected the request', 400);
+    }
+    const source = await this.getFundingSource(_fundingSourceUrl);
     void _amount1;
     void _amount2;
-    return {
-      id: 'source-1',
-      url,
-      name: 'Sandbox checking',
-      bankAccountType: 'checking',
-      status: 'VERIFIED' as const,
-    };
+    const verified = { ...source, status: 'VERIFIED' as const };
+    this.sources.set(source.id, verified);
+    return verified;
   }
 
   async initiateTransfer(input: {
@@ -142,11 +172,7 @@ async function verifiedFundingSource(
   app: ReturnType<typeof createApp>,
   auth: { Authorization: string },
 ) {
-  await request(app).post('/api/funding/dwolla/customer').set(auth).send({
-    firstName: 'Ti', lastName: 'Cash', email: account.email,
-    address1: '123 Main Street', city: 'Des Moines', state: 'IA', postalCode: '50309',
-    dateOfBirth: '1990-01-15', ssn: '1234',
-  }).expect(201);
+  await request(app).post('/api/funding/dwolla/customer').set(auth).send({}).expect(201);
   const source = await request(app).post('/api/funding/dwolla/funding-sources').set(auth).send({
     routingNumber: '222222226', accountNumber: '123456789', bankAccountType: 'checking',
     name: 'Sandbox checking',
@@ -154,6 +180,9 @@ async function verifiedFundingSource(
   expect(source.body.fundingSource.lastFour).toBe('6789');
   expect(source.body.fundingSource.accountNumber).toBeUndefined();
   const sourceId = source.body.fundingSource.id as string;
+  await request(app)
+    .post(`/api/funding/dwolla/funding-sources/${sourceId}/micro-deposits`)
+    .set(auth).expect(202);
   await request(app)
     .post(`/api/funding/dwolla/funding-sources/${sourceId}/micro-deposits/verify`)
     .set(auth).send({ amount1: '0.01', amount2: '0.02' }).expect(200);
@@ -165,6 +194,24 @@ function webhookBody(id: string, topic = 'customer_bank_transfer_completed') {
     id,
     topic,
     _links: { resource: { href: 'https://api-sandbox.dwolla.com/transfers/transfer-1' } },
+  });
+}
+
+function fundingSourceWebhookBody(
+  id: string,
+  topic: string,
+  providerSourceId: string,
+  microDepositsResource = false,
+) {
+  const suffix = microDepositsResource ? '/micro-deposits' : '';
+  return JSON.stringify({
+    id,
+    topic,
+    _links: {
+      resource: {
+        href: `https://api-sandbox.dwolla.com/funding-sources/${providerSourceId}${suffix}`,
+      },
+    },
   });
 }
 
@@ -189,11 +236,7 @@ describe('Dwolla sandbox funding', () => {
     await request(app).patch(`/api/admin/users/${registered.body.user.id}/kyc`)
       .set('Authorization', `Bearer ${admin.body.accessToken}`)
       .send({ status: 'APPROVED' });
-    const response = await request(app).post('/api/funding/dwolla/customer').set(auth).send({
-      firstName: 'Ti', lastName: 'Cash', email: account.email,
-      address1: '123 Main Street', city: 'Des Moines', state: 'IA', postalCode: '50309',
-      dateOfBirth: '1990-01-15', ssn: '1234',
-    }).expect(503);
+    const response = await request(app).post('/api/funding/dwolla/customer').set(auth).send({}).expect(503);
     expect(response.body.code).toBe('FUNDING_DISABLED');
   });
 
@@ -206,6 +249,148 @@ describe('Dwolla sandbox funding', () => {
       .set('Authorization', `Bearer ${registered.body.accessToken}`)
       .send({}).expect(403);
     expect(response.body.code).toBe('KYC_REQUIRED');
+  });
+
+  it('validates bank input and only returns masked display metadata', async () => {
+    const provider = new MockDwollaProvider();
+    const app = createApp({ fundingConfig: enabledConfig, fundingProvider: provider });
+    const auth = await approvedUser(app);
+    await request(app).post('/api/funding/dwolla/customer').set(auth).send({}).expect(201);
+
+    await request(app).post('/api/funding/dwolla/funding-sources').set(auth).send({
+      routingNumber: '123', accountNumber: '1', bankAccountType: 'checking', name: 'Test User',
+    }).expect(400);
+
+    const created = await request(app).post('/api/funding/dwolla/funding-sources').set(auth).send({
+      routingNumber: '222222226', accountNumber: '123456789', bankAccountType: 'checking',
+      name: 'Test User',
+    }).expect(201);
+    expect(created.body.fundingSource).toMatchObject({
+      bankName: 'SANDBOX TEST BANK', lastFour: '6789', bankAccountType: 'checking',
+      status: 'PENDING', isDefault: false, verificationAttempts: 0,
+    });
+    expect(JSON.stringify(created.body)).not.toContain('222222226');
+    expect(JSON.stringify(created.body)).not.toContain('123456789');
+
+    const listed = await request(app).get('/api/funding/dwolla/funding-sources').set(auth).expect(200);
+    expect(JSON.stringify(listed.body)).not.toContain('222222226');
+    expect(JSON.stringify(listed.body)).not.toContain('123456789');
+  });
+
+  it('handles pending, failed and successful micro-deposit verification safely', async () => {
+    const provider = new MockDwollaProvider();
+    const app = createApp({ fundingConfig: enabledConfig, fundingProvider: provider });
+    const auth = await approvedUser(app);
+    await request(app).post('/api/funding/dwolla/customer').set(auth).send({}).expect(201);
+    const createSource = async (name: string) => request(app)
+      .post('/api/funding/dwolla/funding-sources').set(auth).send({
+        routingNumber: '222222226', accountNumber: '123456789', bankAccountType: 'savings', name,
+      }).expect(201);
+
+    const failedSource = await createSource('Failed verification');
+    const failedId = failedSource.body.fundingSource.id as string;
+    await request(app).post(`/api/funding/dwolla/funding-sources/${failedId}/micro-deposits`)
+      .set(auth).expect(202);
+    await request(app).post(`/api/funding/dwolla/funding-sources/${failedId}/micro-deposits`)
+      .set(auth).expect(200);
+    provider.verificationFailuresRemaining = 3;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await request(app).post(`/api/funding/dwolla/funding-sources/${failedId}/micro-deposits/verify`)
+        .set(auth).send({ amount1: '0.01', amount2: '0.02' }).expect(400);
+    }
+    const exhausted = await request(app)
+      .post(`/api/funding/dwolla/funding-sources/${failedId}/micro-deposits/verify`)
+      .set(auth).send({ amount1: '0.01', amount2: '0.02' }).expect(429);
+    expect(exhausted.body.code).toBe('MICRO_DEPOSIT_ATTEMPTS_EXCEEDED');
+
+    const verifiedSource = await createSource('Verified source');
+    const verifiedId = verifiedSource.body.fundingSource.id as string;
+    await request(app).post(`/api/funding/dwolla/funding-sources/${verifiedId}/micro-deposits`)
+      .set(auth).expect(202);
+    const verified = await request(app)
+      .post(`/api/funding/dwolla/funding-sources/${verifiedId}/micro-deposits/verify`)
+      .set(auth).send({ amount1: '0.03', amount2: '0.09' }).expect(200);
+    expect(verified.body.fundingSource).toMatchObject({ status: 'VERIFIED', isDefault: true });
+    const duplicate = await request(app)
+      .post(`/api/funding/dwolla/funding-sources/${verifiedId}/micro-deposits/verify`)
+      .set(auth).send({ amount1: '0.03', amount2: '0.09' }).expect(200);
+    expect(duplicate.body.fundingSource.verificationAttempts).toBe(1);
+  });
+
+  it('sets a verified default, removes it, and prevents removed-bank funding', async () => {
+    const provider = new MockDwollaProvider();
+    const app = createApp({ fundingConfig: enabledConfig, fundingProvider: provider });
+    const auth = await approvedUser(app);
+    const fundingSourceId = await verifiedFundingSource(app, auth);
+
+    const selected = await request(app)
+      .put(`/api/funding/dwolla/funding-sources/${fundingSourceId}/default`)
+      .set(auth).expect(200);
+    expect(selected.body.fundingSource.isDefault).toBe(true);
+    await request(app).delete(`/api/funding/dwolla/funding-sources/${fundingSourceId}`)
+      .set(auth).expect(200);
+    const listed = await request(app).get('/api/funding/dwolla/funding-sources').set(auth).expect(200);
+    expect(listed.body.fundingSources).toEqual([]);
+    const blocked = await request(app).post('/api/funding/dwolla/transfers')
+      .set(auth).set('Idempotency-Key', 'removed-bank-funding')
+      .send({ fundingSourceId, amount: 10, currency: 'USD' }).expect(409);
+    expect(blocked.body.code).toBe('FUNDING_SOURCE_REMOVED');
+  });
+
+  it('applies provider-authoritative funding-source webhook states idempotently', async () => {
+    const provider = new MockDwollaProvider();
+    const app = createApp({ fundingConfig: enabledConfig, fundingProvider: provider });
+    const auth = await approvedUser(app);
+    await request(app).post('/api/funding/dwolla/customer').set(auth).send({}).expect(201);
+    const created = await request(app).post('/api/funding/dwolla/funding-sources').set(auth).send({
+      routingNumber: '222222226', accountNumber: '123456789', bankAccountType: 'checking',
+      name: 'Webhook bank',
+    }).expect(201);
+    const localSourceId = created.body.fundingSource.id as string;
+    provider.setSourceStatus('source-1', 'VERIFIED');
+
+    const verifiedBody = fundingSourceWebhookBody(
+      'event-source-verified-1', 'customer_funding_source_verified', 'source-1',
+    );
+    await request(app).post('/api/webhooks/dwolla')
+      .set('Content-Type', 'application/json')
+      .set('X-Request-Signature-SHA-256', signature(verifiedBody)).send(verifiedBody).expect(200);
+    const duplicate = await request(app).post('/api/webhooks/dwolla')
+      .set('Content-Type', 'application/json')
+      .set('X-Request-Signature-SHA-256', signature(verifiedBody)).send(verifiedBody).expect(200);
+    expect(duplicate.body.duplicate).toBe(true);
+
+    const listed = await request(app).get('/api/funding/dwolla/funding-sources')
+      .set(auth).expect(200);
+    expect(listed.body.fundingSources).toContainEqual(expect.objectContaining({
+      id: localSourceId, status: 'VERIFIED', isDefault: true,
+    }));
+  });
+
+  it('maps micro-deposit webhook resources to their parent funding source', async () => {
+    const provider = new MockDwollaProvider();
+    const app = createApp({ fundingConfig: enabledConfig, fundingProvider: provider });
+    const auth = await approvedUser(app);
+    await request(app).post('/api/funding/dwolla/customer').set(auth).send({}).expect(201);
+    const created = await request(app).post('/api/funding/dwolla/funding-sources').set(auth).send({
+      routingNumber: '222222226', accountNumber: '123456789', bankAccountType: 'savings',
+      name: 'Failed micro deposits',
+    }).expect(201);
+
+    const failedBody = fundingSourceWebhookBody(
+      'event-microdeposit-failed-1', 'customer_microdeposits_maxattempts', 'source-1', true,
+    );
+    await request(app).post('/api/webhooks/dwolla')
+      .set('Content-Type', 'application/json')
+      .set('X-Request-Signature-SHA-256', signature(failedBody)).send(failedBody).expect(200);
+
+    const listed = await request(app).get('/api/funding/dwolla/funding-sources')
+      .set(auth).expect(200);
+    expect(listed.body.fundingSources).toContainEqual(expect.objectContaining({
+      id: created.body.fundingSource.id,
+      status: 'FAILED',
+      isDefault: false,
+    }));
   });
 
   it('creates a verified source and prevents duplicate ACH requests', async () => {
@@ -239,11 +424,7 @@ describe('Dwolla sandbox funding', () => {
       .expect(404);
     expect(missing.body.code).toBe('FUNDING_SOURCE_NOT_FOUND');
 
-    await request(app).post('/api/funding/dwolla/customer').set(auth).send({
-      firstName: 'Ti', lastName: 'Cash', email: account.email,
-      address1: '123 Main Street', city: 'Des Moines', state: 'IA', postalCode: '50309',
-      dateOfBirth: '1990-01-15', ssn: '1234',
-    });
+    await request(app).post('/api/funding/dwolla/customer').set(auth).send({});
     const source = await request(app).post('/api/funding/dwolla/funding-sources').set(auth).send({
       routingNumber: '222222226', accountNumber: '123456789', bankAccountType: 'checking',
       name: 'Sandbox checking',
@@ -382,11 +563,15 @@ describe('Dwolla sandbox funding', () => {
     const app = createApp({ fundingConfig: enabledConfig, fundingProvider: new MockDwollaProvider() });
     const response = await request(app).get('/api/corridors').expect(200);
     expect(response.body.receivingMarkets).toEqual([{ country: 'HT', currencies: ['HTG'] }]);
-    expect(response.body.corridors).toHaveLength(1);
+    expect(response.body.corridors).toHaveLength(7);
     expect(response.body.corridors[0]).toMatchObject({
       sendCountry: 'US', receiveCountry: 'HT', sourceCurrency: 'USD', targetCurrency: 'HTG',
       approvedForLiveUse: false,
     });
+    expect(response.body.corridors.map((item: { sourceCurrency: string }) => item.sourceCurrency))
+      .toEqual(['USD', 'CAD', 'EUR', 'MXN', 'BRL', 'CLP', 'DOP']);
+    expect(response.body.corridors.every((item: { receiveCountry: string; targetCurrency: string; approvedForLiveUse: boolean }) =>
+      item.receiveCountry === 'HT' && item.targetCurrency === 'HTG' && item.approvedForLiveUse === false)).toBe(true);
   });
 
   it('runs the transfer through ACH pending, funding success, mock payout processing, and confirmed delivery', async () => {

@@ -163,7 +163,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       children: [
                         Text(context.tr('newToTiCash')),
                         TextButton(
-                          onPressed: () => context.go(AppRoutes.register),
+                          onPressed: () {
+                            final continuation = AppRoutes.safeContinuation(
+                              GoRouterState.of(
+                                context,
+                              ).uri.queryParameters['continue'],
+                            );
+                            context.go(
+                              continuation == null
+                                  ? AppRoutes.register
+                                  : AppRoutes.withContinuation(
+                                      AppRoutes.register,
+                                      continuation,
+                                    ),
+                            );
+                          },
                           child: Text(context.tr('createAccount')),
                         ),
                       ],

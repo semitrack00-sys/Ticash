@@ -35,8 +35,6 @@ describe('Dwolla REST provider', () => {
     const provider = new DwollaRestFundingProvider(config, fetchMock);
     const customer = await provider.createCustomer({
       firstName: 'Ti', lastName: 'Cash', email: 'funding@example.com',
-      address1: '123 Main Street', city: 'Des Moines', state: 'IA', postalCode: '50309',
-      dateOfBirth: '1990-01-15', ssn: '1234',
     });
     await provider.getCustomer(customer.url);
 
@@ -48,6 +46,10 @@ describe('Dwolla REST provider', () => {
       `Basic ${Buffer.from('client-id:client-secret').toString('base64')}`,
     );
     expect(tokenInit?.body).toBe('grant_type=client_credentials');
+    const customerBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(customerBody).toEqual({
+      firstName: 'Ti', lastName: 'Cash', email: 'funding@example.com', type: 'unverified',
+    });
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/token'))).toHaveLength(1);
   });
 

@@ -1,12 +1,20 @@
-import type { FxProvider, FxRateResult } from './types.js';
+import { FxError, type FxProvider, type FxRateRequest, type FxRateResult } from './types.js';
 
 export class MockTestFxProvider implements FxProvider {
-  constructor(private readonly usdHtgRate: string) {}
+  private readonly htgRates: Record<string, string>;
 
-  async getRate(): Promise<FxRateResult> {
+  constructor(htgRates: string | Record<string, string>) {
+    this.htgRates = typeof htgRates === 'string' ? { USD: htgRates } : htgRates;
+  }
+
+  async getRate(input: FxRateRequest): Promise<FxRateResult> {
+    const rate = this.htgRates[input.corridor.sourceCurrency];
+    if (!rate) {
+      throw new FxError('UNSUPPORTED_CURRENCY', 'No test FX rate is configured for the selected currency', 422);
+    }
     return {
       provider: 'mock_test_fx',
-      rate: this.usdHtgRate,
+      rate,
       testMode: true,
     };
   }

@@ -16,6 +16,8 @@ type HalDocument = {
   status?: string;
   name?: string;
   bankAccountType?: string;
+  bankName?: string;
+  removed?: boolean;
   code?: string;
   message?: string;
   _links?: Record<string, { href?: string }>;
@@ -30,7 +32,8 @@ function idFromUrl(url: string): string {
   return id;
 }
 
-function sourceStatus(status: string | undefined): FundingSourceStatus {
+function sourceStatus(status: string | undefined, removed = false): FundingSourceStatus {
+  if (removed) return 'REMOVED';
   switch (status?.toLowerCase()) {
     case 'verified':
       return 'VERIFIED';
@@ -129,21 +132,22 @@ export class DwollaRestFundingProvider implements DwollaFundingProvider {
     return { response, body };
   }
 
-  private async getFundingSource(url: string): Promise<DwollaFundingSource> {
+  async getFundingSource(url: string): Promise<DwollaFundingSource> {
     const { body } = await this.request(url);
     return {
       id: body?.id ?? idFromUrl(url),
       url,
       name: body?.name ?? 'Bank account',
+      bankName: body?.bankName,
       bankAccountType: body?.bankAccountType ?? 'unknown',
-      status: sourceStatus(body?.status),
+      status: sourceStatus(body?.status, body?.removed),
     };
   }
 
   async createCustomer(input: DwollaCustomerInput): Promise<DwollaCustomer> {
     const { response } = await this.request('/customers', {
       method: 'POST',
-      body: JSON.stringify({ ...input, type: 'personal' }),
+      body: JSON.stringify({ ...input, type: 'unverified' }),
     });
     const url = response.headers.get('location');
     if (!url) throw new FundingError('INVALID_PROVIDER_RESPONSE', 'Dwolla omitted the customer URL', 502);
@@ -184,10 +188,19 @@ export class DwollaRestFundingProvider implements DwollaFundingProvider {
         id: source.id ?? idFromUrl(url),
         url,
         name: source.name ?? 'Bank account',
+        bankName: source.bankName,
         bankAccountType: source.bankAccountType ?? 'unknown',
-        status: sourceStatus(source.status),
+        status: sourceStatus(source.status, source.removed),
       };
     });
+  }
+
+  async removeFundingSource(fundingSourceUrl: string): Promise<DwollaFundingSource> {
+    await this.request(fundingSourceUrl, {
+      method: 'POST',
+      body: JSON.stringify({ removed: true }),
+    });
+    return this.getFundingSource(fundingSourceUrl);
   }
 
   async initiateMicroDeposits(fundingSourceUrl: string): Promise<void> {

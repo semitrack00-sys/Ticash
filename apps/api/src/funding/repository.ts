@@ -18,10 +18,23 @@ export interface FundingSourceRecord {
   providerFundingSourceId: string;
   providerFundingSourceUrl: string;
   name: string;
+  bankName?: string;
   lastFour: string;
   bankAccountType: string;
   status: FundingSourceStatus;
+  isDefault: boolean;
+  microDepositsInitiatedAt?: string;
+  verificationAttempts: number;
+  verificationFailureCode?: string;
+  removedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
+
+type NewFundingSourceRecord = Omit<FundingSourceRecord, 'id' | 'createdAt' | 'updatedAt'>;
+type FundingSourceUpdate = Partial<Pick<FundingSourceRecord,
+  'name' | 'bankName' | 'bankAccountType' | 'status' | 'isDefault' |
+  'microDepositsInitiatedAt' | 'verificationAttempts' | 'verificationFailureCode' | 'removedAt'>>;
 
 export interface FundingTransactionRecord {
   id: string;
@@ -50,8 +63,11 @@ export interface FundingRepository {
   saveCustomer(input: Omit<FundingCustomerRecord, 'id'>): Promise<FundingCustomerRecord>;
   listSources(userId: string): Promise<FundingSourceRecord[]>;
   getSource(userId: string, id: string): Promise<FundingSourceRecord | undefined>;
-  saveSource(input: Omit<FundingSourceRecord, 'id'>): Promise<FundingSourceRecord>;
-  updateSourceStatus(id: string, status: FundingSourceStatus): Promise<FundingSourceRecord>;
+  saveSource(input: NewFundingSourceRecord): Promise<FundingSourceRecord>;
+  updateSource(userId: string, id: string, input: FundingSourceUpdate): Promise<FundingSourceRecord>;
+  getSourceByProviderId(providerFundingSourceId: string): Promise<FundingSourceRecord | undefined>;
+  setDefaultSource(userId: string, id: string): Promise<FundingSourceRecord>;
+  hasActiveTransactions(fundingSourceId: string): Promise<boolean>;
   reserveTransaction(input: {
     id: string;
     userId: string;
@@ -125,21 +141,52 @@ export class MemoryFundingRepository implements FundingRepository {
     return source?.userId === userId ? source : undefined;
   }
 
-  async saveSource(input: Omit<FundingSourceRecord, 'id'>) {
+  async saveSource(input: NewFundingSourceRecord) {
     const existing = [...memorySources.values()].find(
       (source) => source.providerFundingSourceId === input.providerFundingSourceId,
     );
-    const record = { id: existing?.id ?? randomUUID(), ...input };
+    const timestamp = nowIso();
+    const record: FundingSourceRecord = {
+      id: existing?.id ?? randomUUID(),
+      ...input,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    };
     memorySources.set(record.id, record);
     return record;
   }
 
-  async updateSourceStatus(id: string, status: FundingSourceStatus) {
+  async updateSource(userId: string, id: string, input: FundingSourceUpdate) {
     const source = memorySources.get(id);
-    if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
-    const updated = { ...source, status };
+    if (!source || source.userId !== userId) {
+      throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    }
+    const updated = { ...source, ...input, updatedAt: nowIso() };
     memorySources.set(id, updated);
     return updated;
+  }
+
+  async getSourceByProviderId(providerFundingSourceId: string) {
+    return [...memorySources.values()].find(
+      (source) => source.providerFundingSourceId === providerFundingSourceId,
+    );
+  }
+
+  async setDefaultSource(userId: string, id: string) {
+    const source = await this.getSource(userId, id);
+    if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    for (const [sourceId, item] of memorySources) {
+      if (item.userId === userId) {
+        memorySources.set(sourceId, { ...item, isDefault: sourceId === id, updatedAt: nowIso() });
+      }
+    }
+    return memorySources.get(id)!;
+  }
+
+  async hasActiveTransactions(fundingSourceId: string) {
+    return [...memoryTransactions.values()].some(
+      (item) => item.fundingSourceId === fundingSourceId && ['PENDING', 'PROCESSING'].includes(item.status),
+    );
   }
 
   async reserveTransaction(input: {
@@ -309,9 +356,30 @@ function transactionFromDb(row: {
 
 function sourceFromDb(row: {
   id: string; userId: string; providerCustomerId: string; providerFundingSourceId: string;
-  providerFundingSourceUrl: string; name: string; lastFour: string; bankAccountType: string; status: string;
+  providerFundingSourceUrl: string; name: string; bankName: string | null; lastFour: string;
+  bankAccountType: string; status: string; isDefault: boolean; microDepositsInitiatedAt: Date | null;
+  verificationAttempts: number; verificationFailureCode: string | null; removedAt: Date | null;
+  createdAt: Date; updatedAt: Date;
 }): FundingSourceRecord {
-  return { ...row, status: row.status as FundingSourceStatus };
+  return {
+    id: row.id,
+    userId: row.userId,
+    providerCustomerId: row.providerCustomerId,
+    providerFundingSourceId: row.providerFundingSourceId,
+    providerFundingSourceUrl: row.providerFundingSourceUrl,
+    name: row.name,
+    bankName: row.bankName ?? undefined,
+    lastFour: row.lastFour,
+    bankAccountType: row.bankAccountType,
+    status: row.status as FundingSourceStatus,
+    isDefault: row.isDefault,
+    microDepositsInitiatedAt: row.microDepositsInitiatedAt?.toISOString(),
+    verificationAttempts: row.verificationAttempts,
+    verificationFailureCode: row.verificationFailureCode ?? undefined,
+    removedAt: row.removedAt?.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 export class PrismaFundingRepository implements FundingRepository {
@@ -355,7 +423,7 @@ export class PrismaFundingRepository implements FundingRepository {
     return row ? sourceFromDb(row) : undefined;
   }
 
-  async saveSource(input: Omit<FundingSourceRecord, 'id'>) {
+  async saveSource(input: NewFundingSourceRecord) {
     const row = await this.prisma.fundingSource.upsert({
       where: {
         provider_providerFundingSourceId: {
@@ -366,16 +434,72 @@ export class PrismaFundingRepository implements FundingRepository {
       update: {
         name: input.name,
         lastFour: input.lastFour,
+        bankName: input.bankName,
         bankAccountType: input.bankAccountType,
         status: input.status,
+        isDefault: input.isDefault,
+        microDepositsInitiatedAt: input.microDepositsInitiatedAt
+          ? new Date(input.microDepositsInitiatedAt)
+          : null,
+        verificationAttempts: input.verificationAttempts,
+        verificationFailureCode: input.verificationFailureCode,
+        removedAt: input.removedAt ? new Date(input.removedAt) : null,
       },
-      create: { ...input, provider: 'DWOLLA' },
+      create: {
+        ...input,
+        provider: 'DWOLLA',
+        microDepositsInitiatedAt: input.microDepositsInitiatedAt
+          ? new Date(input.microDepositsInitiatedAt)
+          : undefined,
+        removedAt: input.removedAt ? new Date(input.removedAt) : undefined,
+      },
     });
     return sourceFromDb(row);
   }
 
-  async updateSourceStatus(id: string, status: FundingSourceStatus) {
-    return sourceFromDb(await this.prisma.fundingSource.update({ where: { id }, data: { status } }));
+  async updateSource(userId: string, id: string, input: FundingSourceUpdate) {
+    const source = await this.prisma.fundingSource.findFirst({ where: { id, userId, provider: 'DWOLLA' } });
+    if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+    return sourceFromDb(await this.prisma.fundingSource.update({
+      where: { id },
+      data: {
+        ...input,
+        microDepositsInitiatedAt: input.microDepositsInitiatedAt === undefined
+          ? undefined
+          : new Date(input.microDepositsInitiatedAt),
+        removedAt: input.removedAt === undefined ? undefined : new Date(input.removedAt),
+      },
+    }));
+  }
+
+  async getSourceByProviderId(providerFundingSourceId: string) {
+    const row = await this.prisma.fundingSource.findFirst({
+      where: { provider: 'DWOLLA', providerFundingSourceId },
+    });
+    return row ? sourceFromDb(row) : undefined;
+  }
+
+  async setDefaultSource(userId: string, id: string) {
+    return this.prisma.$transaction(async (transaction) => {
+      const source = await transaction.fundingSource.findFirst({
+        where: { id, userId, provider: 'DWOLLA' },
+      });
+      if (!source) throw new FundingError('FUNDING_SOURCE_NOT_FOUND', 'Funding source was not found', 404);
+      await transaction.fundingSource.updateMany({
+        where: { userId, provider: 'DWOLLA' },
+        data: { isDefault: false },
+      });
+      return sourceFromDb(await transaction.fundingSource.update({
+        where: { id },
+        data: { isDefault: true },
+      }));
+    });
+  }
+
+  async hasActiveTransactions(fundingSourceId: string) {
+    return (await this.prisma.fundingTransaction.count({
+      where: { fundingSourceId, status: { in: ['PENDING', 'PROCESSING'] } },
+    })) > 0;
   }
 
   async reserveTransaction(input: {

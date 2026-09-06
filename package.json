@@ -3,7 +3,10 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/api", "packages/shared"],
+  "workspaces": [
+    "apps/api",
+    "packages/shared"
+  ],
   "scripts": {
     "dev:api": "npm run dev --workspace @ticash/api",
     "build": "npm run build --workspace @ticash/shared && npm run build --workspace @ticash/api",
@@ -12,14 +15,19 @@
     "test": "npm run test --workspaces --if-present",
     "prisma:validate": "prisma validate --schema schema.prisma",
     "prisma:generate": "prisma generate --schema schema.prisma",
-    "db:push": "prisma db push --schema schema.prisma",
-    "db:migrate": "prisma migrate dev --schema schema.prisma",
+    "db:push": "node tools/run-prisma-schema.mjs db push --schema schema.prisma",
+    "db:migrate": "node tools/run-prisma-schema.mjs migrate dev --schema schema.prisma",
     "db:seed": "node scripts/seed-corridors.mjs"
   },
   "devDependencies": {
-    "prisma": "^6.16.2",
+    "dotenv": "^16.6.1",
+    "prisma": "6.19.3",
     "typescript": "^5.9.2"
   },
-  "overrides": {"deepmerge-ts": "^8.0.0"},
-  "engines": {"node": ">=20"}
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

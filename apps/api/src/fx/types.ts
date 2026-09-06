@@ -1,12 +1,18 @@
 export type FxMode = 'disabled' | 'mock';
 
+export const supportedSourceCurrencies = ['USD', 'CAD', 'EUR', 'MXN', 'BRL', 'CLP', 'DOP'] as const;
+export type SupportedSourceCurrency = typeof supportedSourceCurrencies[number];
+
 export interface FxConfig {
   mode: FxMode;
   quoteTtlSeconds: number;
   mockUsdHtgRate?: string;
+  mockHtgRates?: Record<SupportedSourceCurrency, string>;
   ticashFeePercent: string;
   ticashMinimumFeeUsd: string;
   providerFundingFeeUsd: string;
+  minimumFeesByCurrency?: Record<SupportedSourceCurrency, string>;
+  providerFeesByCurrency?: Record<SupportedSourceCurrency, string>;
 }
 
 export interface FxCorridor {

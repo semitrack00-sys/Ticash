@@ -219,7 +219,9 @@ class _RecipientsScreenState extends ConsumerState<RecipientsScreen> {
     Recipient? existing,
   ]) async {
     final formKey = GlobalKey<FormState>();
-    final name = TextEditingController(text: existing?.fullName);
+    final firstName = TextEditingController(text: existing?.firstName);
+    final middleName = TextEditingController(text: existing?.middleName);
+    final lastName = TextEditingController(text: existing?.lastName);
     final phone = TextEditingController(text: existing?.phoneNumber ?? '+509');
     final address = TextEditingController(text: existing?.address);
     final city = TextEditingController(text: existing?.city);
@@ -255,10 +257,29 @@ class _RecipientsScreenState extends ConsumerState<RecipientsScreen> {
                   ),
                   const SizedBox(height: 18),
                   TextFormField(
-                    controller: name,
+                    controller: firstName,
                     textCapitalization: TextCapitalization.words,
                     decoration: InputDecoration(
-                      labelText: context.tr('fullName'),
+                      labelText: context.tr('firstName'),
+                    ),
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? context.tr('required')
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: middleName,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      labelText: context.tr('middleNameOptional'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: lastName,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      labelText: context.tr('lastName'),
                     ),
                     validator: (value) => value == null || value.trim().isEmpty
                         ? context.tr('required')
@@ -354,7 +375,11 @@ class _RecipientsScreenState extends ConsumerState<RecipientsScreen> {
                           await ref
                               .read(recipientsProvider.notifier)
                               .addRecipient(
-                                fullName: name.text.trim(),
+                                firstName: firstName.text.trim(),
+                                middleName: middleName.text.trim().isEmpty
+                                    ? null
+                                    : middleName.text.trim(),
+                                lastName: lastName.text.trim(),
                                 phoneNumber: phone.text.trim(),
                                 payoutMethod: payoutMethod,
                                 address: address.text.trim(),
@@ -366,7 +391,11 @@ class _RecipientsScreenState extends ConsumerState<RecipientsScreen> {
                               .read(recipientsProvider.notifier)
                               .updateRecipient(
                                 recipientId: existing.id,
-                                fullName: name.text.trim(),
+                                firstName: firstName.text.trim(),
+                                middleName: middleName.text.trim().isEmpty
+                                    ? null
+                                    : middleName.text.trim(),
+                                lastName: lastName.text.trim(),
                                 phoneNumber: phone.text.trim(),
                                 payoutMethod: payoutMethod,
                                 address: address.text.trim(),
@@ -398,7 +427,9 @@ class _RecipientsScreenState extends ConsumerState<RecipientsScreen> {
         ),
       ),
     );
-    name.dispose();
+    firstName.dispose();
+    middleName.dispose();
+    lastName.dispose();
     phone.dispose();
     address.dispose();
     city.dispose();

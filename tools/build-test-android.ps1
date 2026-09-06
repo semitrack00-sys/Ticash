@@ -91,7 +91,7 @@ $env:JAVA_HOME = $javaHome
 $env:ANDROID_HOME = $androidSdk
 $env:ANDROID_SDK_ROOT = $androidSdk
 $env:ANDROID_USER_HOME = Join-Path $env:USERPROFILE '.android'
-$env:GRADLE_USER_HOME = Join-Path $env:USERPROFILE '.gradle'
+$env:GRADLE_USER_HOME = Join-Path $env:LOCALAPPDATA 'TiCash\Gradle'
 $env:PUB_CACHE = Join-Path $env:LOCALAPPDATA 'Pub\Cache'
 
 Push-Location $mobileRoot

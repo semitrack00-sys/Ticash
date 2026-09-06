@@ -77,8 +77,9 @@ foreach ($setting in $requiredSafeValues.GetEnumerator()) {
 }
 
 try {
-    $health = Invoke-WebRequest -Uri ($ApiUrl.TrimEnd('/') + '/api/health') `
-        -TimeoutSec 10 -SkipHttpErrorCheck
+    $health = Invoke-WebRequest -UseBasicParsing `
+        -Uri ($ApiUrl.TrimEnd('/') + '/api/health') `
+        -TimeoutSec 10
 } catch {
     throw "The TiCash API is not reachable at $ApiUrl. Start it before building and installing."
 }

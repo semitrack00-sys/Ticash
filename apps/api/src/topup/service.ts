@@ -106,8 +106,10 @@ export class MobileTopUpService {
       destinationCurrency: 'HTG',
       provider: 'RELOADLY',
       paymentMode: 'MOCK',
+      testMode: true,
       productionEnabled: false,
       approvedForLiveUse: false,
+      liveRechargeEnabled: false,
       recurringRechargeEnabled: false,
     };
   }

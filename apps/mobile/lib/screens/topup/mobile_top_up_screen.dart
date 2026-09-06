@@ -147,27 +147,40 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   @override
   Widget build(BuildContext context) {
     final availability = ref.watch(mobileTopUpAvailabilityProvider);
+    final rechargeStatus = availability.asData?.value;
+    final showSafetyWarning = rechargeStatus?.requiresSafetyWarning ?? true;
+    final warningText = rechargeStatus?.environment.toUpperCase() == 'SANDBOX'
+        ? 'SANDBOX · Test transactions only — no real airtime or data is purchased.'
+        : 'TEST MODE · Mobile Recharge is not approved for live transactions.';
     return Scaffold(
       appBar: AppBar(title: const Text('Mobile Recharge')),
       body: Column(
         children: [
-          Container(
-            width: double.infinity,
-            color: const Color(0xFFFFF4D6),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: const Row(
-              children: [
-                Icon(Icons.science_outlined, color: AppTheme.navy, size: 18),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'SANDBOX · Test transactions only — no real airtime or data is purchased.',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          if (showSafetyWarning)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFFFF4D6),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.science_outlined,
+                    color: AppTheme.navy,
+                    size: 18,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      warningText,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
             child: SegmentedButton<bool>(

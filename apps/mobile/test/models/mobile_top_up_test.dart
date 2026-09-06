@@ -2,6 +2,41 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 
 void main() {
+  test(
+    'keeps the safety warning unless every live condition is authoritative',
+    () {
+      final sandbox = MobileTopUpAvailability.fromJson({
+        'enabled': true,
+        'environment': 'SANDBOX',
+        'testMode': true,
+        'productionEnabled': false,
+        'approvedForLiveUse': false,
+        'liveRechargeEnabled': false,
+      });
+      expect(sandbox.requiresSafetyWarning, isTrue);
+
+      final incompleteProduction = MobileTopUpAvailability.fromJson({
+        'enabled': true,
+        'environment': 'PRODUCTION',
+        'testMode': false,
+        'productionEnabled': true,
+        'approvedForLiveUse': true,
+        'liveRechargeEnabled': false,
+      });
+      expect(incompleteProduction.requiresSafetyWarning, isTrue);
+
+      final approvedProduction = MobileTopUpAvailability.fromJson({
+        'enabled': true,
+        'environment': 'PRODUCTION',
+        'testMode': false,
+        'productionEnabled': true,
+        'approvedForLiveUse': true,
+        'liveRechargeEnabled': true,
+      });
+      expect(approvedProduction.requiresSafetyWarning, isFalse);
+    },
+  );
+
   test('parses a provider-returned data product', () {
     final product = MobileTopUpProduct.fromJson({
       'id': 'reloadly:99:data:10.00',

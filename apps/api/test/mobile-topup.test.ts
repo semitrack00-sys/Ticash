@@ -72,6 +72,21 @@ async function quote(app: ReturnType<typeof createApp>, headers: Record<string, 
 describe('Haiti Mobile Recharge sandbox API', () => {
   beforeEach(resetStore);
 
+  it('reports an authoritative fail-closed Sandbox environment', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    const headers = await auth(app, 'status');
+    const response = await request(app).get('/api/mobile-topups/status').set(headers).expect(200);
+    expect(response.body).toMatchObject({
+      enabled: true,
+      environment: 'SANDBOX',
+      paymentMode: 'MOCK',
+      testMode: true,
+      productionEnabled: false,
+      approvedForLiveUse: false,
+      liveRechargeEnabled: false,
+    });
+  });
+
   it('returns a controlled disabled response without provider credentials', async () => {
     const app = createApp({ mobileTopUpConfig: { ...config, enabled: false, clientId: undefined, clientSecret: undefined } });
     const headers = await auth(app, 'disabled');

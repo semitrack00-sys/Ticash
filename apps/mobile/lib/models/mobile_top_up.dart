@@ -6,13 +6,35 @@ class MobileTopUpAvailability {
   const MobileTopUpAvailability({
     required this.enabled,
     required this.environment,
+    required this.testMode,
+    required this.productionEnabled,
+    required this.approvedForLiveUse,
+    required this.liveRechargeEnabled,
   });
   final bool enabled;
   final String environment;
+  final bool testMode;
+  final bool productionEnabled;
+  final bool approvedForLiveUse;
+  final bool liveRechargeEnabled;
+
+  bool get isGenuinelyLive =>
+      environment.toUpperCase() == 'PRODUCTION' &&
+      !testMode &&
+      productionEnabled &&
+      approvedForLiveUse &&
+      liveRechargeEnabled;
+
+  bool get requiresSafetyWarning => !isGenuinelyLive;
+
   factory MobileTopUpAvailability.fromJson(Map<String, dynamic> json) =>
       MobileTopUpAvailability(
         enabled: json['enabled'] as bool? ?? false,
         environment: json['environment'] as String? ?? 'SANDBOX',
+        testMode: json['testMode'] as bool? ?? true,
+        productionEnabled: json['productionEnabled'] as bool? ?? false,
+        approvedForLiveUse: json['approvedForLiveUse'] as bool? ?? false,
+        liveRechargeEnabled: json['liveRechargeEnabled'] as bool? ?? false,
       );
 }
 

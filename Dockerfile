@@ -7,7 +7,7 @@ RUN npm ci
 COPY tsconfig.base.json ./
 COPY apps/api apps/api
 COPY packages/shared packages/shared
-COPY prisma prisma
+COPY schema.prisma ./schema.prisma
 RUN npm run prisma:generate && npm run build
 
 FROM node:20-alpine

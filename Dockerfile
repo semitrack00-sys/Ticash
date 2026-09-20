@@ -18,6 +18,6 @@ COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/packages/shared/package.json ./packages/shared/package.json
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
-COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/schema.prisma ./schema.prisma
 EXPOSE 4000
 CMD ["node", "apps/api/dist/index.js"]

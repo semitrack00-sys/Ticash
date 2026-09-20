@@ -22,3 +22,6 @@ coverage/
 .DS_Store
 Thumbs.db
 analytics.settings
+
+# Android/Kotlin generated cache
+apps/mobile/android/.kotlin/

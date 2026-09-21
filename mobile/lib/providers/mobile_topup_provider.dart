@@ -97,6 +97,16 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
 
   final MobileTopUpService _service;
 
+  bool _matchesSelection({
+    required String countryCode,
+    required String phone,
+    String? productId,
+  }) {
+    return state.selectedCountry?.code == countryCode &&
+        state.phone == phone &&
+        (productId == null || state.selectedProduct?.id == productId);
+  }
+
   Future<void> load() async {
     state = state.copyWith(loading: true, clearError: true);
     try {
@@ -170,7 +180,7 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
     try {
       final detected = await _service.detectOperator(requestCountryCode, requestPhone);
       final products = await _service.products(requestCountryCode, detected.id);
-      if (state.selectedCountry?.code != requestCountryCode || state.phone != requestPhone) {
+      if (!_matchesSelection(countryCode: requestCountryCode, phone: requestPhone)) {
         return;
       }
       state = state.copyWith(
@@ -181,6 +191,9 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
         clearSelectedRecipient: true,
       );
     } catch (error) {
+      if (!_matchesSelection(countryCode: requestCountryCode, phone: requestPhone)) {
+        return;
+      }
       state = state.copyWith(
         loading: false,
         error: error.toString(),
@@ -218,7 +231,7 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
                 ) ??
                 await _service.detectOperator(country.code, recipient.phone);
       final products = await _service.products(country.code, operator.id);
-      if (state.selectedCountry?.code != requestedCountryCode || state.phone != requestedPhone) {
+      if (!_matchesSelection(countryCode: requestedCountryCode, phone: requestedPhone)) {
         return;
       }
       state = state.copyWith(
@@ -231,6 +244,9 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
             : _firstWhereOrNull(products, (item) => item.id == recipient.lastProductId),
       );
     } catch (error) {
+      if (!_matchesSelection(countryCode: requestedCountryCode, phone: requestedPhone)) {
+        return;
+      }
       state = state.copyWith(
         loading: false,
         countries: countries,
@@ -258,13 +274,22 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
         operatorId: operator.id,
         productId: requestProductId,
       );
-      if (state.selectedCountry?.code != requestCountryCode ||
-          state.phone != requestPhone ||
-          state.selectedProduct?.id != requestProductId) {
+      if (!_matchesSelection(
+        countryCode: requestCountryCode,
+        phone: requestPhone,
+        productId: requestProductId,
+      )) {
         return;
       }
       state = state.copyWith(submitting: false, quote: quote);
     } catch (error) {
+      if (!_matchesSelection(
+        countryCode: requestCountryCode,
+        phone: requestPhone,
+        productId: requestProductId,
+      )) {
+        return;
+      }
       state = state.copyWith(submitting: false, error: error.toString());
     }
   }

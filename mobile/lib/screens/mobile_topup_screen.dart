@@ -53,6 +53,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                     autofocus: true,
                     style: AppTextStyles.body,
                     decoration: const InputDecoration(
+                      labelText: 'Search countries',
                       hintText: 'Search countries',
                     ),
                     onChanged: (value) => setState(() => query = value),

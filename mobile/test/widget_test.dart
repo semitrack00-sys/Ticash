@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -184,6 +186,16 @@ class FakeMobileTopUpService implements MobileTopUpService {
   }
 }
 
+class DelayedDetectFailureService extends FakeMobileTopUpService {
+  final detectCompleter = Completer<MobileTopUpOperator>();
+
+  @override
+  Future<MobileTopUpOperator> detectOperator(String countryCode, String phone) {
+    detectCalls.add('$countryCode|$phone');
+    return detectCompleter.future;
+  }
+}
+
 Future<void> _openRecharge(
   WidgetTester tester,
   FakeMobileTopUpService service,
@@ -336,5 +348,32 @@ void main() {
     expect(service.productCalls, contains('HT|99'));
     expect(find.text('Provider Haiti Sandbox'), findsOneWidget);
     expect(find.text('Haiti Data 10\nUSD 10.00'), findsOneWidget);
+  });
+
+  testWidgets('stale detect failures do not overwrite newer phone input state',
+      (WidgetTester tester) async {
+    final service = DelayedDetectFailureService();
+    await _openRecharge(tester, service);
+
+    await tester.tap(find.text('Haiti (HT)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jamaica'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'International mobile number'),
+      '+1 876 555 1234',
+    );
+    await tester.tap(find.text('Detect operator'));
+    await tester.pump();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'International mobile number'),
+      '+1 876 555 9999',
+    );
+    service.detectCompleter.completeError(Exception('stale detect failure'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('stale detect failure'), findsNothing);
+    expect(find.text('Provider Jamaica Sandbox'), findsNothing);
   });
 }

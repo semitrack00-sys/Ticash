@@ -8,6 +8,7 @@ import type {
   MobileTopUpProvider,
   ProviderTopUpResult,
 } from '../src/topup/types.js';
+import { MobileTopUpError } from '../src/topup/types.js';
 
 const config: MobileTopUpConfig = {
   enabled: true,
@@ -151,6 +152,17 @@ describe('Worldwide mobile recharge sandbox API', () => {
     const headers = await auth(app, 'disabled');
     const response = await request(app).get('/api/mobile-topups/operators?country=HT').set(headers).expect(503);
     expect(response.body.code).toBe('MOBILE_TOPUP_DISABLED');
+  });
+
+  it('returns the expected error shape when provider-backed countries are unavailable', async () => {
+    const provider = new TestProvider();
+    provider.listCountries = async () => {
+      throw new MobileTopUpError('RELOADLY_UNAVAILABLE', 'Mobile recharge is unavailable', 502);
+    };
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const headers = await auth(app, 'countries-error');
+    const response = await request(app).get('/api/mobile-topups/countries').set(headers).expect(502);
+    expect(response.body.code).toBe('RELOADLY_UNAVAILABLE');
   });
 
   it('requires a valid country and safe international phone normalization while keeping HT working', async () => {

@@ -36,15 +36,19 @@ class MobileTopUpService {
   }
 
   Future<List<MobileTopUpOperator>> operators(String countryCode) async {
+    final normalizedCountryCode = _countryCode(countryCode);
     final data =
         (await _dio.get(
               '$_base/operators',
-              queryParameters: {'country': _countryCode(countryCode)},
+              queryParameters: {'country': normalizedCountryCode},
             )).data
             as Map<String, dynamic>;
     return (data['operators'] as List)
         .map(
-          (item) => MobileTopUpOperator.fromJson(item as Map<String, dynamic>),
+          (item) => MobileTopUpOperator.fromJson({
+            'countryCode': normalizedCountryCode,
+            ...(item as Map<String, dynamic>),
+          }),
         )
         .toList();
   }
@@ -53,17 +57,21 @@ class MobileTopUpService {
     required String countryCode,
     required String phone,
   }) async {
+    final normalizedCountryCode = _countryCode(countryCode);
     final data =
         (await _dio.get(
               '$_base/operators/detect',
               queryParameters: {
-                'country': _countryCode(countryCode),
+                'country': normalizedCountryCode,
                 'phone': phone,
               },
             )).data
             as Map<String, dynamic>;
     return MobileTopUpOperator.fromJson(
-      data['operator'] as Map<String, dynamic>,
+      {
+        'countryCode': normalizedCountryCode,
+        ...(data['operator'] as Map<String, dynamic>),
+      },
     );
   }
 

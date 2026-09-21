@@ -100,6 +100,152 @@ void main() {
     expect(countries.map((item) => item.name), ['Jamaica', 'Haiti']);
   });
 
+  test('sends normalized country codes across worldwide recharge requests', () async {
+    final getCalls = <Map<String, Object?>>[];
+    final postCalls = <Map<String, Object?>>[];
+    final service = MobileTopUpService(
+      dio: _FakeDio(
+        onGet: (path, queryParameters) async {
+          getCalls.add({
+            'path': path,
+            'queryParameters': queryParameters,
+          });
+          if (path == '/mobile-topups/operators') {
+            return Response<dynamic>(
+              data: {
+                'operators': [
+                  {'id': 77, 'name': 'Digicel Jamaica', 'bundle': false},
+                ],
+              },
+              requestOptions: RequestOptions(path: path),
+            );
+          }
+          if (path == '/mobile-topups/operators/detect') {
+            return Response<dynamic>(
+              data: {
+                'operator': {
+                  'id': 77,
+                  'name': 'Digicel Jamaica',
+                  'bundle': false,
+                },
+              },
+              requestOptions: RequestOptions(path: path),
+            );
+          }
+          if (path == '/mobile-topups/operators/77/products') {
+            return Response<dynamic>(
+              data: {'products': []},
+              requestOptions: RequestOptions(path: path),
+            );
+          }
+          fail('Unexpected GET request to $path.');
+        },
+        onPost: (path, data) async {
+          postCalls.add({
+            'path': path,
+            'data': data,
+          });
+          if (path == '/mobile-topups/recipients') {
+            return Response<dynamic>(
+              data: {
+                'recipient': {
+                  'id': 'recipient-id',
+                  'nickname': 'Mom',
+                  'phone': '+18765551234',
+                  'countryCode': 'JM',
+                },
+              },
+              requestOptions: RequestOptions(path: path),
+            );
+          }
+          if (path == '/mobile-topups/quotes') {
+            return Response<dynamic>(
+              data: {
+                'quote': {
+                  'id': 'quote-id',
+                  'countryCode': 'JM',
+                  'recipientPhone': '+18765551234',
+                  'operatorId': 77,
+                  'operatorName': 'Digicel Jamaica',
+                  'productId': 'reloadly:JM:77:airtime:7.50',
+                  'productName': 'Airtime',
+                  'kind': 'AIRTIME',
+                  'providerAmount': 7.5,
+                  'providerCurrency': 'USD',
+                  'deliveredCurrency': 'JMD',
+                  'feeUsd': 0.5,
+                  'totalChargeUsd': 8,
+                  'expiresAt': '2026-09-06T12:05:00.000Z',
+                },
+              },
+              requestOptions: RequestOptions(path: path),
+            );
+          }
+          fail('Unexpected POST request to $path.');
+        },
+      ),
+    );
+
+    final operators = await service.operators('jm');
+    final detected = await service.detectOperator(
+      countryCode: 'jm',
+      phone: '+18765551234',
+    );
+    await service.products('jm', 77);
+    final recipient = await service.saveRecipient(
+      nickname: 'Mom',
+      phone: '+18765551234',
+      countryCode: 'jm',
+    );
+    final quote = await service.quote(
+      countryCode: 'jm',
+      phone: '+18765551234',
+      operatorId: 77,
+      productId: 'reloadly:JM:77:airtime:7.50',
+    );
+
+    expect(operators.single.countryCode, 'JM');
+    expect(detected.countryCode, 'JM');
+    expect(recipient.countryCode, 'JM');
+    expect(quote.countryCode, 'JM');
+    expect(getCalls, [
+      {
+        'path': '/mobile-topups/operators',
+        'queryParameters': {'country': 'JM'},
+      },
+      {
+        'path': '/mobile-topups/operators/detect',
+        'queryParameters': {
+          'country': 'JM',
+          'phone': '+18765551234',
+        },
+      },
+      {
+        'path': '/mobile-topups/operators/77/products',
+        'queryParameters': {'country': 'JM'},
+      },
+    ]);
+    expect(postCalls, [
+      {
+        'path': '/mobile-topups/recipients',
+        'data': {
+          'nickname': 'Mom',
+          'phone': '+18765551234',
+          'countryCode': 'JM',
+        },
+      },
+      {
+        'path': '/mobile-topups/quotes',
+        'data': {
+          'countryCode': 'JM',
+          'phone': '+18765551234',
+          'operatorId': 77,
+          'productId': 'reloadly:JM:77:airtime:7.50',
+        },
+      },
+    ]);
+  });
+
   test('rejects malformed country codes before sending recharge requests', () async {
     final service = MobileTopUpService(
       dio: _FakeDio(),

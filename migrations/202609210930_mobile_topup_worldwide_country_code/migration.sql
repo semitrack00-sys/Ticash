@@ -2,6 +2,9 @@ ALTER TABLE "MobileTopUpTransaction"
 ADD COLUMN IF NOT EXISTS "countryCode" TEXT NOT NULL DEFAULT 'HT';
 
 ALTER TABLE "MobileTopUpRecipient"
+ADD COLUMN IF NOT EXISTS "countryCode" TEXT NOT NULL DEFAULT 'HT';
+
+ALTER TABLE "MobileTopUpRecipient"
 DROP CONSTRAINT IF EXISTS "MobileTopUpRecipient_userId_phone_key";
 
 DO $$

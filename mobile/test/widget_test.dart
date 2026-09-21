@@ -199,6 +199,8 @@ Future<void> _openRecharge(
   await tester.pump(const Duration(milliseconds: 300));
   await tester.tap(find.text('Send money').first);
   await tester.pumpAndSettle();
+  await tester.tap(find.text('Open mobile recharge'));
+  await tester.pumpAndSettle();
 }
 
 void main() {

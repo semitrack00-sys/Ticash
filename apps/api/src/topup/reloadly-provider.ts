@@ -1,11 +1,13 @@
 import type {
   MobileTopUpConfig,
+  MobileTopUpCountry,
   MobileTopUpOperator,
   MobileTopUpProvider,
   ProviderTopUpRequest,
   ProviderTopUpResult,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
+import { normalizeTopUpCountryCode } from './validation.js';
 
 type ReloadlyDocument = Record<string, unknown> & {
   content?: unknown[];
@@ -28,14 +30,43 @@ function stringMap(value: unknown): Record<string, string> {
   );
 }
 
+function providerCountryCode(value: unknown): string {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    throw new MobileTopUpError(
+      'INVALID_PROVIDER_RESPONSE',
+      'Reloadly returned an invalid recharge country',
+      502,
+    );
+  }
+  return normalized;
+}
+
+function mapCountry(raw: Record<string, unknown>): MobileTopUpCountry {
+  const code = providerCountryCode(raw.isoName ?? raw.countryCode ?? raw.code);
+  const name = typeof raw.name === 'string'
+    ? raw.name.trim()
+    : typeof raw.countryName === 'string'
+      ? raw.countryName.trim()
+      : code;
+  return {
+    code,
+    name: name.slice(0, 160) || code,
+  };
+}
+
 function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
   const id = Number(raw.operatorId ?? raw.id);
   const country = raw.country && typeof raw.country === 'object' && !Array.isArray(raw.country)
     ? raw.country as Record<string, unknown>
     : undefined;
-  const countryCode = String(country?.isoName ?? raw.countryCode ?? '').toUpperCase();
-  if (!Number.isInteger(id) || id <= 0 || countryCode !== 'HT') {
-    throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned an invalid Haiti operator', 502);
+  const countryCode = providerCountryCode(country?.isoName ?? raw.countryCode ?? raw.isoName);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new MobileTopUpError(
+      'INVALID_PROVIDER_RESPONSE',
+      'Reloadly returned an invalid recharge operator',
+      502,
+    );
   }
   const denominationType = String(raw.denominationType ?? '').toUpperCase() === 'RANGE'
     ? 'RANGE'
@@ -45,7 +76,7 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
   return {
     id,
     name: String(raw.name ?? `Operator ${id}`).slice(0, 160),
-    countryCode: 'HT',
+    countryCode,
     status: raw.status !== false,
     bundle: raw.bundle === true,
     denominationType,
@@ -143,7 +174,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
       response = await this.fetchImpl(url, {
         ...init,
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `******
           Accept: 'application/com.reloadly.topups-v1+json',
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
           ...init.headers,
@@ -164,8 +195,17 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     return body;
   }
 
-  async listOperators(countryCode: 'HT'): Promise<MobileTopUpOperator[]> {
-    const body = await this.request(`operators/countries/${countryCode}`);
+  async listCountries(): Promise<MobileTopUpCountry[]> {
+    const body = await this.request('countries');
+    const raw = Array.isArray(body) ? body : Array.isArray(body.content) ? body.content : [];
+    return raw
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      .map(mapCountry);
+  }
+
+  async listOperators(countryCode: string): Promise<MobileTopUpOperator[]> {
+    const normalizedCountry = normalizeTopUpCountryCode(countryCode);
+    const body = await this.request(`operators/countries/${normalizedCountry}`);
     const raw = Array.isArray(body) ? body : Array.isArray(body.content) ? body.content : [];
     return raw
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
@@ -173,9 +213,10 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
       .filter((operator) => operator.status);
   }
 
-  async detectOperator(phone: string, countryCode: 'HT'): Promise<MobileTopUpOperator> {
+  async detectOperator(phone: string, countryCode: string): Promise<MobileTopUpOperator> {
+    const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const body = await this.request(
-      `operators/auto-detect/phone/${encodeURIComponent(phone)}/countries/${countryCode}`,
+      `operators/auto-detect/phone/${encodeURIComponent(phone)}/countries/${normalizedCountry}`,
     );
     return mapOperator(body);
   }
@@ -187,10 +228,11 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
   async submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult> {
     const senderPhone = this.config.senderPhoneCountry && this.config.senderPhoneNumber
       ? {
-          countryCode: this.config.senderPhoneCountry,
+          countryCode: normalizeTopUpCountryCode(this.config.senderPhoneCountry),
           number: this.config.senderPhoneNumber.replace(/\D/g, ''),
         }
       : undefined;
+    const recipientCountryCode = normalizeTopUpCountryCode(input.recipientCountryCode);
     const body = await this.request('topups', {
       method: 'POST',
       body: JSON.stringify({
@@ -199,7 +241,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
         useLocalAmount: false,
         customIdentifier: input.customIdentifier,
         recipientPhone: {
-          countryCode: input.recipientCountryCode,
+          countryCode: recipientCountryCode,
           number: input.recipientPhone.replace(/\D/g, ''),
         },
         ...(senderPhone ? { senderPhone } : {}),

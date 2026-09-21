@@ -20,10 +20,15 @@ export interface MobileTopUpConfig {
   approvedForLiveUse: false;
 }
 
+export interface MobileTopUpCountry {
+  code: string;
+  name: string;
+}
+
 export interface MobileTopUpOperator {
   id: number;
   name: string;
-  countryCode: 'HT';
+  countryCode: string;
   status: boolean;
   bundle: boolean;
   denominationType: 'FIXED' | 'RANGE';
@@ -39,6 +44,7 @@ export interface MobileTopUpOperator {
 
 export interface MobileTopUpProduct {
   id: string;
+  countryCode: string;
   operatorId: number;
   kind: MobileTopUpKind;
   name: string;
@@ -55,7 +61,7 @@ export interface ProviderTopUpRequest {
   operatorId: number;
   amount: number;
   recipientPhone: string;
-  recipientCountryCode: 'HT';
+  recipientCountryCode: string;
   customIdentifier: string;
 }
 
@@ -71,8 +77,9 @@ export interface ProviderTopUpResult {
 }
 
 export interface MobileTopUpProvider {
-  listOperators(countryCode: 'HT'): Promise<MobileTopUpOperator[]>;
-  detectOperator(phone: string, countryCode: 'HT'): Promise<MobileTopUpOperator>;
+  listCountries(): Promise<MobileTopUpCountry[]>;
+  listOperators(countryCode: string): Promise<MobileTopUpOperator[]>;
+  detectOperator(phone: string, countryCode: string): Promise<MobileTopUpOperator>;
   getOperator(operatorId: number): Promise<MobileTopUpOperator>;
   submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult>;
   getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult>;

@@ -12,7 +12,7 @@ export interface SavedTopUpRecipientRecord {
   userId: string;
   nickname: string;
   phone: string;
-  countryCode: 'HT';
+  countryCode: string;
   operatorId?: number;
   operatorName?: string;
   lastProductId?: string;
@@ -24,6 +24,7 @@ export interface SavedTopUpRecipientRecord {
 export interface MobileTopUpQuoteRecord {
   id: string;
   userId: string;
+  countryCode: string;
   recipientPhone: string;
   operatorId: number;
   operatorName: string;
@@ -104,7 +105,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 
   async saveRecipient(input: Omit<SavedTopUpRecipientRecord, 'id' | 'createdAt' | 'updatedAt'>) {
     const existing = [...recipients.values()].find(
-      (item) => item.userId === input.userId && item.phone === input.phone,
+      (item) => item.userId === input.userId && item.phone === input.phone && item.countryCode === input.countryCode,
     );
     const timestamp = now();
     const record: SavedTopUpRecipientRecord = {
@@ -190,7 +191,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 }
 
 function quoteFromDb(record: {
-  id: string; userId: string; recipientPhone: string; operatorId: number; operatorName: string;
+  id: string; userId: string; countryCode: string; recipientPhone: string; operatorId: number; operatorName: string;
   productId: string; productName: string; kind: MobileTopUpKind; providerAmount: Prisma.Decimal;
   providerCurrency: string; deliveredValue: Prisma.Decimal | null; deliveredCurrency: string;
   feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; expiresAt: Date; consumedAt: Date | null; createdAt: Date;
@@ -198,6 +199,7 @@ function quoteFromDb(record: {
   return {
     id: record.id,
     userId: record.userId,
+    countryCode: record.countryCode,
     recipientPhone: record.recipientPhone,
     operatorId: record.operatorId,
     operatorName: record.operatorName,
@@ -220,7 +222,7 @@ function transactionFromDb(record: {
   id: string; userId: string; recipientId: string | null; quoteId: string; providerTransactionId: string | null;
   operatorTransactionId: string | null; customIdentifier: string; idempotencyKey: string; requestHash: string;
   status: MobileTopUpStatus; paymentStatus: MobileTopUpPaymentStatus; paymentAuthorizationId: string | null;
-  recipientPhone: string; operatorId: number; operatorName: string; productId: string; productName: string;
+  countryCode: string; recipientPhone: string; operatorId: number; operatorName: string; productId: string; productName: string;
   kind: MobileTopUpKind; providerAmount: Prisma.Decimal; providerCurrency: string; deliveredValue: Prisma.Decimal | null;
   deliveredCurrency: string; feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; providerStatus: string | null;
   failureCode: string | null; testMode: boolean; createdAt: Date; updatedAt: Date; deliveredAt: Date | null;
@@ -239,6 +241,7 @@ function transactionFromDb(record: {
     status: record.status,
     paymentStatus: record.paymentStatus,
     paymentAuthorizationId: record.paymentAuthorizationId ?? undefined,
+    countryCode: record.countryCode,
     recipientPhone: record.recipientPhone,
     operatorId: record.operatorId,
     operatorName: record.operatorName,
@@ -269,7 +272,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     const records = await this.prisma.mobileTopUpRecipient.findMany({ where: { userId }, orderBy: { updatedAt: 'desc' } });
     return records.map((item) => ({
       ...item,
-      countryCode: 'HT' as const,
+      countryCode: item.countryCode,
       operatorId: item.operatorId ?? undefined,
       operatorName: item.operatorName ?? undefined,
       lastProductId: item.lastProductId ?? undefined,
@@ -281,13 +284,13 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async saveRecipient(input: Omit<SavedTopUpRecipientRecord, 'id' | 'createdAt' | 'updatedAt'>) {
     const record = await this.prisma.mobileTopUpRecipient.upsert({
-      where: { userId_phone: { userId: input.userId, phone: input.phone } },
+      where: { userId_phone_countryCode: { userId: input.userId, phone: input.phone, countryCode: input.countryCode } },
       update: input,
       create: input,
     });
     return {
       ...record,
-      countryCode: 'HT' as const,
+      countryCode: record.countryCode,
       operatorId: record.operatorId ?? undefined,
       operatorName: record.operatorName ?? undefined,
       lastProductId: record.lastProductId ?? undefined,
@@ -306,7 +309,6 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       ...input,
       provider: 'RELOADLY',
       testMode: true,
-      countryCode: 'HT',
       expiresAt: new Date(input.expiresAt),
       consumedAt: input.consumedAt ? new Date(input.consumedAt) : null,
     } });
@@ -336,6 +338,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
         provider: 'RELOADLY',
         testMode: true,
         recipientId: input.recipientId,
+        countryCode: input.countryCode,
         deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : null,
         failedAt: input.failedAt ? new Date(input.failedAt) : null,
         refundedAt: input.refundedAt ? new Date(input.refundedAt) : null,

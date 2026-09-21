@@ -33,6 +33,7 @@ describe('PrismaMobileTopUpRepository', () => {
 
     const quote = await repository.createQuote({
       userId: storedQuote.userId,
+      countryCode: storedQuote.countryCode,
       recipientPhone: storedQuote.recipientPhone,
       operatorId: storedQuote.operatorId,
       operatorName: storedQuote.operatorName,
@@ -49,9 +50,9 @@ describe('PrismaMobileTopUpRepository', () => {
 
     expect(quote).not.toHaveProperty('provider');
     expect(quote).not.toHaveProperty('testMode');
-    expect(quote).not.toHaveProperty('countryCode');
     expect(quote).toMatchObject({
       id: 'quote-id',
+      countryCode: 'HT',
       providerAmount: 4,
       feeUsd: 0,
       totalChargeUsd: 4,

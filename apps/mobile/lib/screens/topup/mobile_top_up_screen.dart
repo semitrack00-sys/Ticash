@@ -28,25 +28,31 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   bool _busy = false;
   bool _history = false;
   String? _error;
-
-  Future<void> _initializeCountry() async {
-    try {
-      final countries = await ref.read(mobileTopUpCountriesProvider.future);
-      if (!mounted || countries.isEmpty || _countryCode != null) return;
-      setState(() => _countryCode = countries.first.code);
-    } catch (_) {
-      // countries.when(...) renders the existing error state
-    }
-  }
+  late final ProviderSubscription<AsyncValue<List<MobileTopUpCountry>>>
+      _countriesSubscription;
 
   @override
   void initState() {
     super.initState();
-    _initializeCountry();
+    _countriesSubscription = ref.listenManual(
+      mobileTopUpCountriesProvider,
+      (_, next) {
+        final countries = next.asData?.value;
+        if (countries == null || countries.isEmpty) return;
+        final resolvedCountryCode =
+            countries.any((item) => item.code == _countryCode)
+                ? (_countryCode ?? countries.first.code)
+                : countries.first.code;
+        if (mounted && _countryCode != resolvedCountryCode) {
+          setState(() => _countryCode = resolvedCountryCode);
+        }
+      },
+    );
   }
 
   @override
   void dispose() {
+    _countriesSubscription.close();
     _phone.dispose();
     _nickname.dispose();
     _customAmount.dispose();

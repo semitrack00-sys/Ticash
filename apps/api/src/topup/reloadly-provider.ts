@@ -174,7 +174,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
       response = await this.fetchImpl(url, {
         ...init,
         headers: {
-          Authorization: `******
+          Authorization: 'Bearer ' + token,
           Accept: 'application/com.reloadly.topups-v1+json',
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
           ...init.headers,

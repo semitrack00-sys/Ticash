@@ -106,7 +106,7 @@ async function auth(app: ReturnType<typeof createApp>, suffix = 'one') {
   const result = await request(app).post('/api/auth/register').send({
     email: `topup-${suffix}@example.com`, password: 'correct-horse-42', firstName: 'Ti', lastName: 'Cash',
   }).expect(201);
-  return { Authorization: `****** };
+  return { Authorization: 'Bearer ' + result.body.accessToken };
 }
 
 async function quote(
@@ -312,15 +312,15 @@ describe('Worldwide mobile recharge sandbox API', () => {
     expect(history.body.transactions).toHaveLength(1);
     expect(history.body.transactions[0].countryCode).toBe('JM');
 
+    const expiredQuote = await quote(app, headers);
+    time = new Date('2026-01-01T00:05:01Z');
+    const expired = await request(app).post('/api/mobile-topups/transactions').set(headers)
+      .set('Idempotency-Key', 'topup-expired-one').send({ quoteId: expiredQuote.body.quote.id }).expect(409);
+    expect(expired.body.code).toBe('TOPUP_QUOTE_EXPIRED');
+
     provider.operatorsById.set(77, { ...jamaicaOperator, status: false });
     provider.operatorsByCountry.set('JM', [{ ...jamaicaOperator, status: false }]);
     const repeated = await request(app).post(`/api/mobile-topups/transactions/${id}/repeat`).set(headers).expect(404);
     expect(repeated.body.code).toBe('TOPUP_OPERATOR_UNAVAILABLE');
-
-    time = new Date('2026-01-01T00:05:01Z');
-    const expiredQuote = await quote(app, headers);
-    const expired = await request(app).post('/api/mobile-topups/transactions').set(headers)
-      .set('Idempotency-Key', 'topup-expired-one').send({ quoteId: expiredQuote.body.quote.id }).expect(409);
-    expect(expired.body.code).toBe('TOPUP_QUOTE_EXPIRED');
   });
 });

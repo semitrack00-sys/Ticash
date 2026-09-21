@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MobileTopUpError } from './types.js';
 
-export const topUpCountryCodeShape = z.string().trim().min(2).max(8);
+export const topUpCountryCodeShape = z.string().trim().min(1).max(8);
 export const topUpPhoneShape = z.string().trim().min(4).max(40);
 
 export function normalizeTopUpCountryCode(value: string): string {

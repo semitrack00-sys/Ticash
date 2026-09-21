@@ -37,7 +37,7 @@ describe('Reloadly Sandbox top-up provider', () => {
       client_id: 'sandbox-id', grant_type: 'client_credentials', audience: config.airtimeBaseUrl,
     });
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/JM`);
-    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('******');
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer ' + 'token');
   });
 
   it('lists provider-backed supported countries', async () => {

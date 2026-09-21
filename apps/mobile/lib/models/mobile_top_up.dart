@@ -2,6 +2,22 @@ enum MobileTopUpKind { airtime, data }
 
 enum MobileTopUpStatus { pending, processing, delivered, failed, refunded }
 
+String _countryCodeFromJson(
+  Map<String, dynamic> json, {
+  String? phoneKey,
+  String fallback = 'HT',
+}) {
+  final countryCode = (json['countryCode'] as String?)?.trim();
+  if (countryCode != null && countryCode.isNotEmpty) {
+    return countryCode.toUpperCase();
+  }
+  final phone = phoneKey == null ? null : (json[phoneKey] as String?)?.trim();
+  if (phone != null && phone.replaceAll(RegExp(r'[\s().-]'), '').startsWith('+509')) {
+    return 'HT';
+  }
+  return fallback;
+}
+
 class MobileTopUpAvailability {
   const MobileTopUpAvailability({
     required this.enabled,
@@ -38,19 +54,33 @@ class MobileTopUpAvailability {
       );
 }
 
+class MobileTopUpCountry {
+  const MobileTopUpCountry({required this.code, required this.name});
+  final String code;
+  final String name;
+  factory MobileTopUpCountry.fromJson(Map<String, dynamic> json) =>
+      MobileTopUpCountry(
+        code: ((json['code'] ?? json['countryCode']) as String).toUpperCase(),
+        name: (json['name'] ?? json['countryName'] ?? json['code']) as String,
+      );
+}
+
 class MobileTopUpOperator {
   const MobileTopUpOperator({
     required this.id,
     required this.name,
+    required this.countryCode,
     required this.bundle,
   });
   final int id;
   final String name;
+  final String countryCode;
   final bool bundle;
   factory MobileTopUpOperator.fromJson(Map<String, dynamic> json) =>
       MobileTopUpOperator(
         id: (json['id'] as num).toInt(),
         name: json['name'] as String,
+        countryCode: _countryCodeFromJson(json),
         bundle: json['bundle'] as bool? ?? false,
       );
 }
@@ -103,6 +133,7 @@ class MobileTopUpRecipient {
     required this.id,
     required this.nickname,
     required this.phone,
+    required this.countryCode,
     this.operatorId,
     this.operatorName,
     this.lastProductName,
@@ -110,6 +141,7 @@ class MobileTopUpRecipient {
   final String id;
   final String nickname;
   final String phone;
+  final String countryCode;
   final int? operatorId;
   final String? operatorName;
   final String? lastProductName;
@@ -118,6 +150,7 @@ class MobileTopUpRecipient {
         id: json['id'] as String,
         nickname: json['nickname'] as String,
         phone: json['phone'] as String,
+        countryCode: _countryCodeFromJson(json, phoneKey: 'phone'),
         operatorId: (json['operatorId'] as num?)?.toInt(),
         operatorName: json['operatorName'] as String?,
         lastProductName: json['lastProductName'] as String?,
@@ -128,6 +161,7 @@ class MobileTopUpQuote {
   const MobileTopUpQuote({
     required this.id,
     required this.phone,
+    required this.countryCode,
     required this.operatorId,
     required this.operatorName,
     required this.productId,
@@ -143,6 +177,7 @@ class MobileTopUpQuote {
   });
   final String id;
   final String phone;
+  final String countryCode;
   final int operatorId;
   final String operatorName;
   final String productId;
@@ -159,6 +194,7 @@ class MobileTopUpQuote {
       MobileTopUpQuote(
         id: json['id'] as String,
         phone: json['recipientPhone'] as String,
+        countryCode: _countryCodeFromJson(json, phoneKey: 'recipientPhone'),
         operatorId: (json['operatorId'] as num).toInt(),
         operatorName: json['operatorName'] as String,
         productId: json['productId'] as String,
@@ -180,6 +216,7 @@ class MobileTopUpTransaction {
   const MobileTopUpTransaction({
     required this.id,
     required this.phone,
+    required this.countryCode,
     required this.operatorName,
     required this.productName,
     required this.kind,
@@ -197,6 +234,7 @@ class MobileTopUpTransaction {
   });
   final String id;
   final String phone;
+  final String countryCode;
   final String operatorName;
   final String productName;
   final MobileTopUpKind kind;
@@ -215,6 +253,7 @@ class MobileTopUpTransaction {
       MobileTopUpTransaction(
         id: json['id'] as String,
         phone: json['recipientPhone'] as String,
+        countryCode: _countryCodeFromJson(json, phoneKey: 'recipientPhone'),
         operatorName: json['operatorName'] as String,
         productName: json['productName'] as String,
         kind: json['kind'] == 'DATA'

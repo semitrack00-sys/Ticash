@@ -132,7 +132,7 @@ class _HomeBody extends ConsumerWidget {
                           ),
                           SizedBox(height: 4),
                           Text(
-                            'Haiti airtime & data plans · Sandbox',
+                            'Worldwide airtime & data plans · Sandbox',
                             style: TextStyle(color: AppTheme.muted),
                           ),
                         ],

@@ -5,6 +5,9 @@ import '../services/mobile_top_up_service.dart';
 final mobileTopUpServiceProvider = Provider<MobileTopUpService>(
   (ref) => MobileTopUpService(),
 );
+final mobileTopUpCountriesProvider = FutureProvider<List<MobileTopUpCountry>>(
+  (ref) => ref.watch(mobileTopUpServiceProvider).countries(),
+);
 final mobileTopUpAvailabilityProvider = FutureProvider<MobileTopUpAvailability>(
   (ref) => ref.watch(mobileTopUpServiceProvider).availability(),
 );

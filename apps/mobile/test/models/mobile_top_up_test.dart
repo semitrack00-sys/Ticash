@@ -55,10 +55,52 @@ void main() {
     expect(product.deliveredCurrency, 'HTG');
   });
 
+  test('parses supported countries and operator country codes', () {
+    final country = MobileTopUpCountry.fromJson({
+      'code': 'jm',
+      'name': 'Jamaica',
+    });
+    final operator = MobileTopUpOperator.fromJson({
+      'id': 77,
+      'name': 'Digicel Jamaica',
+      'countryCode': 'jm',
+      'bundle': false,
+    });
+    expect(country.code, 'JM');
+    expect(country.name, 'Jamaica');
+    expect(operator.countryCode, 'JM');
+  });
+
+  test('keeps legacy Haiti records backward compatible without countryCode', () {
+    final recipient = MobileTopUpRecipient.fromJson({
+      'id': 'recipient-id',
+      'nickname': 'Mom',
+      'phone': '+50937123456',
+    });
+    final quote = MobileTopUpQuote.fromJson({
+      'id': 'quote-id',
+      'recipientPhone': '+50937123456',
+      'operatorId': 99,
+      'operatorName': 'Provider Haiti Sandbox',
+      'productId': 'reloadly:HT:99:airtime:5.00',
+      'productName': 'Airtime',
+      'kind': 'AIRTIME',
+      'providerAmount': 5,
+      'providerCurrency': 'USD',
+      'deliveredCurrency': 'HTG',
+      'feeUsd': 0.5,
+      'totalChargeUsd': 5.5,
+      'expiresAt': '2026-09-06T12:05:00.000Z',
+    });
+    expect(recipient.countryCode, 'HT');
+    expect(quote.countryCode, 'HT');
+  });
+
   test('parses an authoritative delivered sandbox receipt', () {
     final transaction = MobileTopUpTransaction.fromJson({
       'id': 'topup-id',
       'recipientPhone': '+50937123456',
+      'countryCode': 'jm',
       'operatorName': 'Provider Haiti Sandbox',
       'productName': 'Airtime',
       'kind': 'AIRTIME',
@@ -74,6 +116,7 @@ void main() {
       'providerTransactionId': 'reloadly-test-1',
     });
     expect(transaction.status, MobileTopUpStatus.delivered);
+    expect(transaction.countryCode, 'JM');
     expect(transaction.testMode, isTrue);
     expect(transaction.totalChargeUsd, 5.5);
   });

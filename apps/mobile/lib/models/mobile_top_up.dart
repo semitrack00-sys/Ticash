@@ -33,9 +33,13 @@ String _countryCodeFromJson(
     if (fromProductId != null) return fromProductId;
   }
   final phone = phoneKey == null ? null : (json[phoneKey] as String?)?.trim();
-  if (phone != null &&
-      phone.replaceAll(RegExp(r'[\s().-]'), '').startsWith('+509')) {
-    return 'HT';
+  if (phone != null) {
+    final compact = phone.replaceAll(RegExp(r'[\s().-]'), '');
+    final digitsOnly = compact.replaceFirst(RegExp(r'^\+'), '');
+    if (RegExp(r'^509\d{8}$').hasMatch(digitsOnly) ||
+        RegExp(r'^\d{8}$').hasMatch(digitsOnly)) {
+      return 'HT';
+    }
   }
   if (fallback != null) return fallback;
   throw StateError('Mobile Recharge response is missing a countryCode');

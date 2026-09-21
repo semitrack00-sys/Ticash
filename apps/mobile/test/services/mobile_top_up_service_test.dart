@@ -110,6 +110,22 @@ void main() {
       throwsA(isA<ArgumentError>()),
     );
     await expectLater(
+      service.detectOperator(countryCode: '123', phone: '+18765551234'),
+      throwsA(isA<ArgumentError>()),
+    );
+    await expectLater(
+      service.products('Jamaica', 77),
+      throwsA(isA<ArgumentError>()),
+    );
+    await expectLater(
+      service.saveRecipient(
+        nickname: 'Mom',
+        phone: '+18765551234',
+        countryCode: 'Jamaica',
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+    await expectLater(
       service.quote(
         countryCode: 'Jamaica',
         phone: '+18765551234',

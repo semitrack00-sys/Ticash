@@ -75,11 +75,11 @@ void main() {
     final recipient = MobileTopUpRecipient.fromJson({
       'id': 'recipient-id',
       'nickname': 'Mom',
-      'phone': '+50937123456',
+      'phone': '37123456',
     });
     final quote = MobileTopUpQuote.fromJson({
       'id': 'quote-id',
-      'recipientPhone': '+50937123456',
+      'recipientPhone': '37123456',
       'operatorId': 99,
       'operatorName': 'Provider Haiti Sandbox',
       'productId': 'reloadly:HT:99:airtime:5.00',

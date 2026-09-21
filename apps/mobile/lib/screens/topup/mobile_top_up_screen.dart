@@ -419,9 +419,8 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Mobile number',
-                helperText: selectedCountry.code == 'HT'
-                    ? 'Enter +509 or 8 local digits'
-                    : 'Include the full international number for ${selectedCountry.name}',
+                helperText:
+                    'Include the full international number for ${selectedCountry.name}',
                 prefixIcon: const Icon(Icons.phone_outlined),
               ),
             ),

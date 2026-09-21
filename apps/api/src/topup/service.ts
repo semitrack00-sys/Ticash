@@ -91,7 +91,7 @@ function mapProviderStatus(value: string): MobileTopUpStatus {
 }
 
 export class MobileTopUpService {
-  private countriesCache?: { expiresAt: number; value: MobileTopUpCountry[] };
+  private countriesCache?: { expiresAt: number; value: MobileTopUpCountry[]; key: string };
 
   constructor(
     private readonly config: MobileTopUpConfig,
@@ -119,6 +119,16 @@ export class MobileTopUpService {
     };
   }
 
+  private countriesCacheKey() {
+    return [
+      this.config.airtimeBaseUrl,
+      this.config.authUrl,
+      this.config.clientId ?? '',
+      this.config.environment,
+      this.provider.constructor.name,
+    ].join('|');
+  }
+
   private assertEnabled() {
     if (!this.config.enabled) {
       throw new MobileTopUpError('MOBILE_TOPUP_DISABLED', 'Mobile recharge Sandbox is not enabled', 503);
@@ -127,7 +137,10 @@ export class MobileTopUpService {
 
   async listCountries() {
     this.assertEnabled();
-    if (this.countriesCache && this.countriesCache.expiresAt > Date.now()) {
+    const cacheKey = this.countriesCacheKey();
+    if (this.countriesCache &&
+        this.countriesCache.key === cacheKey &&
+        this.countriesCache.expiresAt > Date.now()) {
       return this.countriesCache.value;
     }
     const countries = [...new Map(
@@ -141,7 +154,11 @@ export class MobileTopUpService {
         }),
     ).values()]
       .sort((left, right) => left.name.localeCompare(right.name));
-    this.countriesCache = { value: countries, expiresAt: Date.now() + countryCatalogCacheTtlMs };
+    this.countriesCache = {
+      key: cacheKey,
+      value: countries,
+      expiresAt: Date.now() + countryCatalogCacheTtlMs,
+    };
     return countries;
   }
 

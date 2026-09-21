@@ -30,6 +30,16 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final countries = await ref.read(mobileTopUpCountriesProvider.future);
+      if (!mounted || countries.isEmpty || _countryCode != null) return;
+      setState(() => _countryCode = countries.first.code);
+    });
+  }
+
+  @override
   void dispose() {
     _phone.dispose();
     _nickname.dispose();

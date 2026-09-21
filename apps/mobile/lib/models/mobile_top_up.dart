@@ -25,7 +25,7 @@ String _countryCodeFromJson(
   String? phoneKey,
   String? productKey,
   String? fallback,
-  bool allowLegacyHaitiLocalPhone = false,
+  bool allowLegacyHaitiPhoneFallback = false,
 }) {
   final explicit = _explicitCountryCode(json);
   if (explicit != null) return explicit;
@@ -34,12 +34,11 @@ String _countryCodeFromJson(
     if (fromProductId != null) return fromProductId;
   }
   final phone = phoneKey == null ? null : (json[phoneKey] as String?)?.trim();
-  if (phone != null) {
+  if (allowLegacyHaitiPhoneFallback && phone != null) {
     final compact = phone.replaceAll(RegExp(r'[\s().-]'), '');
     final digitsOnly = compact.replaceFirst(RegExp(r'^\+'), '');
     if (RegExp(r'^509\d{8}$').hasMatch(digitsOnly) ||
-        (allowLegacyHaitiLocalPhone &&
-            RegExp(r'^\d{8}$').hasMatch(digitsOnly))) {
+        RegExp(r'^\d{8}$').hasMatch(digitsOnly)) {
       return 'HT';
     }
   }
@@ -182,7 +181,7 @@ class MobileTopUpRecipient {
         countryCode: _countryCodeFromJson(
           json,
           phoneKey: 'phone',
-          allowLegacyHaitiLocalPhone: true,
+          allowLegacyHaitiPhoneFallback: true,
         ),
         operatorId: (json['operatorId'] as num?)?.toInt(),
         operatorName: json['operatorName'] as String?,

@@ -63,7 +63,7 @@ export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUp
   return operator.fixedAmounts.map((amount, index) => {
     const plan = planName(operator, amount);
     const kind = plan || operator.bundle ? 'DATA' : 'AIRTIME';
-    const deliveredValue = operator.localFixedAmounts[index];
+    const deliveredValue = operator.localFixedAmounts[index] ?? Number.NaN;
     return {
       id: `reloadly:${operator.countryCode}:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
       countryCode: operator.countryCode,

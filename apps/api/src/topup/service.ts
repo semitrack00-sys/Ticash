@@ -29,6 +29,8 @@ type AuditRecorder = (
   metadata?: Record<string, unknown>,
 ) => Promise<void>;
 
+const countryCatalogCacheTtlMs = 60_000;
+
 function cents(value: number): number { return Math.round((value + Number.EPSILON) * 100) / 100; }
 
 function planName(operator: MobileTopUpOperator, amount: number): string | undefined {
@@ -139,7 +141,7 @@ export class MobileTopUpService {
         }),
     ).values()]
       .sort((left, right) => left.name.localeCompare(right.name));
-    this.countriesCache = { value: countries, expiresAt: Date.now() + 60_000 };
+    this.countriesCache = { value: countries, expiresAt: Date.now() + countryCatalogCacheTtlMs };
     return countries;
   }
 

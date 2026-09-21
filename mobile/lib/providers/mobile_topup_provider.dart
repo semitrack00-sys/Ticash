@@ -125,6 +125,9 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
   void updatePhone(String phone) {
     state = state.copyWith(
       phone: phone,
+      clearOperator: true,
+      products: const [],
+      clearSelectedProduct: true,
       clearQuote: true,
       clearReceipt: true,
       clearError: true,
@@ -161,10 +164,15 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
       state = state.copyWith(error: 'Select a destination country and phone number first.');
       return;
     }
+    final requestCountryCode = country.code;
+    final requestPhone = state.phone;
     state = state.copyWith(loading: true, clearError: true, clearQuote: true, clearReceipt: true);
     try {
-      final detected = await _service.detectOperator(country.code, state.phone);
-      final products = await _service.products(country.code, detected.id);
+      final detected = await _service.detectOperator(requestCountryCode, requestPhone);
+      final products = await _service.products(requestCountryCode, detected.id);
+      if (state.selectedCountry?.code != requestCountryCode || state.phone != requestPhone) {
+        return;
+      }
       state = state.copyWith(
         loading: false,
         operator: detected,
@@ -187,6 +195,8 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
     final countries = state.countries.isEmpty ? await _service.countries() : state.countries;
     final country = _firstWhereOrNull(countries, (item) => item.code == recipient.countryCode) ??
         MobileTopUpCountry(code: recipient.countryCode, name: recipient.countryCode);
+    final requestedCountryCode = country.code;
+    final requestedPhone = recipient.phone;
     state = state.copyWith(
       loading: true,
       selectedCountry: country,
@@ -208,6 +218,9 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
                 ) ??
                 await _service.detectOperator(country.code, recipient.phone);
       final products = await _service.products(country.code, operator.id);
+      if (state.selectedCountry?.code != requestedCountryCode || state.phone != requestedPhone) {
+        return;
+      }
       state = state.copyWith(
         loading: false,
         countries: countries,
@@ -234,14 +247,22 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
       state = state.copyWith(error: 'Select a country, detect an operator, and choose a product first.');
       return;
     }
+    final requestCountryCode = country.code;
+    final requestPhone = state.phone;
+    final requestProductId = product.id;
     state = state.copyWith(submitting: true, clearError: true, clearQuote: true, clearReceipt: true);
     try {
       final quote = await _service.quote(
-        countryCode: country.code,
-        phone: state.phone,
+        countryCode: requestCountryCode,
+        phone: requestPhone,
         operatorId: operator.id,
-        productId: product.id,
+        productId: requestProductId,
       );
+      if (state.selectedCountry?.code != requestCountryCode ||
+          state.phone != requestPhone ||
+          state.selectedProduct?.id != requestProductId) {
+        return;
+      }
       state = state.copyWith(submitting: false, quote: quote);
     } catch (error) {
       state = state.copyWith(submitting: false, error: error.toString());

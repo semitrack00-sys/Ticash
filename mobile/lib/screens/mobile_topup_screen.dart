@@ -146,14 +146,18 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton(
-                        onPressed: state.countries.isEmpty
-                            ? null
-                            : () => _pickCountry(context, state.countries),
-                        child: Text(
-                          state.selectedCountry == null
-                              ? 'Select destination country'
-                              : '${state.selectedCountry!.name} (${state.selectedCountry!.code})',
+                      child: Semantics(
+                        label: 'Destination country picker',
+                        button: true,
+                        child: OutlinedButton(
+                          onPressed: state.countries.isEmpty
+                              ? null
+                              : () => _pickCountry(context, state.countries),
+                          child: Text(
+                            state.selectedCountry == null
+                                ? 'Select destination country'
+                                : '${state.selectedCountry!.name} (${state.selectedCountry!.code})',
+                          ),
                         ),
                       ),
                     ),

@@ -289,6 +289,37 @@ void main() {
     expect(find.text('Status: PROCESSING'), findsNothing);
   });
 
+  testWidgets('editing the phone clears stale operator, product and quote state',
+      (WidgetTester tester) async {
+    final service = FakeMobileTopUpService();
+    await _openRecharge(tester, service);
+
+    await tester.tap(find.text('Haiti (HT)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jamaica'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'International mobile number'),
+      '+1 876 555 1234',
+    );
+    await tester.tap(find.text('Detect operator'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jamaica Airtime 7.50\nUSD 7.50'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Get quote'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'International mobile number'),
+      '+1 876 555 9999',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Provider Jamaica Sandbox'), findsNothing);
+    expect(find.text('Jamaica Airtime 7.50\nUSD 7.50'), findsNothing);
+    expect(find.text('Review'), findsNothing);
+  });
+
   testWidgets('saved recipients restore country and reload provider data',
       (WidgetTester tester) async {
     final service = FakeMobileTopUpService();

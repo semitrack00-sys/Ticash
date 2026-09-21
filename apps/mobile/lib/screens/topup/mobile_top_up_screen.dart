@@ -408,6 +408,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             TextField(
               controller: _phone,
               keyboardType: TextInputType.phone,
+              onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Mobile number',
                 helperText: selectedCountry.code == 'HT'
@@ -418,7 +419,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: _busy ? null : () => _detect(selectedCountry.code),
+              onPressed: _busy || _phone.text.trim().isEmpty
+                  ? null
+                  : () => _detect(selectedCountry.code),
               icon: const Icon(Icons.search),
               label: const Text('Detect operator'),
             ),

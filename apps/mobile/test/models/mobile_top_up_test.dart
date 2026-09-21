@@ -76,6 +76,7 @@ void main() {
       'id': 'recipient-id',
       'nickname': 'Mom',
       'phone': '37123456',
+      'operatorName': 'Provider Haiti Sandbox',
     });
     final quote = MobileTopUpQuote.fromJson({
       'id': 'quote-id',

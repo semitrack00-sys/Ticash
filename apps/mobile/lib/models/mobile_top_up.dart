@@ -37,8 +37,11 @@ String _countryCodeFromJson(
   if (allowLegacyHaitiPhoneFallback && phone != null) {
     final compact = phone.replaceAll(RegExp(r'[\s().-]'), '');
     final digitsOnly = compact.replaceFirst(RegExp(r'^\+'), '');
+    final operatorName =
+        (json['operatorName'] as String?)?.trim().toUpperCase() ?? '';
     if (RegExp(r'^509\d{8}$').hasMatch(digitsOnly) ||
-        RegExp(r'^\d{8}$').hasMatch(digitsOnly)) {
+        (operatorName.contains('HAITI') &&
+            RegExp(r'^\d{8}$').hasMatch(digitsOnly))) {
       return 'HT';
     }
   }

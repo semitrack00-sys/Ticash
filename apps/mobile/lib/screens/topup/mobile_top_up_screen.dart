@@ -18,6 +18,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   final _phone = TextEditingController();
   final _nickname = TextEditingController();
   final _customAmount = TextEditingController();
+  String? _countryCode;
   MobileTopUpOperator? _operator;
   MobileTopUpProduct? _product;
   List<MobileTopUpOperator> _operators = const [];
@@ -27,9 +28,32 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   bool _busy = false;
   bool _history = false;
   String? _error;
+  late final ProviderSubscription<AsyncValue<List<MobileTopUpCountry>>>
+      _countriesSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _countriesSubscription = ref.listenManual(
+      mobileTopUpCountriesProvider,
+      (_, next) {
+        final countries = next.asData?.value;
+        if (countries == null || countries.isEmpty) return;
+        final resolvedCountryCode =
+            _countryCode != null &&
+                countries.any((item) => item.code == _countryCode)
+                ? _countryCode!
+                : countries.first.code;
+        if (mounted && _countryCode != resolvedCountryCode) {
+          setState(() => _countryCode = resolvedCountryCode);
+        }
+      },
+    );
+  }
 
   @override
   void dispose() {
+    _countriesSubscription.close();
     _phone.dispose();
     _nickname.dispose();
     _customAmount.dispose();
@@ -57,20 +81,43 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
-  Future<void> _detect() => _run(() async {
+  void _clearRechargeState({
+    bool clearPhone = false,
+    bool clearNickname = false,
+  }) {
+    _operator = null;
+    _product = null;
+    _operators = const [];
+    _products = const [];
+    _quote = null;
+    _receipt = null;
+    _error = null;
+    if (clearPhone) _phone.clear();
+    if (clearNickname) _nickname.clear();
+    _customAmount.clear();
+  }
+
+  Future<void> _detect(String countryCode) => _run(() async {
     final service = ref.read(mobileTopUpServiceProvider);
+    List<MobileTopUpOperator> operators;
     MobileTopUpOperator selected;
     try {
-      selected = await service.detectOperator(_phone.text);
+      selected = await service.detectOperator(
+        countryCode: countryCode,
+        phone: _phone.text,
+      );
+      operators = [selected];
     } catch (_) {
-      final items = await service.operators();
+      final items = await service.operators(countryCode);
       if (items.isEmpty) rethrow;
-      _operators = items;
+      operators = items;
       selected = items.first;
     }
-    final products = await service.products(selected.id);
+    final products = await service.products(selected.countryCode, selected.id);
     if (!mounted) return;
     setState(() {
+      _countryCode = selected.countryCode;
+      _operators = operators;
       _operator = selected;
       _products = products;
       _product = null;
@@ -88,6 +135,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     final quote = await ref
         .read(mobileTopUpServiceProvider)
         .quote(
+          countryCode: operator.countryCode,
           phone: _phone.text,
           operatorId: operator.id,
           productId: product.id,
@@ -111,6 +159,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           .saveRecipient(
             nickname: _nickname.text.trim(),
             phone: quote.phone,
+            countryCode: quote.countryCode,
             operator: _operator,
           );
       recipientId = saved.id;
@@ -133,15 +182,12 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   });
 
   void _reset() => setState(() {
-    _operator = null;
-    _product = null;
-    _products = const [];
-    _quote = null;
-    _receipt = null;
-    _error = null;
-    _phone.clear();
-    _nickname.clear();
-    _customAmount.clear();
+    _clearRechargeState(clearPhone: true, clearNickname: true);
+  });
+
+  void _setCountryCode(String value) => setState(() {
+    _countryCode = value;
+    _clearRechargeState(clearPhone: true, clearNickname: true);
   });
 
   @override
@@ -224,15 +270,19 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                         if (mounted) {
                           setState(() {
                             _history = false;
+                            _countryCode = quote.countryCode;
+                            _clearRechargeState(clearNickname: true);
                             _quote = quote;
                             _phone.text = quote.phone;
                             _operator = MobileTopUpOperator(
                               id: quote.operatorId,
                               name: quote.operatorName,
+                              countryCode: quote.countryCode,
                               bundle: quote.kind == MobileTopUpKind.data,
                             );
                             _product = null;
                             _receipt = null;
+                            _error = null;
                           });
                         }
                       },
@@ -258,74 +308,132 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
         }),
       );
     }
+    final countries = ref.watch(mobileTopUpCountriesProvider);
     final savedRecipients = ref.watch(mobileTopUpRecipientsProvider);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 32),
-      children: [
-        Text(
-          'Recharge a phone in Haiti',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Send prepaid airtime or a provider-listed data plan to your own phone or someone you care about.',
-          style: TextStyle(color: AppTheme.muted, height: 1.4),
-        ),
-        const SizedBox(height: 20),
-        savedRecipients.when(
-          loading: () => const LinearProgressIndicator(minHeight: 2),
-          error: (_, __) => const SizedBox.shrink(),
-          data: (items) => items.isEmpty
-              ? const SizedBox.shrink()
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Saved recharge recipients',
-                      style: TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 44,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: items.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 8),
-                        itemBuilder: (context, index) {
-                          final recipient = items[index];
-                          return ActionChip(
-                            avatar: const Icon(Icons.person_outline, size: 18),
-                            label: Text(recipient.nickname),
-                            onPressed: () {
-                              _phone.text = recipient.phone;
-                              _nickname.text = recipient.nickname;
-                              _detect();
+    return countries.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => _TopUpUnavailable(
+        message: 'The TiCash API could not load supported recharge countries.',
+        onRetry: () => ref.invalidate(mobileTopUpCountriesProvider),
+      ),
+      data: (countries) {
+        if (countries.isEmpty) {
+          return _TopUpUnavailable(
+            message:
+                'The recharge provider did not return any supported countries.',
+            onRetry: () => ref.invalidate(mobileTopUpCountriesProvider),
+          );
+        }
+        final selectedCountryCode =
+            countries.any((item) => item.code == _countryCode)
+                ? _countryCode!
+                : countries.first.code;
+        final selectedCountry = countries.firstWhere(
+          (item) => item.code == selectedCountryCode,
+        );
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 32),
+          children: [
+            Text(
+              'Recharge a phone worldwide',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Send prepaid airtime or a provider-listed data plan to any supported Reloadly destination.',
+              style: TextStyle(color: AppTheme.muted, height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            savedRecipients.when(
+              loading: () => const LinearProgressIndicator(minHeight: 2),
+              error: (_, __) => const SizedBox.shrink(),
+              data: (items) => items.isEmpty
+                  ? const SizedBox.shrink()
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Saved recharge recipients',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 44,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: items.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 8),
+                            itemBuilder: (context, index) {
+                              final recipient = items[index];
+                              return ActionChip(
+                                avatar: const Icon(
+                                  Icons.person_outline,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  '${recipient.nickname} · ${recipient.countryCode}',
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _countryCode = recipient.countryCode;
+                                    _clearRechargeState();
+                                    _phone.text = recipient.phone;
+                                    _nickname.text = recipient.nickname;
+                                  });
+                                  _detect(recipient.countryCode);
+                                },
+                              );
                             },
-                          );
-                        },
-                      ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
                     ),
-                    const SizedBox(height: 14),
-                  ],
-                ),
-        ),
-        TextField(
-          controller: _phone,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            labelText: 'Haiti phone number',
-            prefixText: '+509 ',
-            prefixIcon: Icon(Icons.phone_outlined),
-          ),
-        ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: _busy ? null : _detect,
-          icon: const Icon(Icons.search),
-          label: const Text('Detect operator'),
-        ),
+            ),
+            DropdownButtonFormField<String>(
+              key: ValueKey(selectedCountryCode),
+              value: selectedCountryCode,
+              decoration: const InputDecoration(
+                labelText: 'Destination country',
+                prefixIcon: Icon(Icons.public_outlined),
+              ),
+              items: countries
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.code,
+                      child: Text('${item.name} (${item.code})'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null && value != selectedCountryCode) {
+                  _setCountryCode(value);
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Mobile number',
+                helperText:
+                    'Include the full international number for ${selectedCountry.name}',
+                prefixIcon: const Icon(Icons.phone_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _busy || _phone.text.trim().isEmpty
+                  ? null
+                  : () => _detect(selectedCountry.code),
+              icon: const Icon(Icons.search),
+              label: const Text('Detect operator'),
+            ),
         if (_operators.length > 1) ...[
           const SizedBox(height: 12),
           DropdownButtonFormField<MobileTopUpOperator>(
@@ -343,7 +451,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                 _run(() async {
                   final items = await ref
                       .read(mobileTopUpServiceProvider)
-                      .products(value.id);
+                      .products(value.countryCode, value.id);
                   if (mounted) {
                     setState(() {
                       _products = items;
@@ -473,7 +581,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
               ),
             ),
           ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -531,6 +641,7 @@ class _ReviewCard extends StatelessWidget {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
           ),
           const Divider(height: 24),
+          _line('Country', quote.countryCode),
           _line('Phone', quote.phone),
           _line('Operator', quote.operatorName),
           _line('Product', quote.productName),
@@ -625,6 +736,10 @@ class _Receipt extends StatelessWidget {
             child: Column(
               children: [
                 _ReviewCard._line('TiCash reference', transaction.id),
+                _ReviewCard._line(
+                  'Country',
+                  transaction.countryCode ?? 'Unknown',
+                ),
                 _ReviewCard._line('Phone', transaction.phone),
                 _ReviewCard._line('Operator', transaction.operatorName),
                 _ReviewCard._line('Product', transaction.productName),
@@ -719,7 +834,7 @@ class _History extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         subtitle: Text(
-                          '${item.phone} · ${item.status.name.toUpperCase()}',
+                          '${item.countryCode ?? 'Unknown'} · ${item.phone} · ${item.status.name.toUpperCase()}',
                         ),
                         trailing: TextButton(
                           onPressed: () => onRepeat(item),

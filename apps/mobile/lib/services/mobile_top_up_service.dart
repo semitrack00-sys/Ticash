@@ -8,39 +8,79 @@ class MobileTopUpService {
   final Dio _dio;
   static const _base = '/mobile-topups';
 
+  String _countryCode(String value) {
+    final normalized = value.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{2}$').hasMatch(normalized)) {
+      throw ArgumentError.value(
+        value,
+        'countryCode',
+        'Mobile Recharge requires a two-letter destination country code.',
+      );
+    }
+    return normalized;
+  }
+
   Future<MobileTopUpAvailability> availability() async =>
       MobileTopUpAvailability.fromJson(
         (await _dio.get('$_base/status')).data as Map<String, dynamic>,
       );
-  Future<List<MobileTopUpOperator>> operators() async {
+
+  Future<List<MobileTopUpCountry>> countries() async {
     final data =
-        (await _dio.get(
-              '$_base/operators',
-              queryParameters: {'country': 'HT'},
-            )).data
-            as Map<String, dynamic>;
-    return (data['operators'] as List)
+        (await _dio.get('$_base/countries')).data as Map<String, dynamic>;
+    return (data['countries'] as List)
         .map(
-          (item) => MobileTopUpOperator.fromJson(item as Map<String, dynamic>),
+          (item) => MobileTopUpCountry.fromJson(item as Map<String, dynamic>),
         )
         .toList();
   }
 
-  Future<MobileTopUpOperator> detectOperator(String phone) async {
+  Future<List<MobileTopUpOperator>> operators(String countryCode) async {
+    final normalizedCountryCode = _countryCode(countryCode);
+    final data =
+        (await _dio.get(
+              '$_base/operators',
+              queryParameters: {'country': normalizedCountryCode},
+            )).data
+            as Map<String, dynamic>;
+    return (data['operators'] as List)
+        .map(
+          (item) => MobileTopUpOperator.fromJson({
+            'countryCode': normalizedCountryCode,
+            ...(item as Map<String, dynamic>),
+          }),
+        )
+        .toList();
+  }
+
+  Future<MobileTopUpOperator> detectOperator({
+    required String countryCode,
+    required String phone,
+  }) async {
+    final normalizedCountryCode = _countryCode(countryCode);
     final data =
         (await _dio.get(
               '$_base/operators/detect',
-              queryParameters: {'phone': phone},
+              queryParameters: {
+                'country': normalizedCountryCode,
+                'phone': phone,
+              },
             )).data
             as Map<String, dynamic>;
     return MobileTopUpOperator.fromJson(
-      data['operator'] as Map<String, dynamic>,
+      {
+        'countryCode': normalizedCountryCode,
+        ...(data['operator'] as Map<String, dynamic>),
+      },
     );
   }
 
-  Future<List<MobileTopUpProduct>> products(int operatorId) async {
+  Future<List<MobileTopUpProduct>> products(String countryCode, int operatorId) async {
     final data =
-        (await _dio.get('$_base/operators/$operatorId/products')).data
+        (await _dio.get(
+              '$_base/operators/$operatorId/products',
+              queryParameters: {'country': _countryCode(countryCode)},
+            )).data
             as Map<String, dynamic>;
     return (data['products'] as List)
         .map(
@@ -62,6 +102,7 @@ class MobileTopUpService {
   Future<MobileTopUpRecipient> saveRecipient({
     required String nickname,
     required String phone,
+    required String countryCode,
     MobileTopUpOperator? operator,
   }) async {
     final data =
@@ -70,6 +111,7 @@ class MobileTopUpService {
               data: {
                 'nickname': nickname,
                 'phone': phone,
+                'countryCode': _countryCode(countryCode),
                 if (operator != null) 'operatorId': operator.id,
                 if (operator != null) 'operatorName': operator.name,
               },
@@ -81,6 +123,7 @@ class MobileTopUpService {
   }
 
   Future<MobileTopUpQuote> quote({
+    required String countryCode,
     required String phone,
     required int operatorId,
     required String productId,
@@ -90,6 +133,7 @@ class MobileTopUpService {
         (await _dio.post(
               '$_base/quotes',
               data: {
+                'countryCode': _countryCode(countryCode),
                 'phone': phone,
                 'operatorId': operatorId,
                 'productId': productId,

@@ -58,7 +58,24 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
+  void _clearRechargeState({
+    bool clearPhone = false,
+    bool clearNickname = false,
+  }) {
+    _operator = null;
+    _product = null;
+    _operators = const [];
+    _products = const [];
+    _quote = null;
+    _receipt = null;
+    _error = null;
+    if (clearPhone) _phone.clear();
+    if (clearNickname) _nickname.clear();
+    _customAmount.clear();
+  }
+
   Future<void> _detect(String countryCode) => _run(() async {
+    _countryCode = countryCode;
     final service = ref.read(mobileTopUpServiceProvider);
     MobileTopUpOperator selected;
     try {
@@ -141,30 +158,12 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   });
 
   void _reset() => setState(() {
-    _operator = null;
-    _product = null;
-    _operators = const [];
-    _products = const [];
-    _quote = null;
-    _receipt = null;
-    _error = null;
-    _phone.clear();
-    _nickname.clear();
-    _customAmount.clear();
+    _clearRechargeState(clearPhone: true, clearNickname: true);
   });
 
   void _setCountryCode(String value) => setState(() {
     _countryCode = value;
-    _operator = null;
-    _product = null;
-    _operators = const [];
-    _products = const [];
-    _quote = null;
-    _receipt = null;
-    _error = null;
-    _phone.clear();
-    _nickname.clear();
-    _customAmount.clear();
+    _clearRechargeState(clearPhone: true, clearNickname: true);
   });
 
   @override
@@ -248,12 +247,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                           setState(() {
                             _history = false;
                             _countryCode = quote.countryCode;
-                            _operators = const [];
-                            _products = const [];
+                            _clearRechargeState(clearNickname: true);
                             _quote = quote;
                             _phone.text = quote.phone;
-                            _nickname.clear();
-                            _customAmount.clear();
                             _operator = MobileTopUpOperator(
                               id: quote.operatorId,
                               name: quote.operatorName,
@@ -359,16 +355,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                                 onPressed: () {
                                   setState(() {
                                     _countryCode = recipient.countryCode;
-                                    _operator = null;
-                                    _product = null;
-                                    _operators = const [];
-                                    _products = const [];
-                                    _quote = null;
-                                    _receipt = null;
-                                    _error = null;
+                                    _clearRechargeState();
                                     _phone.text = recipient.phone;
                                     _nickname.text = recipient.nickname;
-                                    _customAmount.clear();
                                   });
                                   _detect(recipient.countryCode);
                                 },

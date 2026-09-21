@@ -135,6 +135,7 @@ class MobileTopUpController extends StateNotifier<MobileTopUpState> {
   void selectCountry(MobileTopUpCountry country) {
     state = state.copyWith(
       selectedCountry: country,
+      phone: '',
       clearOperator: true,
       products: const [],
       clearSelectedProduct: true,

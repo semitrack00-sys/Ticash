@@ -7,6 +7,12 @@ double? _asDouble(dynamic value) {
   return double.tryParse(value.toString());
 }
 
+DateTime _asDateTime(dynamic value) {
+  if (value is DateTime) return value;
+  if (value == null) return DateTime.fromMillisecondsSinceEpoch(0);
+  return DateTime.tryParse(value.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+}
+
 String _countryCode(Map<String, dynamic> json) {
   final raw = (json['countryCode'] ?? json['code'] ?? 'HT').toString().trim();
   return raw.isEmpty ? 'HT' : raw.toUpperCase();
@@ -176,7 +182,7 @@ class MobileTopUpQuote {
           (json['deliveredCurrency'] ?? 'USD').toString().toUpperCase(),
       feeUsd: _asDouble(json['feeUsd']) ?? 0,
       totalChargeUsd: _asDouble(json['totalChargeUsd']) ?? 0,
-      expiresAt: DateTime.parse(json['expiresAt'].toString()),
+      expiresAt: _asDateTime(json['expiresAt']),
       deliveredValue: _asDouble(json['deliveredValue']),
     );
   }
@@ -218,9 +224,7 @@ class MobileTopUpTransaction {
       productName: (json['productName'] ?? '').toString(),
       status: (json['status'] ?? 'PENDING').toString(),
       totalChargeUsd: _asDouble(json['totalChargeUsd']) ?? 0,
-      createdAt: DateTime.parse(
-        (json['createdAt'] ?? DateTime.now().toIso8601String()).toString(),
-      ),
+      createdAt: _asDateTime(json['createdAt']),
     );
   }
 

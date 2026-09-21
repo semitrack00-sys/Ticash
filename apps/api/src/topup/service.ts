@@ -128,11 +128,16 @@ export class MobileTopUpService {
     if (this.countriesCache && this.countriesCache.expiresAt > Date.now()) {
       return this.countriesCache.value;
     }
-    const countries = (await this.provider.listCountries())
-      .map((country) => ({
-        code: normalizeTopUpCountryCode(country.code),
-        name: country.name.trim().slice(0, 160) || normalizeTopUpCountryCode(country.code),
-      }))
+    const countries = [...new Map(
+      (await this.provider.listCountries())
+        .map((country) => {
+          const code = normalizeTopUpCountryCode(country.code);
+          return [code, {
+            code,
+            name: country.name.trim().slice(0, 160) || code,
+          }] as const;
+        }),
+    ).values()]
       .sort((left, right) => left.name.localeCompare(right.name));
     this.countriesCache = { value: countries, expiresAt: Date.now() + 60_000 };
     return countries;
@@ -142,7 +147,9 @@ export class MobileTopUpService {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operators = await this.provider.listOperators(normalizedCountry);
-    const mismatch = operators.find((item) => item.countryCode !== normalizedCountry);
+    const mismatch = operators.find(
+      (item) => normalizeTopUpCountryCode(item.countryCode) != normalizedCountry,
+    );
     if (mismatch) {
       throw new MobileTopUpError(
         'INVALID_PROVIDER_RESPONSE',
@@ -158,7 +165,7 @@ export class MobileTopUpService {
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const normalizedPhone = normalizeTopUpPhone(phone, normalizedCountry);
     const operator = await this.provider.detectOperator(normalizedPhone, normalizedCountry);
-    if (operator.countryCode !== normalizedCountry) {
+    if (normalizeTopUpCountryCode(operator.countryCode) !== normalizedCountry) {
       throw new MobileTopUpError(
         'TOPUP_OPERATOR_COUNTRY_MISMATCH',
         'Detected recharge operator does not support the requested destination country',
@@ -175,7 +182,7 @@ export class MobileTopUpService {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operator = await this.provider.getOperator(operatorId);
-    if (operator.countryCode !== normalizedCountry) {
+    if (normalizeTopUpCountryCode(operator.countryCode) !== normalizedCountry) {
       throw new MobileTopUpError(
         'TOPUP_OPERATOR_COUNTRY_MISMATCH',
         'This recharge operator does not belong to the requested destination country',
@@ -204,7 +211,7 @@ export class MobileTopUpService {
     let operatorName = input.operatorName?.trim().slice(0, 160);
     if (operatorId !== undefined) {
       const operator = await this.provider.getOperator(operatorId);
-      if (operator.countryCode !== countryCode) {
+      if (normalizeTopUpCountryCode(operator.countryCode) !== countryCode) {
         throw new MobileTopUpError(
           'TOPUP_OPERATOR_COUNTRY_MISMATCH',
           'Saved recharge recipient operator does not match the destination country',
@@ -243,7 +250,9 @@ export class MobileTopUpService {
     const countryCode = normalizeTopUpCountryCode(input.countryCode);
     const phone = normalizeTopUpPhone(input.phone, countryCode);
     const { operator, products } = await this.products(countryCode, input.operatorId);
-    const product = products.find((item) => item.id === input.productId && item.countryCode === countryCode);
+    const product = products.find(
+      (item) => item.id === input.productId && normalizeTopUpCountryCode(item.countryCode) === countryCode,
+    );
     if (!product) {
       throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
     }

@@ -248,8 +248,12 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                           setState(() {
                             _history = false;
                             _countryCode = quote.countryCode;
+                            _operators = const [];
+                            _products = const [];
                             _quote = quote;
                             _phone.text = quote.phone;
+                            _nickname.clear();
+                            _customAmount.clear();
                             _operator = MobileTopUpOperator(
                               id: quote.operatorId,
                               name: quote.operatorName,
@@ -258,6 +262,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                             );
                             _product = null;
                             _receipt = null;
+                            _error = null;
                           });
                         }
                       },
@@ -354,8 +359,16 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                                 onPressed: () {
                                   setState(() {
                                     _countryCode = recipient.countryCode;
+                                    _operator = null;
+                                    _product = null;
+                                    _operators = const [];
+                                    _products = const [];
+                                    _quote = null;
+                                    _receipt = null;
+                                    _error = null;
                                     _phone.text = recipient.phone;
                                     _nickname.text = recipient.nickname;
+                                    _customAmount.clear();
                                   });
                                   _detect(recipient.countryCode);
                                 },

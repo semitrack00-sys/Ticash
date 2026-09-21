@@ -8,7 +8,17 @@ class MobileTopUpService {
   final Dio _dio;
   static const _base = '/mobile-topups';
 
-  String _countryCode(String value) => value.trim().toUpperCase();
+  String _countryCode(String value) {
+    final normalized = value.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{2}$').hasMatch(normalized)) {
+      throw ArgumentError.value(
+        value,
+        'countryCode',
+        'Mobile Recharge requires a two-letter destination country code.',
+      );
+    }
+    return normalized;
+  }
 
   Future<MobileTopUpAvailability> availability() async =>
       MobileTopUpAvailability.fromJson(

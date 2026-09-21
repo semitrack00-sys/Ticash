@@ -40,8 +40,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
         final countries = next.asData?.value;
         if (countries == null || countries.isEmpty) return;
         final resolvedCountryCode =
-            countries.any((item) => item.code == _countryCode)
-                ? (_countryCode ?? countries.first.code)
+            _countryCode != null &&
+                countries.any((item) => item.code == _countryCode)
+                ? _countryCode!
                 : countries.first.code;
         if (mounted && _countryCode != resolvedCountryCode) {
           setState(() => _countryCode = resolvedCountryCode);
@@ -341,7 +342,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Send prepaid airtime or a provider-listed data plan to any supported Reloadly Sandbox destination.',
+              'Send prepaid airtime or a provider-listed data plan to any supported Reloadly destination.',
               style: TextStyle(color: AppTheme.muted, height: 1.4),
             ),
             const SizedBox(height: 20),

@@ -105,11 +105,13 @@ class MobileTopUpCountry {
   const MobileTopUpCountry({required this.code, required this.name});
   final String code;
   final String name;
-  factory MobileTopUpCountry.fromJson(Map<String, dynamic> json) =>
-      MobileTopUpCountry(
-        code: _countryCodeFromJson(json),
-        name: (json['name'] ?? json['countryName'] ?? json['code']) as String,
-      );
+  factory MobileTopUpCountry.fromJson(Map<String, dynamic> json) {
+    final code = _countryCodeFromJson(json);
+    return MobileTopUpCountry(
+      code: code,
+      name: (json['name'] ?? json['countryName'] ?? code) as String,
+    );
+  }
 }
 
 class MobileTopUpOperator {

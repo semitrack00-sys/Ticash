@@ -234,6 +234,7 @@ class MobileTopUpQuote {
           phoneKey: 'recipientPhone',
           allowLegacyHaitiPhoneFallback: true,
           productKey: 'productId',
+          fallback: 'ZZ',
         ),
         operatorId: (json['operatorId'] as num).toInt(),
         operatorName: json['operatorName'] as String,

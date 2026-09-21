@@ -159,4 +159,23 @@ void main() {
     });
     expect(transaction.countryCode, 'HT');
   });
+
+  test('uses a stable fallback when transaction country data is absent', () {
+    final transaction = MobileTopUpTransaction.fromJson({
+      'id': 'unknown-topup-id',
+      'recipientPhone': '+18765551234',
+      'operatorName': 'Digicel Jamaica',
+      'productName': 'Airtime',
+      'kind': 'AIRTIME',
+      'providerAmount': 5,
+      'providerCurrency': 'USD',
+      'deliveredCurrency': 'JMD',
+      'feeUsd': 0.5,
+      'totalChargeUsd': 5.5,
+      'status': 'DELIVERED',
+      'testMode': true,
+      'createdAt': '2026-09-06T12:00:00.000Z',
+    });
+    expect(transaction.countryCode, 'ZZ');
+  });
 }

@@ -2,20 +2,43 @@ enum MobileTopUpKind { airtime, data }
 
 enum MobileTopUpStatus { pending, processing, delivered, failed, refunded }
 
-String _countryCodeFromJson(
-  Map<String, dynamic> json, {
-  String? phoneKey,
-  String fallback = 'HT',
-}) {
-  final countryCode = (json['countryCode'] as String?)?.trim();
+String? _explicitCountryCode(Map<String, dynamic> json) {
+  final countryCode =
+      ((json['countryCode'] ?? json['code']) as String?)?.trim();
   if (countryCode != null && countryCode.isNotEmpty) {
     return countryCode.toUpperCase();
   }
+  return null;
+}
+
+String? _countryCodeFromProductId(Map<String, dynamic> json, String productKey) {
+  final productId = (json[productKey] as String?)?.trim();
+  if (productId == null || productId.isEmpty) return null;
+  final parts = productId.split(':');
+  if (parts.length < 2) return null;
+  final code = parts[1].trim().toUpperCase();
+  return RegExp(r'^[A-Z]{2}$').hasMatch(code) ? code : null;
+}
+
+String _countryCodeFromJson(
+  Map<String, dynamic> json, {
+  String? phoneKey,
+  String? productKey,
+  String? fallback,
+}) {
+  final explicit = _explicitCountryCode(json);
+  if (explicit != null) return explicit;
+  if (productKey != null) {
+    final fromProductId = _countryCodeFromProductId(json, productKey);
+    if (fromProductId != null) return fromProductId;
+  }
   final phone = phoneKey == null ? null : (json[phoneKey] as String?)?.trim();
-  if (phone != null && phone.replaceAll(RegExp(r'[\s().-]'), '').startsWith('+509')) {
+  if (phone != null &&
+      phone.replaceAll(RegExp(r'[\s().-]'), '').startsWith('+509')) {
     return 'HT';
   }
-  return fallback;
+  if (fallback != null) return fallback;
+  throw StateError('Mobile Recharge response is missing a countryCode');
 }
 
 class MobileTopUpAvailability {
@@ -60,7 +83,7 @@ class MobileTopUpCountry {
   final String name;
   factory MobileTopUpCountry.fromJson(Map<String, dynamic> json) =>
       MobileTopUpCountry(
-        code: ((json['code'] ?? json['countryCode']) as String).toUpperCase(),
+        code: _countryCodeFromJson(json),
         name: (json['name'] ?? json['countryName'] ?? json['code']) as String,
       );
 }
@@ -150,7 +173,11 @@ class MobileTopUpRecipient {
         id: json['id'] as String,
         nickname: json['nickname'] as String,
         phone: json['phone'] as String,
-        countryCode: _countryCodeFromJson(json, phoneKey: 'phone'),
+        countryCode: _countryCodeFromJson(
+          json,
+          phoneKey: 'phone',
+          fallback: 'HT',
+        ),
         operatorId: (json['operatorId'] as num?)?.toInt(),
         operatorName: json['operatorName'] as String?,
         lastProductName: json['lastProductName'] as String?,
@@ -194,7 +221,12 @@ class MobileTopUpQuote {
       MobileTopUpQuote(
         id: json['id'] as String,
         phone: json['recipientPhone'] as String,
-        countryCode: _countryCodeFromJson(json, phoneKey: 'recipientPhone'),
+        countryCode: _countryCodeFromJson(
+          json,
+          phoneKey: 'recipientPhone',
+          productKey: 'productId',
+          fallback: 'HT',
+        ),
         operatorId: (json['operatorId'] as num).toInt(),
         operatorName: json['operatorName'] as String,
         productId: json['productId'] as String,
@@ -253,7 +285,12 @@ class MobileTopUpTransaction {
       MobileTopUpTransaction(
         id: json['id'] as String,
         phone: json['recipientPhone'] as String,
-        countryCode: _countryCodeFromJson(json, phoneKey: 'recipientPhone'),
+        countryCode: _countryCodeFromJson(
+          json,
+          phoneKey: 'recipientPhone',
+          productKey: 'productId',
+          fallback: 'HT',
+        ),
         operatorName: json['operatorName'] as String,
         productName: json['productName'] as String,
         kind: json['kind'] == 'DATA'

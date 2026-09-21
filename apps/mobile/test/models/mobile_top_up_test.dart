@@ -96,6 +96,25 @@ void main() {
     expect(quote.countryCode, 'HT');
   });
 
+  test('uses product country codes when newer worldwide quotes omit countryCode', () {
+    final quote = MobileTopUpQuote.fromJson({
+      'id': 'quote-id',
+      'recipientPhone': '+18765551234',
+      'operatorId': 77,
+      'operatorName': 'Digicel Jamaica',
+      'productId': 'reloadly:JM:77:airtime:7.50',
+      'productName': 'Airtime',
+      'kind': 'AIRTIME',
+      'providerAmount': 7.5,
+      'providerCurrency': 'USD',
+      'deliveredCurrency': 'JMD',
+      'feeUsd': 0.5,
+      'totalChargeUsd': 8,
+      'expiresAt': '2026-09-06T12:05:00.000Z',
+    });
+    expect(quote.countryCode, 'JM');
+  });
+
   test('parses an authoritative delivered sandbox receipt', () {
     final transaction = MobileTopUpTransaction.fromJson({
       'id': 'topup-id',

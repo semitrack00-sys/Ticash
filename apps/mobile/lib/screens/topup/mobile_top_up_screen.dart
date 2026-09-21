@@ -30,20 +30,6 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      try {
-        final countries = await ref.read(mobileTopUpCountriesProvider.future);
-        if (!mounted || countries.isEmpty || _countryCode != null) return;
-        setState(() => _countryCode = countries.first.code);
-      } catch (_) {
-        // countries.when(...) renders the existing error state
-      }
-    });
-  }
-
-  @override
   void dispose() {
     _phone.dispose();
     _nickname.dispose();
@@ -314,10 +300,12 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             onRetry: () => ref.invalidate(mobileTopUpCountriesProvider),
           );
         }
+        _countryCode ??= countries.first.code;
         final selectedCountryCode =
             countries.any((item) => item.code == _countryCode)
                 ? _countryCode!
                 : countries.first.code;
+        _countryCode = selectedCountryCode;
         final selectedCountry = countries.firstWhere(
           (item) => item.code == selectedCountryCode,
         );

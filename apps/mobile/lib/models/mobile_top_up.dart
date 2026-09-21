@@ -299,6 +299,7 @@ class MobileTopUpTransaction {
           phoneKey: 'recipientPhone',
           allowLegacyHaitiPhoneFallback: true,
           productKey: 'productId',
+          fallback: 'ZZ',
         ),
         operatorName: json['operatorName'] as String,
         productName: json['productName'] as String,

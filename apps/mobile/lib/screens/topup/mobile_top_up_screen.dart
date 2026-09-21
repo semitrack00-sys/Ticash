@@ -387,7 +387,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             ),
             DropdownButtonFormField<String>(
               key: ValueKey(selectedCountryCode),
-              initialValue: selectedCountryCode,
+              value: selectedCountryCode,
               decoration: const InputDecoration(
                 labelText: 'Destination country',
                 prefixIcon: Icon(Icons.public_outlined),

@@ -304,13 +304,6 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             countries.any((item) => item.code == _countryCode)
                 ? _countryCode!
                 : countries.first.code;
-        if (_countryCode != selectedCountryCode) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _countryCode != selectedCountryCode) {
-              setState(() => _countryCode = selectedCountryCode);
-            }
-          });
-        }
         final selectedCountry = countries.firstWhere(
           (item) => item.code == selectedCountryCode,
         );

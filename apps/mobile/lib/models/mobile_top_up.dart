@@ -229,6 +229,7 @@ class MobileTopUpQuote {
         countryCode: _countryCodeFromJson(
           json,
           phoneKey: 'recipientPhone',
+          allowLegacyHaitiPhoneFallback: true,
           productKey: 'productId',
         ),
         operatorId: (json['operatorId'] as num).toInt(),

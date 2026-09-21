@@ -29,6 +29,22 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   bool _history = false;
   String? _error;
 
+  Future<void> _initializeCountry() async {
+    try {
+      final countries = await ref.read(mobileTopUpCountriesProvider.future);
+      if (!mounted || countries.isEmpty || _countryCode != null) return;
+      setState(() => _countryCode = countries.first.code);
+    } catch (_) {
+      // countries.when(...) renders the existing error state
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCountry();
+  }
+
   @override
   void dispose() {
     _phone.dispose();
@@ -300,12 +316,10 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             onRetry: () => ref.invalidate(mobileTopUpCountriesProvider),
           );
         }
-        _countryCode ??= countries.first.code;
         final selectedCountryCode =
             countries.any((item) => item.code == _countryCode)
                 ? _countryCode!
                 : countries.first.code;
-        _countryCode = selectedCountryCode;
         final selectedCountry = countries.firstWhere(
           (item) => item.code == selectedCountryCode,
         );
@@ -715,7 +729,10 @@ class _Receipt extends StatelessWidget {
             child: Column(
               children: [
                 _ReviewCard._line('TiCash reference', transaction.id),
-                _ReviewCard._line('Country', transaction.countryCode),
+                _ReviewCard._line(
+                  'Country',
+                  transaction.countryCode ?? 'Unknown',
+                ),
                 _ReviewCard._line('Phone', transaction.phone),
                 _ReviewCard._line('Operator', transaction.operatorName),
                 _ReviewCard._line('Product', transaction.productName),
@@ -810,7 +827,7 @@ class _History extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         subtitle: Text(
-                          '${item.countryCode} · ${item.phone} · ${item.status.name.toUpperCase()}',
+                          '${item.countryCode ?? 'Unknown'} · ${item.phone} · ${item.status.name.toUpperCase()}',
                         ),
                         trailing: TextButton(
                           onPressed: () => onRepeat(item),

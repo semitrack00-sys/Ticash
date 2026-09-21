@@ -160,7 +160,7 @@ void main() {
     expect(transaction.countryCode, 'HT');
   });
 
-  test('uses a stable fallback when transaction country data is absent', () {
+  test('allows unknown transaction country data without crashing', () {
     final transaction = MobileTopUpTransaction.fromJson({
       'id': 'unknown-topup-id',
       'recipientPhone': '+18765551234',
@@ -176,6 +176,6 @@ void main() {
       'testMode': true,
       'createdAt': '2026-09-06T12:00:00.000Z',
     });
-    expect(transaction.countryCode, 'ZZ');
+    expect(transaction.countryCode, isNull);
   });
 }

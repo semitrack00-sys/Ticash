@@ -49,6 +49,26 @@ String _countryCodeFromJson(
   throw StateError('Mobile Recharge response is missing a countryCode');
 }
 
+String? _nullableCountryCodeFromJson(
+  Map<String, dynamic> json, {
+  String? phoneKey,
+  String? productKey,
+  String? fallback,
+  bool allowLegacyHaitiPhoneFallback = false,
+}) {
+  try {
+    return _countryCodeFromJson(
+      json,
+      phoneKey: phoneKey,
+      productKey: productKey,
+      fallback: fallback,
+      allowLegacyHaitiPhoneFallback: allowLegacyHaitiPhoneFallback,
+    );
+  } on StateError {
+    return null;
+  }
+}
+
 class MobileTopUpAvailability {
   const MobileTopUpAvailability({
     required this.enabled,
@@ -234,7 +254,6 @@ class MobileTopUpQuote {
           phoneKey: 'recipientPhone',
           allowLegacyHaitiPhoneFallback: true,
           productKey: 'productId',
-          fallback: 'ZZ',
         ),
         operatorId: (json['operatorId'] as num).toInt(),
         operatorName: json['operatorName'] as String,
@@ -275,7 +294,7 @@ class MobileTopUpTransaction {
   });
   final String id;
   final String phone;
-  final String countryCode;
+  final String? countryCode;
   final String operatorName;
   final String productName;
   final MobileTopUpKind kind;
@@ -294,12 +313,11 @@ class MobileTopUpTransaction {
       MobileTopUpTransaction(
         id: json['id'] as String,
         phone: json['recipientPhone'] as String,
-        countryCode: _countryCodeFromJson(
+        countryCode: _nullableCountryCodeFromJson(
           json,
           phoneKey: 'recipientPhone',
           allowLegacyHaitiPhoneFallback: true,
           productKey: 'productId',
-          fallback: 'ZZ',
         ),
         operatorName: json['operatorName'] as String,
         productName: json['productName'] as String,

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   MobileTopUpConfig,
+  MobileTopUpCountry,
   MobileTopUpOperator,
   MobileTopUpPaymentProvider,
   MobileTopUpProduct,
@@ -9,6 +10,10 @@ import type {
   ProviderTopUpResult,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
+import {
+  normalizeTopUpCountryCode,
+  normalizeTopUpPhone,
+} from './validation.js';
 import type {
   MobileTopUpQuoteRecord,
   MobileTopUpRepository,
@@ -24,16 +29,9 @@ type AuditRecorder = (
   metadata?: Record<string, unknown>,
 ) => Promise<void>;
 
-function cents(value: number): number { return Math.round((value + Number.EPSILON) * 100) / 100; }
+const countryCatalogCacheTtlMs = 60_000;
 
-export function normalizeHaitiPhone(value: string): string {
-  const digits = value.replace(/\D/g, '');
-  const local = digits.startsWith('509') ? digits.slice(3) : digits;
-  if (!/^\d{8}$/.test(local)) {
-    throw new MobileTopUpError('INVALID_HAITI_PHONE', 'Enter a valid Haiti phone number with 8 digits after +509', 400);
-  }
-  return `+509${local}`;
-}
+function cents(value: number): number { return Math.round((value + Number.EPSILON) * 100) / 100; }
 
 function planName(operator: MobileTopUpOperator, amount: number): string | undefined {
   const keys = [String(amount), amount.toFixed(2), amount.toFixed(1)];
@@ -45,11 +43,13 @@ function planName(operator: MobileTopUpOperator, amount: number): string | undef
 }
 
 export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUpProduct[] {
-  const destinationCurrency = operator.destinationCurrencyCode || 'HTG';
+  const destinationCurrency = operator.destinationCurrencyCode.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(destinationCurrency)) return [];
   if (operator.denominationType === 'RANGE') {
     if (!operator.minAmount || !operator.maxAmount || operator.senderCurrencyCode !== 'USD') return [];
     return [{
-      id: `reloadly:${operator.id}:airtime:range`,
+      id: `reloadly:${operator.countryCode}:${operator.id}:airtime:range`,
+      countryCode: operator.countryCode,
       operatorId: operator.id,
       kind: 'AIRTIME',
       name: `${operator.name} airtime`,
@@ -65,14 +65,16 @@ export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUp
   return operator.fixedAmounts.map((amount, index) => {
     const plan = planName(operator, amount);
     const kind = plan || operator.bundle ? 'DATA' : 'AIRTIME';
+    const deliveredValue = operator.localFixedAmounts[index] ?? Number.NaN;
     return {
-      id: `reloadly:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
+      id: `reloadly:${operator.countryCode}:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
+      countryCode: operator.countryCode,
       operatorId: operator.id,
       kind,
       name: plan ?? `${operator.name} ${amount.toFixed(2)} ${operator.senderCurrencyCode}`,
       price: cents(amount),
       priceCurrency: operator.senderCurrencyCode,
-      deliveredValue: operator.localFixedAmounts[index],
+      deliveredValue: Number.isFinite(deliveredValue) && deliveredValue > 0 ? deliveredValue : undefined,
       deliveredCurrency: destinationCurrency,
       amountType: 'FIXED',
     } satisfies MobileTopUpProduct;
@@ -89,6 +91,8 @@ function mapProviderStatus(value: string): MobileTopUpStatus {
 }
 
 export class MobileTopUpService {
+  private countriesCache?: { expiresAt: number; value: MobileTopUpCountry[]; key: string };
+
   constructor(
     private readonly config: MobileTopUpConfig,
     private readonly provider: MobileTopUpProvider,
@@ -102,16 +106,27 @@ export class MobileTopUpService {
     return {
       enabled: this.config.enabled,
       environment: 'SANDBOX',
-      destinationCountry: 'HT',
-      destinationCurrency: 'HTG',
+      billingCurrency: this.config.billingCurrency,
       provider: 'RELOADLY',
       paymentMode: 'MOCK',
       testMode: true,
+      supportedGeographicScope: 'Provider-supported Reloadly Sandbox catalog countries only',
+      supportedCountriesPath: '/api/mobile-topups/countries',
       productionEnabled: false,
       approvedForLiveUse: false,
       liveRechargeEnabled: false,
       recurringRechargeEnabled: false,
     };
+  }
+
+  private countriesCacheKey() {
+    return [
+      this.config.airtimeBaseUrl,
+      this.config.authUrl,
+      this.config.clientId ?? '',
+      this.config.environment,
+      this.provider.constructor.name,
+    ].join('|');
   }
 
   private assertEnabled() {
@@ -120,59 +135,146 @@ export class MobileTopUpService {
     }
   }
 
-  async listOperators(countryCode: string) {
+  async listCountries() {
     this.assertEnabled();
-    if (countryCode.toUpperCase() !== 'HT') {
-      throw new MobileTopUpError('UNSUPPORTED_TOPUP_COUNTRY', 'Mobile recharge is currently available for Haiti only', 400);
+    const cacheKey = this.countriesCacheKey();
+    if (this.countriesCache &&
+        this.countriesCache.key === cacheKey &&
+        this.countriesCache.expiresAt > Date.now()) {
+      return this.countriesCache.value;
     }
-    return (await this.provider.listOperators('HT')).filter((item) => item.countryCode === 'HT' && item.status);
+    const countries = [...new Map(
+      (await this.provider.listCountries())
+        .map((country) => {
+          const code = normalizeTopUpCountryCode(country.code);
+          return [code, {
+            code,
+            name: country.name.trim().slice(0, 160) || code,
+          }] as const;
+        }),
+    ).values()]
+      .sort((left, right) => left.name.localeCompare(right.name));
+    this.countriesCache = {
+      key: cacheKey,
+      value: countries,
+      expiresAt: Date.now() + countryCatalogCacheTtlMs,
+    };
+    return countries;
   }
 
-  async detectOperator(phone: string) {
+  async listOperators(countryCode: string) {
     this.assertEnabled();
-    const normalized = normalizeHaitiPhone(phone);
-    const operator = await this.provider.detectOperator(normalized, 'HT');
-    if (operator.countryCode !== 'HT' || !operator.status) {
-      throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'No active Haiti operator was detected', 404);
+    const normalizedCountry = normalizeTopUpCountryCode(countryCode);
+    const operators = await this.provider.listOperators(normalizedCountry);
+    const mismatch = operators.find(
+      (item) => normalizeTopUpCountryCode(item.countryCode) != normalizedCountry,
+    );
+    if (mismatch) {
+      throw new MobileTopUpError(
+        'INVALID_PROVIDER_RESPONSE',
+        'Recharge operator country did not match the requested destination',
+        502,
+      );
+    }
+    return operators.filter((item) => item.status);
+  }
+
+  async detectOperator(countryCode: string, phone: string) {
+    this.assertEnabled();
+    const normalizedCountry = normalizeTopUpCountryCode(countryCode);
+    const normalizedPhone = normalizeTopUpPhone(phone, normalizedCountry);
+    const operator = await this.provider.detectOperator(normalizedPhone, normalizedCountry);
+    if (normalizeTopUpCountryCode(operator.countryCode) !== normalizedCountry) {
+      throw new MobileTopUpError(
+        'TOPUP_OPERATOR_COUNTRY_MISMATCH',
+        'Detected recharge operator does not support the requested destination country',
+        400,
+      );
+    }
+    if (!operator.status) {
+      throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'No active recharge operator was detected', 404);
     }
     return operator;
   }
 
-  async products(operatorId: number) {
+  async products(countryCode: string, operatorId: number) {
     this.assertEnabled();
+    const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operator = await this.provider.getOperator(operatorId);
-    if (operator.countryCode !== 'HT' || !operator.status) {
-      throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'This Haiti operator is unavailable', 404);
+    if (normalizeTopUpCountryCode(operator.countryCode) !== normalizedCountry) {
+      throw new MobileTopUpError(
+        'TOPUP_OPERATOR_COUNTRY_MISMATCH',
+        'This recharge operator does not belong to the requested destination country',
+        400,
+      );
+    }
+    if (!operator.status) {
+      throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'This recharge operator is unavailable', 404);
     }
     return { operator, products: productsFromOperator(operator) };
   }
 
   listRecipients(userId: string) { return this.repository.listRecipients(userId); }
 
-  async saveRecipient(userId: string, input: { nickname: string; phone: string; operatorId?: number; operatorName?: string }) {
+  async saveRecipient(userId: string, input: {
+    nickname: string;
+    phone: string;
+    countryCode: string;
+    operatorId?: number;
+    operatorName?: string;
+  }) {
     this.assertEnabled();
+    const countryCode = normalizeTopUpCountryCode(input.countryCode);
+    const phone = normalizeTopUpPhone(input.phone, countryCode);
+    let operatorId = input.operatorId;
+    let operatorName = input.operatorName?.trim().slice(0, 160);
+    if (operatorId !== undefined) {
+      const operator = await this.provider.getOperator(operatorId);
+      if (normalizeTopUpCountryCode(operator.countryCode) !== countryCode) {
+        throw new MobileTopUpError(
+          'TOPUP_OPERATOR_COUNTRY_MISMATCH',
+          'Saved recharge recipient operator does not match the destination country',
+          400,
+        );
+      }
+      if (!operator.status) {
+        throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'This recharge operator is unavailable', 404);
+      }
+      operatorId = operator.id;
+      operatorName = operator.name;
+    }
     const record = await this.repository.saveRecipient({
       userId,
       nickname: input.nickname.trim().slice(0, 80),
-      phone: normalizeHaitiPhone(input.phone),
-      countryCode: 'HT',
-      operatorId: input.operatorId,
-      operatorName: input.operatorName?.trim().slice(0, 160),
+      phone,
+      countryCode,
+      operatorId,
+      operatorName,
     });
     await this.audit(userId, 'MOBILE_TOPUP_RECIPIENT_SAVED', 'MobileTopUpRecipient', record.id, {
-      countryCode: 'HT', operatorId: record.operatorId,
+      countryCode: record.countryCode,
+      operatorId: record.operatorId,
     });
     return record;
   }
 
   async createQuote(userId: string, input: {
-    phone: string; operatorId: number; productId: string; amount?: number;
+    countryCode: string;
+    phone: string;
+    operatorId: number;
+    productId: string;
+    amount?: number;
   }): Promise<MobileTopUpQuoteRecord> {
     this.assertEnabled();
-    const phone = normalizeHaitiPhone(input.phone);
-    const { operator, products } = await this.products(input.operatorId);
-    const product = products.find((item) => item.id === input.productId);
-    if (!product) throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
+    const countryCode = normalizeTopUpCountryCode(input.countryCode);
+    const phone = normalizeTopUpPhone(input.phone, countryCode);
+    const { operator, products } = await this.products(countryCode, input.operatorId);
+    const product = products.find(
+      (item) => item.id === input.productId && normalizeTopUpCountryCode(item.countryCode) === countryCode,
+    );
+    if (!product) {
+      throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
+    }
     let amount = product.price;
     if (product.amountType === 'RANGE') {
       if (!Number.isFinite(input.amount) || input.amount! < product.minimumAmount! || input.amount! > product.maximumAmount!) {
@@ -184,6 +286,7 @@ export class MobileTopUpService {
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
       userId,
+      countryCode,
       recipientPhone: phone,
       operatorId: operator.id,
       operatorName: operator.name,
@@ -199,7 +302,10 @@ export class MobileTopUpService {
       expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
     });
     await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {
-      countryCode: 'HT', operatorId: operator.id, productId: product.id, testMode: true,
+      countryCode: quote.countryCode,
+      operatorId: operator.id,
+      productId: product.id,
+      testMode: true,
     });
     return quote;
   }
@@ -229,7 +335,9 @@ export class MobileTopUpService {
     let savedRecipient: SavedTopUpRecipientRecord | undefined;
     if (input.recipientId) {
       savedRecipient = (await this.repository.listRecipients(userId)).find((item) => item.id === input.recipientId);
-      if (!savedRecipient || savedRecipient.phone !== quote.recipientPhone) {
+      if (!savedRecipient ||
+          savedRecipient.phone !== quote.recipientPhone ||
+          savedRecipient.countryCode !== quote.countryCode) {
         throw new MobileTopUpError('TOPUP_RECIPIENT_MISMATCH', 'Saved recharge recipient does not match the quote', 400);
       }
     }
@@ -270,26 +378,35 @@ export class MobileTopUpService {
       return this.repository.updateTransaction(transaction.id, { paymentStatus: 'FAILED', status: 'FAILED', failureCode: 'PAYMENT_FAILED', failedAt: createdAt });
     }
     await this.repository.updateTransaction(transaction.id, {
-      paymentStatus: 'AUTHORIZED', paymentAuthorizationId: payment.authorizationId,
+      paymentStatus: 'AUTHORIZED',
+      paymentAuthorizationId: payment.authorizationId,
     });
     try {
       const providerResult = await this.provider.submitTopUp({
         operatorId: quote.operatorId,
         amount: quote.providerAmount,
         recipientPhone: quote.recipientPhone,
-        recipientCountryCode: 'HT',
+        recipientCountryCode: quote.countryCode,
         customIdentifier: transaction.customIdentifier,
       });
       const updated = await this.applyProviderResult(transaction.id, providerResult);
-      if (savedRecipient) await this.repository.updateRecipientLastUsed(userId, savedRecipient.id, quote.productId, quote.productName);
+      if (savedRecipient) {
+        await this.repository.updateRecipientLastUsed(userId, savedRecipient.id, quote.productId, quote.productName);
+      }
       await this.audit(userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', updated.id, {
-        provider: 'RELOADLY', providerStatus: updated.providerStatus, status: updated.status, testMode: true,
+        provider: 'RELOADLY',
+        countryCode: updated.countryCode,
+        providerStatus: updated.providerStatus,
+        status: updated.status,
+        testMode: true,
       });
       return updated;
     } catch (error) {
       if (error instanceof MobileTopUpError) {
         await this.repository.updateTransaction(transaction.id, {
-          status: 'FAILED', failureCode: error.code, failedAt: this.clock().toISOString(),
+          status: 'FAILED',
+          failureCode: error.code,
+          failedAt: this.clock().toISOString(),
         });
       }
       throw error;
@@ -334,6 +451,7 @@ export class MobileTopUpService {
   async repeat(userId: string, id: string) {
     const previous = await this.getTransaction(userId, id);
     return this.createQuote(userId, {
+      countryCode: previous.countryCode,
       phone: previous.recipientPhone,
       operatorId: previous.operatorId,
       productId: previous.productId,

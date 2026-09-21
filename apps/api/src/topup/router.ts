@@ -2,6 +2,10 @@ import express, { type Request, type RequestHandler, type Response } from 'expre
 import { z } from 'zod';
 import { MobileTopUpService } from './service.js';
 import { MobileTopUpError } from './types.js';
+import {
+  topUpCountryCodeShape,
+  topUpPhoneShape,
+} from './validation.js';
 
 type AuthRequest = Request & { userId?: string };
 
@@ -11,13 +15,15 @@ function asyncRoute(handler: (req: AuthRequest, res: Response) => Promise<unknow
 
 const recipientSchema = z.object({
   nickname: z.string().trim().min(1).max(80),
-  phone: z.string().min(8).max(30),
+  phone: topUpPhoneShape,
+  countryCode: topUpCountryCodeShape,
   operatorId: z.number().int().positive().optional(),
   operatorName: z.string().trim().min(1).max(160).optional(),
 }).strict();
 
 const quoteSchema = z.object({
-  phone: z.string().min(8).max(30),
+  countryCode: topUpCountryCodeShape,
+  phone: topUpPhoneShape,
   operatorId: z.number().int().positive(),
   productId: z.string().min(1).max(240),
   amount: z.number().positive().multipleOf(0.01).optional(),
@@ -40,18 +46,25 @@ export function createMobileTopUpRouter(options: {
     res.json(options.service.availability());
   }));
 
+  router.get('/countries', ...protectedRoute, asyncRoute(async (_req, res) => {
+    res.json({ countries: await options.service.listCountries() });
+  }));
+
   router.get('/operators', ...protectedRoute, asyncRoute(async (req, res) => {
-    res.json({ operators: await options.service.listOperators(String(req.query.country ?? 'HT')) });
+    const countryCode = topUpCountryCodeShape.parse(req.query.country);
+    res.json({ operators: await options.service.listOperators(countryCode) });
   }));
 
   router.get('/operators/detect', ...protectedRoute, asyncRoute(async (req, res) => {
-    const phone = z.string().min(8).max(30).parse(req.query.phone);
-    res.json({ operator: await options.service.detectOperator(phone) });
+    const countryCode = topUpCountryCodeShape.parse(req.query.country);
+    const phone = topUpPhoneShape.parse(req.query.phone);
+    res.json({ operator: await options.service.detectOperator(countryCode, phone) });
   }));
 
   router.get('/operators/:id/products', ...protectedRoute, asyncRoute(async (req, res) => {
     const operatorId = z.coerce.number().int().positive().parse(req.params.id);
-    res.json(await options.service.products(operatorId));
+    const countryCode = topUpCountryCodeShape.parse(req.query.country);
+    res.json(await options.service.products(countryCode, operatorId));
   }));
 
   router.get('/recipients', ...protectedRoute, asyncRoute(async (req, res) => {

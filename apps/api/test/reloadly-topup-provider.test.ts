@@ -22,22 +22,38 @@ function json(value: unknown, status = 200) {
 }
 
 describe('Reloadly Sandbox top-up provider', () => {
-  it('uses server-side OAuth and provider-returned Haiti operator data', async () => {
+  it('uses server-side OAuth and provider-returned operator country data', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
-      .mockResolvedValueOnce(json([{ operatorId: 12, name: 'Sandbox Haiti Mobile', status: true,
-        country: { isoName: 'HT' }, denominationType: 'FIXED', senderCurrencyCode: 'USD',
-        destinationCurrencyCode: 'HTG', fixedAmounts: [5], localFixedAmounts: [650] }]));
+      .mockResolvedValueOnce(json([{ operatorId: 12, name: 'Sandbox Jamaica Mobile', status: true,
+        country: { isoName: 'JM' }, denominationType: 'FIXED', senderCurrencyCode: 'USD',
+        destinationCurrencyCode: 'JMD', fixedAmounts: [5], localFixedAmounts: [780] }]));
     const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
-    const operators = await provider.listOperators('HT');
+    const operators = await provider.listOperators('jm');
     expect(operators).toHaveLength(1);
-    expect(operators[0]).toMatchObject({ id: 12, countryCode: 'HT', fixedAmounts: [5] });
+    expect(operators[0]).toMatchObject({ id: 12, countryCode: 'JM', fixedAmounts: [5] });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(config.authUrl);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       client_id: 'sandbox-id', grant_type: 'client_credentials', audience: config.airtimeBaseUrl,
     });
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/HT`);
-    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer token');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/JM`);
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer ' + 'token');
+  });
+
+  it('lists provider-backed supported countries', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json([
+        { isoName: 'HT', name: 'Haiti' },
+        { isoName: 'JM', name: 'Jamaica' },
+      ]));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.listCountries()).resolves.toEqual([
+      { code: 'HT', name: 'Haiti' },
+      { code: 'JM', name: 'Jamaica' },
+    ]);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/countries`);
   });
 
   it('submits a provider purchase without exposing credentials in its body', async () => {
@@ -46,11 +62,11 @@ describe('Reloadly Sandbox top-up provider', () => {
       .mockResolvedValueOnce(json({ transactionId: 44, status: 'PROCESSING', requestedAmount: 5,
         requestedAmountCurrencyCode: 'USD' }));
     const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
-    await provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+50937123456',
-      recipientCountryCode: 'HT', customIdentifier: 'ticash-topup-test' });
+    await provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+18765551234',
+      recipientCountryCode: 'JM', customIdentifier: 'ticash-topup-test' });
     const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(body).toMatchObject({ operatorId: 12, amount: 5, useLocalAmount: false,
-      recipientPhone: { countryCode: 'HT', number: '50937123456' } });
+      recipientPhone: { countryCode: 'JM', number: '18765551234' } });
     expect(body.client_secret).toBeUndefined();
   });
 
@@ -64,7 +80,7 @@ describe('Reloadly Sandbox top-up provider', () => {
           requestedAmount: 4,
           requestedAmountCurrencyCode: 'USD',
           deliveredAmount: 523.57,
-          deliveredAmountCurrencyCode: 'HTG',
+          deliveredAmountCurrencyCode: 'JMD',
         },
         status: 'SUCCESSFUL',
         code: 'TOPUP_SUCCESSFUL',

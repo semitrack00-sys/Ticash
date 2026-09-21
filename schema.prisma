@@ -511,7 +511,7 @@ model MobileTopUpRecipient {
   user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions    MobileTopUpTransaction[]
 
-  @@unique([userId, phone])
+  @@unique([userId, phone, countryCode])
   @@index([userId, updatedAt])
 }
 
@@ -557,6 +557,7 @@ model MobileTopUpTransaction {
   status                MobileTopUpStatus         @default(PENDING)
   paymentStatus         MobileTopUpPaymentStatus  @default(PENDING)
   paymentAuthorizationId String?
+  countryCode           String                    @default("HT")
   recipientPhone        String
   operatorId            Int
   operatorName          String

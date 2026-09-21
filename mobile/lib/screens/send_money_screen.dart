@@ -1,17 +1,46 @@
 import 'package:flutter/material.dart';
-import 'placeholder_screen.dart';
+import 'mobile_topup_screen.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_text_styles.dart';
 
-/// Send money flow entry point. Full multi-step form to follow; kept as
-/// a placeholder here so navigation to this section works end to end.
+/// Entry point for send-money tools, with mobile recharge exposed as its own
+/// sandbox sub-flow.
 class SendMoneyScreen extends StatelessWidget {
   const SendMoneyScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const PlaceholderScreen(
-      title: 'Send money',
-      description:
-          'Send money to MonCash and NatCash wallets across Haiti and beyond.',
+    return Scaffold(
+      backgroundColor: AppColors.primaryDark,
+      appBar: AppBar(
+        backgroundColor: AppColors.primaryDark,
+        title: const Text('Send money'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Send money tools', style: AppTextStyles.heading),
+            const SizedBox(height: 12),
+            const Text(
+              'Use TiCash to send money abroad, or open the separate mobile recharge sandbox flow below.',
+              style: AppTextStyles.bodySecondary,
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const MobileTopUpScreen(),
+                  ),
+                );
+              },
+              child: const Text('Open mobile recharge'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

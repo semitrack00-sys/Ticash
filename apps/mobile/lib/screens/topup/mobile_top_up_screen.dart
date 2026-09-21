@@ -97,25 +97,26 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   }
 
   Future<void> _detect(String countryCode) => _run(() async {
-    _countryCode = countryCode;
     final service = ref.read(mobileTopUpServiceProvider);
+    List<MobileTopUpOperator> operators;
     MobileTopUpOperator selected;
     try {
       selected = await service.detectOperator(
         countryCode: countryCode,
         phone: _phone.text,
       );
-      _operators = [selected];
+      operators = [selected];
     } catch (_) {
       final items = await service.operators(countryCode);
       if (items.isEmpty) rethrow;
-      _operators = items;
+      operators = items;
       selected = items.first;
     }
     final products = await service.products(selected.countryCode, selected.id);
     if (!mounted) return;
     setState(() {
       _countryCode = selected.countryCode;
+      _operators = operators;
       _operator = selected;
       _products = products;
       _product = null;

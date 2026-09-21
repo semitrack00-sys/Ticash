@@ -139,4 +139,23 @@ void main() {
     expect(transaction.testMode, isTrue);
     expect(transaction.totalChargeUsd, 5.5);
   });
+
+  test('keeps legacy Haiti transactions backward compatible without countryCode', () {
+    final transaction = MobileTopUpTransaction.fromJson({
+      'id': 'legacy-topup-id',
+      'recipientPhone': '+50937123456',
+      'operatorName': 'Provider Haiti Sandbox',
+      'productName': 'Airtime',
+      'kind': 'AIRTIME',
+      'providerAmount': 5,
+      'providerCurrency': 'USD',
+      'deliveredCurrency': 'HTG',
+      'feeUsd': 0.5,
+      'totalChargeUsd': 5.5,
+      'status': 'DELIVERED',
+      'testMode': true,
+      'createdAt': '2026-09-06T12:00:00.000Z',
+    });
+    expect(transaction.countryCode, 'HT');
+  });
 }

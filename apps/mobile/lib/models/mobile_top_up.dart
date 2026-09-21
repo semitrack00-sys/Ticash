@@ -293,6 +293,7 @@ class MobileTopUpTransaction {
         countryCode: _countryCodeFromJson(
           json,
           phoneKey: 'recipientPhone',
+          allowLegacyHaitiPhoneFallback: true,
           productKey: 'productId',
         ),
         operatorName: json['operatorName'] as String,

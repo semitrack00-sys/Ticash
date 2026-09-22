@@ -9,6 +9,7 @@ import type {
   ProviderTopUpResult,
 } from '../src/topup/types.js';
 import { MobileTopUpError } from '../src/topup/types.js';
+import { getCountries, getCountryCallingCode } from 'libphonenumber-js';
 
 const config: MobileTopUpConfig = {
   enabled: true,
@@ -194,7 +195,129 @@ describe('Worldwide mobile recharge sandbox API', () => {
     });
 
     const countries = await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
-    expect(countries.body.countries).toEqual(supportedCountries);
+    expect(countries.body.countries).toEqual(supportedCountries.map((c) => ({ ...c, callingCode: c.code === 'HT' ? '+509' : '+1' })));
+  });
+
+  it('creates unique guest customers with valid rotating tokens, catalog access and a mock purchase', async () => {
+    const provider = new TestProvider();
+    const app = createApp({ mobileTopUpConfig: { ...config, feeUsd: '3.50' }, mobileTopUpProvider: provider });
+    const guest = await request(app).post('/api/auth/guest').expect(201);
+    const other = await request(app).post('/api/auth/guest').expect(201);
+    expect(guest.body).toMatchObject({ guest: true, user: { role: 'CUSTOMER', kycStatus: 'NOT_STARTED' } });
+    expect(guest.body.user).not.toHaveProperty('passwordHash');
+    expect(other.body.user.id).not.toBe(guest.body.user.id);
+    expect(other.body.user.email).not.toBe(guest.body.user.email);
+    expect(Date.parse(guest.body.expiresAt) - Date.now()).toBeLessThanOrEqual(60 * 60_000);
+    const headers = { Authorization: `Bearer ${guest.body.accessToken}` };
+    await request(app).get('/api/users/me').set(headers).expect(200);
+    await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
+    await request(app).get('/api/admin/session').set(headers).expect(403);
+    const quoted = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
+    expect(quoted.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 3.5, totalChargeUsd: 8.5 });
+    const purchased = await request(app).post('/api/mobile-topups/transactions').set(headers)
+      .set('Idempotency-Key', 'guest-purchase-test').send({ quoteId: quoted.body.quote.id }).expect(201);
+    expect(purchased.body.transaction).toMatchObject({ testMode: true, paymentStatus: 'AUTHORIZED', totalChargeUsd: 8.5 });
+    const refreshed = await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(200);
+    expect(refreshed.body.refreshToken).not.toBe(guest.body.refreshToken);
+    await request(app).get('/api/mobile-topups/countries').set('Authorization', `Bearer ${refreshed.body.accessToken}`).expect(200);
+    await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(401);
+    await request(app).post('/api/mobile-topups/transactions').send({ quoteId: quoted.body.quote.id }).expect(401);
+  });
+
+  it.each([
+    { environment: 'production' }, { paymentMode: 'live' }, { productionEnabled: true },
+    { approvedForLiveUse: true }, { enabled: false }, { productionEnabled: undefined },
+    { airtimeBaseUrl: 'https://topups.reloadly.com' },
+  ])('rejects guest access when configuration is unsafe or incomplete: %j', async (unsafe) => {
+    const app = createApp({ mobileTopUpConfig: { ...config, ...unsafe } as MobileTopUpConfig, mobileTopUpProvider: new TestProvider() });
+    const response = await request(app).post('/api/auth/guest').expect(403);
+    expect(response.body.code).toBe('GUEST_SANDBOX_REQUIRED');
+    expect(response.body).not.toHaveProperty('accessToken');
+  });
+
+  it('rejects guest-supplied identity/privileges and rate-limits successful guest creation', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    await request(app).post('/api/auth/guest').send({ role: 'ADMIN', email: 'fake@example.com' }).expect(400);
+    for (let index = 0; index < 4; index++) await request(app).post('/api/auth/guest').expect(201);
+    const limited = await request(app).post('/api/auth/guest').expect(429);
+    expect(limited.body.code).toBe('RATE_LIMITED');
+  });
+
+  it('retains account-lock and funding restrictions for guests', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    const guest = await request(app).post('/api/auth/guest').expect(201);
+    const admin = await request(app).post('/api/auth/login').send({ email: 'admin@ticash.local', password: 'AdminPass123!' }).expect(200);
+    const headers = { Authorization: `Bearer ${guest.body.accessToken}` };
+    for (const locked of [false, true]) {
+      await request(app).patch(`/api/admin/users/${guest.body.user.id}/restrictions`)
+        .set('Authorization', `Bearer ${admin.body.accessToken}`)
+        .send({ accountLocked: locked, fundingRestricted: true, payoutRestricted: true, reason: 'Guest security regression' }).expect(200);
+      const response = await request(app).get('/api/mobile-topups/countries').set(headers).expect(locked ? 423 : 403);
+      expect(response.body.code).toBe(locked ? 'ACCOUNT_LOCKED' : 'FUNDING_RESTRICTED');
+    }
+    // Restricting the account revokes its existing refresh sessions.
+    await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(401);
+    const promote = await request(app).patch(`/api/admin/staff/${guest.body.user.id}/role`)
+      .set('Authorization', `Bearer ${admin.body.accessToken}`).send({ role: 'SUPER_ADMIN', reason: 'Attempt guest promotion' }).expect(403);
+    expect(promote.body.code).toBe('GUEST_ROLE_RESTRICTED');
+  });
+
+  it('expires guest access and refresh without extending lifetime or altering normal accounts', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    const guest = await request(app).post('/api/auth/guest').expect(201);
+    const account = { email: 'persistent@example.com', password: 'correct-horse-42', firstName: 'Real', lastName: 'Customer' };
+    const registered = await request(app).post('/api/auth/register').send(account).expect(201);
+    await request(app).post('/api/auth/logout').send({ refreshToken: registered.body.refreshToken }).expect(204);
+    const login = await request(app).post('/api/auth/login').send(account).expect(200);
+    expect(login.body.user.id).toBe(registered.body.user.id);
+    expect(login.body.user.role).toBe('CUSTOMER');
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(guest.body.expiresAt) + 1000);
+    try {
+      await request(app).get('/api/mobile-topups/countries').set('Authorization', `Bearer ${guest.body.accessToken}`).expect(401);
+      await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(401);
+      await request(app).post('/api/auth/refresh').send({ refreshToken: login.body.refreshToken }).expect(200);
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it('uses the complete calling-code dataset and preserves shared-prefix ISO identities', async () => {
+    const provider = new TestProvider(); provider.countries = getCountries().map((code) => ({ code, name: code }));
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const headers = await auth(app, 'all-countries');
+    const response = await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
+    expect(response.body.countries).toHaveLength(getCountries().length);
+    for (const destination of response.body.countries) {
+      expect(destination.callingCode).toMatch(/^\+[1-9]\d{0,2}$/);
+      expect(destination.callingCode).toBe(`+${getCountryCallingCode(destination.code)}`);
+    }
+    for (const [code, callingCode] of Object.entries({ HT: '+509', US: '+1', CA: '+1', DO: '+1', JM: '+1', FR: '+33', BR: '+55', MX: '+52', GB: '+44', NG: '+234' })) {
+      expect(response.body.countries).toContainEqual({ code, name: code, callingCode });
+    }
+  });
+
+  it('fails closed when a provider country has no calling-code metadata', async () => {
+    const provider = new TestProvider(); provider.countries = [{ code: 'ZZ', name: 'Unknown' }];
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const response = await request(app).get('/api/mobile-topups/countries').set(await auth(app, 'unknown-code')).expect(502);
+    expect(response.body.code).toBe('UNSUPPORTED_CALLING_CODE');
+  });
+
+  it('blocks existing guest tokens and refresh if sandbox configuration becomes unsafe', async () => {
+    const mutable = { ...config };
+    const app = createApp({ mobileTopUpConfig: mutable, mobileTopUpProvider: new TestProvider() });
+    const guest = await request(app).post('/api/auth/guest').expect(201);
+    mutable.enabled = false;
+    await request(app).get('/api/mobile-topups/countries').set('Authorization', `Bearer ${guest.body.accessToken}`).expect(403);
+    await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(403);
+  });
+
+  it('does not trust fee/total values supplied by the customer', async () => {
+    const app = createApp({ mobileTopUpConfig: { ...config, feeUsd: '3.50' }, mobileTopUpProvider: new TestProvider() });
+    const headers = await auth(app, 'fee-tamper');
+    await request(app).post('/api/mobile-topups/quotes').set(headers).send({
+      countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00', feeUsd: 0, totalChargeUsd: 5,
+    }).expect(400);
+    const response = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
+    expect(response.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 3.5, totalChargeUsd: 8.5 });
   });
 
   it('returns a controlled disabled response without provider credentials', async () => {

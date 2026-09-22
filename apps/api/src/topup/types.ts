@@ -25,6 +25,10 @@ export interface MobileTopUpCountry {
   name: string;
 }
 
+export interface MobileTopUpDestination extends MobileTopUpCountry {
+  callingCode: string;
+}
+
 export interface MobileTopUpOperator {
   id: number;
   name: string;

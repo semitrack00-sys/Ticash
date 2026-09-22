@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -89,6 +89,7 @@ import {
 } from './admin-operations.js';
 
 type StoredUser = PublicUser & {
+  guestExpiresAt?: Date | null;
   passwordHash: string;
   accountLocked: boolean;
   fundingRestricted: boolean;
@@ -163,6 +164,7 @@ function configuredCorsOrigins(env: NodeJS.ProcessEnv): string[] {
 }
 
 const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
+const guestLifetimeMs = 60 * 60 * 1000;
 const credentialsSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
   password: z.string().min(8).max(128),
@@ -288,6 +290,7 @@ function publicUser(user: StoredUser): PublicUser {
 }
 
 function storedUserFromDb(user: {
+  guestExpiresAt?: Date | null;
   id: string; email: string; phone: string | null; passwordHash: string;
   firstName: string | null; lastName: string | null; kycStatus: string;
   countryCode: string | null; addressLine1: string | null; addressLine2: string | null;
@@ -297,6 +300,7 @@ function storedUserFromDb(user: {
 }): StoredUser {
   return {
     id: user.id,
+    guestExpiresAt: user.guestExpiresAt,
     email: user.email,
     phoneNumber: user.phone ?? undefined,
     passwordHash: user.passwordHash,
@@ -443,15 +447,15 @@ async function recordAudit(
   });
 }
 
-async function issueTokens(userId: string) {
+async function issueTokens(userId: string, guestExpiresAt?: Date | null) {
+  const expiresAt = guestExpiresAt?.getTime() ?? Date.now() + refreshLifetimeMs;
   const accessToken = jwt.sign({ sub: userId, type: 'access', jti: randomUUID() }, accessSecret, {
-    expiresIn: 15 * 60,
+    expiresIn: Math.max(1, Math.min(15 * 60, Math.floor((expiresAt - Date.now()) / 1000))),
     issuer: 'ticash-api',
     audience: 'ticash-mobile',
   });
   const refreshToken = randomUUID();
   const hash = tokenHash(refreshToken);
-  const expiresAt = Date.now() + refreshLifetimeMs;
   if (databaseEnabled) {
     await prisma.session.create({
       data: { userId, refreshHash: hash, expiresAt: new Date(expiresAt) },
@@ -462,7 +466,17 @@ async function issueTokens(userId: string) {
   return { accessToken, refreshToken };
 }
 
+// Permanent-account authentication is the default for every authenticated route.
 async function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
+  return authenticateAccount(req, res, next, false);
+}
+
+// Only the mobile-topup router receives this guest-aware middleware.
+async function authenticateRecharge(req: AuthRequest, res: Response, next: NextFunction) {
+  return authenticateAccount(req, res, next, true);
+}
+
+async function authenticateAccount(req: AuthRequest, res: Response, next: NextFunction, allowGuest: boolean) {
   const [scheme, token] = req.header('authorization')?.split(' ') ?? [];
   if (scheme !== 'Bearer' || !token) {
     res.status(401).json({ error: 'Authentication required', code: 'UNAUTHENTICATED' });
@@ -477,16 +491,27 @@ async function authenticate(req: AuthRequest, res: Response, next: NextFunction)
       throw new Error('Invalid token');
     }
     req.userId = payload.sub;
-    const accountLocked = databaseEnabled
-      ? (await prisma.user.findUnique({ where: { id: payload.sub }, select: { accountLocked: true } }))?.accountLocked
-      : users.get(payload.sub)?.accountLocked;
-    if (accountLocked === undefined) {
+    const account = databaseEnabled
+      ? await prisma.user.findUnique({ where: { id: payload.sub }, select: { accountLocked: true, guestExpiresAt: true } })
+      : users.get(payload.sub);
+    if (!account || (account.guestExpiresAt && account.guestExpiresAt.getTime() <= Date.now())) {
       res.status(401).json({ error: 'Account is unavailable', code: 'INVALID_TOKEN' });
       return;
     }
-    if (accountLocked) {
+    if (account.accountLocked) {
       res.status(423).json({ error: 'Account access is locked', code: 'ACCOUNT_LOCKED' });
       return;
+    }
+    if (account.guestExpiresAt) {
+      if (!allowGuest) {
+        res.status(403).json({ error: 'Guest sessions are restricted to mobile recharge', code: 'GUEST_SCOPE_RESTRICTED' });
+        return;
+      }
+      const guestError = req.app.locals.guestAuthError();
+      if (guestError) {
+        res.status(403).json(guestError);
+        return;
+      }
     }
     next();
   } catch {
@@ -574,14 +599,25 @@ export interface CreateAppOptions {
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
+  const configuredProxyHops = process.env.TRUST_PROXY_HOPS?.trim();
+  if (configuredProxyHops && !/^(?:[1-9]|10)$/.test(configuredProxyHops)) {
+    throw new Error('TRUST_PROXY_HOPS must be blank or an integer from 1 to 10');
+  }
+  const trustProxyHops = configuredProxyHops ? Number(configuredProxyHops) : undefined;
+  // Configure before registering any limiter; never trust arbitrary forwarded chains.
+  app.set('trust proxy', trustProxyHops ?? false);
+  const guestProxyConfigured = process.env.NODE_ENV !== 'production' || trustProxyHops !== undefined;
   const allowlistedOrigins = configuredCorsOrigins(process.env);
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
   const transferMutex = new KeyedMutex();
-  const resolveRole = async (userId: string) => databaseEnabled
-    ? (await prisma.user.findUnique({ where: { id: userId }, select: { role: true } }))?.role
-    : users.get(userId)?.role;
+  const resolveRole = async (userId: string) => {
+    const user = databaseEnabled
+      ? await prisma.user.findUnique({ where: { id: userId }, select: { role: true, guestExpiresAt: true } })
+      : users.get(userId);
+    return user?.guestExpiresAt ? 'CUSTOMER' : user?.role;
+  };
   const permission = (value: AdminPermission) => requirePermission(value, resolveRole);
   const loginState = {
     async assertAllowed(identityHash: string) {
@@ -844,6 +880,19 @@ export function createApp(options: CreateAppOptions = {}) {
   );
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
+  // Inspect configuration itself, not the public status object's constant labels.
+  const guestAuthError = () => {
+    if (!guestProxyConfigured) {
+      return { error: 'Guest recharge requires a verified TRUST_PROXY_HOPS setting in production', code: 'GUEST_PROXY_CONFIGURATION_REQUIRED' };
+    }
+    if (mobileTopUpConfig.enabled === true &&
+        mobileTopUpConfig.environment === 'sandbox' && mobileTopUpConfig.paymentMode === 'mock' &&
+        mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
+        securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false &&
+        mobileTopUpConfig.airtimeBaseUrl === 'https://topups-sandbox.reloadly.com') return undefined;
+    return { error: 'Guest recharge is available only in enabled Sandbox/mock mode', code: 'GUEST_SANDBOX_REQUIRED' };
+  };
+  app.locals.guestAuthError = guestAuthError;
   const mobileTopUpRepository = options.mobileTopUpRepository ?? (
     databaseEnabled ? new PrismaMobileTopUpRepository(prisma) : new MemoryMobileTopUpRepository()
   );
@@ -1006,10 +1055,37 @@ export function createApp(options: CreateAppOptions = {}) {
   }));
 
   app.use('/api/mobile-topups', createMobileTopUpRouter({
-    authenticate,
+    authenticate: authenticateRecharge,
     requireFundingAllowed,
     service: mobileTopUpService,
   }));
+
+  const guestLimiter = rateLimit({
+    windowMs: 15 * 60_000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Too many guest sessions. Please try again later.', code: 'RATE_LIMITED' },
+  });
+  app.post('/api/auth/guest', guestLimiter, async (req, res) => {
+    const guestError = guestAuthError();
+    if (guestError) return res.status(403).json(guestError);
+    z.object({}).strict().parse(req.body ?? {});
+    if (!databaseEnabled && process.env.NODE_ENV !== 'test') {
+      return res.status(503).json({ error: 'Guest account storage is unavailable', code: 'GUEST_STORAGE_UNAVAILABLE' });
+    }
+    const guestExpiresAt = new Date(Date.now() + guestLifetimeMs);
+    const identity = {
+      email: `guest-${randomUUID()}@guest.ticash.invalid`,
+      passwordHash: await bcrypt.hash(randomBytes(32).toString('base64url'), 12),
+      firstName: 'Guest', lastName: '', role: 'CUSTOMER' as const, kycStatus: 'NOT_STARTED' as const,
+      accountLocked: false, fundingRestricted: false, payoutRestricted: true, guestExpiresAt,
+    };
+    const user: StoredUser = databaseEnabled
+      ? storedUserFromDb(await prisma.user.create({ data: identity }))
+      : { ...identity, id: randomUUID(), createdAt: new Date().toISOString() };
+    if (!databaseEnabled) users.set(user.id, user);
+    await recordAudit(user.id, 'GUEST_SESSION_CREATED', 'User', user.id);
+    res.status(201).json({ guest: true, expiresAt: guestExpiresAt.toISOString(), user: publicUser(user),
+      ...await issueTokens(user.id, guestExpiresAt) });
+  });
 
   app.post('/api/auth/register', authenticationLimiter, async (req, res) => {
     const input = registerSchema.parse(req.body);
@@ -1090,7 +1166,7 @@ export function createApp(options: CreateAppOptions = {}) {
         }));
       } else users.set(user.id, user);
     }
-    if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
+    if (!user || user.guestExpiresAt || !(await bcrypt.compare(input.password, user.passwordHash))) {
       const state = await loginState.failure(identityHash);
       await recordAudit(undefined, 'LOGIN_FAILED', 'Security', undefined, {
         identityHash, locked: Boolean(state.lockedUntil),
@@ -1125,13 +1201,20 @@ export function createApp(options: CreateAppOptions = {}) {
       return;
     }
     const refreshUser = databaseEnabled
-      ? await prisma.user.findUnique({ where: { id: session.userId }, select: { accountLocked: true } })
+      ? await prisma.user.findUnique({ where: { id: session.userId }, select: { accountLocked: true, guestExpiresAt: true } })
       : users.get(session.userId);
     if (!refreshUser || refreshUser.accountLocked) {
       await recordAudit(session.userId, 'REFRESH_TOKEN_BLOCKED', 'Security', session.userId);
       return res.status(423).json({ error: 'Account access is locked', code: 'ACCOUNT_LOCKED' });
     }
-    res.json(await issueTokens(session.userId));
+    if (refreshUser.guestExpiresAt) {
+      if (refreshUser.guestExpiresAt.getTime() <= Date.now()) {
+        return res.status(403).json({ error: 'Guest session is no longer available', code: 'GUEST_SANDBOX_REQUIRED' });
+      }
+      const guestError = guestAuthError();
+      if (guestError) return res.status(403).json(guestError);
+    }
+    res.json(await issueTokens(session.userId, refreshUser.guestExpiresAt));
   });
 
   app.post('/api/auth/logout', async (req, res) => {
@@ -1807,10 +1890,12 @@ export function createApp(options: CreateAppOptions = {}) {
     if (databaseEnabled) {
       const target = await prisma.user.findUnique({ where: { id: targetId } });
       if (!target) return res.status(404).json({ error: 'User not found', code: 'USER_NOT_FOUND' });
+      if (target.guestExpiresAt) return res.status(403).json({ error: 'Guest customers cannot become staff', code: 'GUEST_ROLE_RESTRICTED' });
       await prisma.user.update({ where: { id: targetId }, data: { role: input.role } });
     } else {
       const target = users.get(targetId);
       if (!target) return res.status(404).json({ error: 'User not found', code: 'USER_NOT_FOUND' });
+      if (target.guestExpiresAt) return res.status(403).json({ error: 'Guest customers cannot become staff', code: 'GUEST_ROLE_RESTRICTED' });
       users.set(targetId, { ...target, role: input.role });
     }
     await recordAudit(req.userId, 'STAFF_ROLE_CHANGED', 'User', targetId, { role: input.role, reason: input.reason });

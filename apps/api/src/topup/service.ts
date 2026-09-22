@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import type {
   MobileTopUpConfig,
-  MobileTopUpCountry,
+  MobileTopUpDestination,
   MobileTopUpOperator,
   MobileTopUpPaymentProvider,
   MobileTopUpProduct,
@@ -91,7 +92,7 @@ function mapProviderStatus(value: string): MobileTopUpStatus {
 }
 
 export class MobileTopUpService {
-  private countriesCache?: { expiresAt: number; value: MobileTopUpCountry[]; key: string };
+  private countriesCache?: { expiresAt: number; value: MobileTopUpDestination[]; key: string };
 
   constructor(
     private readonly config: MobileTopUpConfig,
@@ -147,9 +148,13 @@ export class MobileTopUpService {
       (await this.provider.listCountries())
         .map((country) => {
           const code = normalizeTopUpCountryCode(country.code);
+          if (!isSupportedCountry(code)) {
+            throw new MobileTopUpError('UNSUPPORTED_CALLING_CODE', 'A provider destination has no supported calling-code metadata', 502);
+          }
           return [code, {
             code,
             name: country.name.trim().slice(0, 160) || code,
+            callingCode: `+${getCountryCallingCode(code as CountryCode)}`,
           }] as const;
         }),
     ).values()]

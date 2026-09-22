@@ -160,6 +160,7 @@ model User {
   email               String                    @unique
   phone               String?                   @unique
   passwordHash        String
+  guestExpiresAt      DateTime?
   firstName           String?
   lastName            String?
   countryCode         String?

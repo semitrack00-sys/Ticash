@@ -466,7 +466,17 @@ async function issueTokens(userId: string, guestExpiresAt?: Date | null) {
   return { accessToken, refreshToken };
 }
 
+// Permanent-account authentication is the default for every authenticated route.
 async function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
+  return authenticateAccount(req, res, next, false);
+}
+
+// Only the mobile-topup router receives this guest-aware middleware.
+async function authenticateRecharge(req: AuthRequest, res: Response, next: NextFunction) {
+  return authenticateAccount(req, res, next, true);
+}
+
+async function authenticateAccount(req: AuthRequest, res: Response, next: NextFunction, allowGuest: boolean) {
   const [scheme, token] = req.header('authorization')?.split(' ') ?? [];
   if (scheme !== 'Bearer' || !token) {
     res.status(401).json({ error: 'Authentication required', code: 'UNAUTHENTICATED' });
@@ -492,9 +502,16 @@ async function authenticate(req: AuthRequest, res: Response, next: NextFunction)
       res.status(423).json({ error: 'Account access is locked', code: 'ACCOUNT_LOCKED' });
       return;
     }
-    if (account.guestExpiresAt && !req.app.locals.guestAuthAllowed()) {
-      res.status(403).json({ error: 'Guest recharge is available only in enabled Sandbox/mock mode', code: 'GUEST_SANDBOX_REQUIRED' });
-      return;
+    if (account.guestExpiresAt) {
+      if (!allowGuest) {
+        res.status(403).json({ error: 'Guest sessions are restricted to mobile recharge', code: 'GUEST_SCOPE_RESTRICTED' });
+        return;
+      }
+      const guestError = req.app.locals.guestAuthError();
+      if (guestError) {
+        res.status(403).json(guestError);
+        return;
+      }
     }
     next();
   } catch {
@@ -582,6 +599,14 @@ export interface CreateAppOptions {
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
+  const configuredProxyHops = process.env.TRUST_PROXY_HOPS?.trim();
+  if (configuredProxyHops && !/^(?:[1-9]|10)$/.test(configuredProxyHops)) {
+    throw new Error('TRUST_PROXY_HOPS must be blank or an integer from 1 to 10');
+  }
+  const trustProxyHops = configuredProxyHops ? Number(configuredProxyHops) : undefined;
+  // Configure before registering any limiter; never trust arbitrary forwarded chains.
+  app.set('trust proxy', trustProxyHops ?? false);
+  const guestProxyConfigured = process.env.NODE_ENV !== 'production' || trustProxyHops !== undefined;
   const allowlistedOrigins = configuredCorsOrigins(process.env);
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
@@ -856,12 +881,18 @@ export function createApp(options: CreateAppOptions = {}) {
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
   // Inspect configuration itself, not the public status object's constant labels.
-  const guestAuthAllowed = () => mobileTopUpConfig.enabled === true &&
-    mobileTopUpConfig.environment === 'sandbox' && mobileTopUpConfig.paymentMode === 'mock' &&
-    mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
-    securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false &&
-    mobileTopUpConfig.airtimeBaseUrl === 'https://topups-sandbox.reloadly.com';
-  app.locals.guestAuthAllowed = guestAuthAllowed;
+  const guestAuthError = () => {
+    if (!guestProxyConfigured) {
+      return { error: 'Guest recharge requires a verified TRUST_PROXY_HOPS setting in production', code: 'GUEST_PROXY_CONFIGURATION_REQUIRED' };
+    }
+    if (mobileTopUpConfig.enabled === true &&
+        mobileTopUpConfig.environment === 'sandbox' && mobileTopUpConfig.paymentMode === 'mock' &&
+        mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
+        securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false &&
+        mobileTopUpConfig.airtimeBaseUrl === 'https://topups-sandbox.reloadly.com') return undefined;
+    return { error: 'Guest recharge is available only in enabled Sandbox/mock mode', code: 'GUEST_SANDBOX_REQUIRED' };
+  };
+  app.locals.guestAuthError = guestAuthError;
   const mobileTopUpRepository = options.mobileTopUpRepository ?? (
     databaseEnabled ? new PrismaMobileTopUpRepository(prisma) : new MemoryMobileTopUpRepository()
   );
@@ -1024,7 +1055,7 @@ export function createApp(options: CreateAppOptions = {}) {
   }));
 
   app.use('/api/mobile-topups', createMobileTopUpRouter({
-    authenticate,
+    authenticate: authenticateRecharge,
     requireFundingAllowed,
     service: mobileTopUpService,
   }));
@@ -1034,9 +1065,8 @@ export function createApp(options: CreateAppOptions = {}) {
     message: { error: 'Too many guest sessions. Please try again later.', code: 'RATE_LIMITED' },
   });
   app.post('/api/auth/guest', guestLimiter, async (req, res) => {
-    if (!guestAuthAllowed()) {
-      return res.status(403).json({ error: 'Guest recharge is available only in enabled Sandbox/mock mode', code: 'GUEST_SANDBOX_REQUIRED' });
-    }
+    const guestError = guestAuthError();
+    if (guestError) return res.status(403).json(guestError);
     z.object({}).strict().parse(req.body ?? {});
     if (!databaseEnabled && process.env.NODE_ENV !== 'test') {
       return res.status(503).json({ error: 'Guest account storage is unavailable', code: 'GUEST_STORAGE_UNAVAILABLE' });
@@ -1177,8 +1207,12 @@ export function createApp(options: CreateAppOptions = {}) {
       await recordAudit(session.userId, 'REFRESH_TOKEN_BLOCKED', 'Security', session.userId);
       return res.status(423).json({ error: 'Account access is locked', code: 'ACCOUNT_LOCKED' });
     }
-    if (refreshUser.guestExpiresAt && (refreshUser.guestExpiresAt.getTime() <= Date.now() || !guestAuthAllowed())) {
-      return res.status(403).json({ error: 'Guest session is no longer available', code: 'GUEST_SANDBOX_REQUIRED' });
+    if (refreshUser.guestExpiresAt) {
+      if (refreshUser.guestExpiresAt.getTime() <= Date.now()) {
+        return res.status(403).json({ error: 'Guest session is no longer available', code: 'GUEST_SANDBOX_REQUIRED' });
+      }
+      const guestError = guestAuthError();
+      if (guestError) return res.status(403).json(guestError);
     }
     res.json(await issueTokens(session.userId, refreshUser.guestExpiresAt));
   });

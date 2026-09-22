@@ -1,4 +1,5 @@
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
 import type {
@@ -209,7 +210,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
     expect(other.body.user.email).not.toBe(guest.body.user.email);
     expect(Date.parse(guest.body.expiresAt) - Date.now()).toBeLessThanOrEqual(60 * 60_000);
     const headers = { Authorization: `Bearer ${guest.body.accessToken}` };
-    await request(app).get('/api/users/me').set(headers).expect(200);
+    await request(app).get('/api/mobile-topups/status').set(headers).expect(200);
     await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
     await request(app).get('/api/admin/session').set(headers).expect(403);
     const quoted = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
@@ -222,6 +223,42 @@ describe('Worldwide mobile recharge sandbox API', () => {
     await request(app).get('/api/mobile-topups/countries').set('Authorization', `Bearer ${refreshed.body.accessToken}`).expect(200);
     await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(401);
     await request(app).post('/api/mobile-topups/transactions').send({ quoteId: quoted.body.quote.id }).expect(401);
+    await request(app).post('/api/auth/logout').send({ refreshToken: refreshed.body.refreshToken }).expect(204);
+    await request(app).post('/api/auth/refresh').send({ refreshToken: refreshed.body.refreshToken }).expect(401);
+  });
+
+  it('restricts guest credentials to recharge and preserves permanent customer account routes', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    const guest = await request(app).post('/api/auth/guest').expect(201);
+    const guestHeaders = { Authorization: `Bearer ${guest.body.accessToken}` };
+    const profile = { firstName: 'Real', lastName: 'Customer', phoneNumber: '+50937050210' };
+    const routes = [
+      request(app).get('/api/users/me'),
+      request(app).patch('/api/users/me').send(profile),
+      request(app).put('/api/users/me/password').send({ currentPassword: 'unknown-guest-password', newPassword: 'correct-horse-43' }),
+      request(app).get('/api/kyc/status'),
+      request(app).post('/api/kyc/submit').send({ attested: true }),
+      request(app).get('/api/funding/status'),
+      request(app).post('/api/funding/dwolla/customer').send({}),
+      request(app).get('/api/transfers'),
+      request(app).post('/api/transfers/quote').send({}),
+      request(app).get('/api/recipients'),
+      request(app).get('/api/admin/session'),
+    ];
+    for (const route of routes) {
+      const response = await route.set(guestHeaders).expect(403);
+      expect(response.body.code).toBe('GUEST_SCOPE_RESTRICTED');
+    }
+    const headers = await auth(app, 'permanent-scope');
+    await request(app).get('/api/users/me').set(headers).expect(200);
+    // A rejected guest profile update must not reserve this unique phone number.
+    const updated = await request(app).patch('/api/users/me').set(headers).send(profile).expect(200);
+    expect(updated.body.user.phoneNumber).toBe(profile.phoneNumber);
+    await request(app).put('/api/users/me/password').set(headers)
+      .send({ currentPassword: 'correct-horse-42', newPassword: 'correct-horse-43' }).expect(204);
+    await request(app).get('/api/kyc/status').set(headers).expect(200);
+    await request(app).get('/api/funding/status').set(headers).expect(200);
+    await request(app).get('/api/transfers').set(headers).expect(200);
   });
 
   it.each([
@@ -271,10 +308,17 @@ describe('Worldwide mobile recharge sandbox API', () => {
     const login = await request(app).post('/api/auth/login').send(account).expect(200);
     expect(login.body.user.id).toBe(registered.body.user.id);
     expect(login.body.user.role).toBe('CUSTOMER');
-    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(guest.body.expiresAt) + 1000);
+    const guestDeadline = Date.parse(guest.body.expiresAt);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(guestDeadline - 5 * 60_000);
     try {
+      const refreshed = await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(200);
+      const token = jwt.decode(refreshed.body.accessToken) as jwt.JwtPayload;
+      expect(token.exp! * 1000).toBeLessThanOrEqual(guestDeadline);
+      expect(token.exp! - token.iat!).toBeLessThanOrEqual(15 * 60);
+      await request(app).get('/api/mobile-topups/status').set('Authorization', `Bearer ${refreshed.body.accessToken}`).expect(200);
+      clock.mockReturnValue(guestDeadline + 1000);
       await request(app).get('/api/mobile-topups/countries').set('Authorization', `Bearer ${guest.body.accessToken}`).expect(401);
-      await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(401);
+      await request(app).post('/api/auth/refresh').send({ refreshToken: refreshed.body.refreshToken }).expect(401);
       await request(app).post('/api/auth/refresh').send({ refreshToken: login.body.refreshToken }).expect(200);
     } finally { vi.restoreAllMocks(); }
   });

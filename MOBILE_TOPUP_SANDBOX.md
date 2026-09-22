@@ -67,9 +67,19 @@ Local Sandbox validation can still use `npm run prisma:validate`,
 
 Guest access requires explicitly enabled recharge with sandbox environment, mock payments, false production/live approval flags, and the sandbox provider URL. Creation is limited to five attempts per IP per 15 minutes (including successful attempts), in addition to the existing API limiter. Guest access and refresh fail closed if these gates change. Outside the test suite, missing database storage returns `503 GUEST_STORAGE_UNAVAILABLE`; there is no fake client authentication or anonymous purchase route.
 
+Guest credentials are recharge-only: only `/api/mobile-topups/*` uses guest-aware authentication. All normal authenticated routes reject guests with `403 GUEST_SCOPE_RESTRICTED`, including profile reads/updates, password changes, KYC, funding, remittances, recipients, and admin routes. Guests cannot attach permanent profile information or reserve a unique profile phone number. Refresh and logout remain available through their existing token endpoints; refresh never extends the guest deadline.
+
+### Proxy configuration and guest rate limiting
+
+Set `TRUST_PROXY_HOPS` to the **verified number of trusted proxy hops for the deployment**, including deployments behind Render. Do not assume Render always means one hop. Missing/blank disables proxy trust; otherwise only integers 1 through 10 are accepted. Invalid values, including `true`, fail configuration validation. Express receives the bounded hop count before any rate limiter is registered, never blanket `trust proxy=true`.
+
+Verify every ingress path and ensure the trusted proxies sanitize forwarded headers; an untrusted caller must not be able to reach the API through a shorter path or impersonate a trusted hop. With the verified count, Express resolves the client IP for the existing API limiter and the guest five-attempts-per-15-minute limiter. These existing in-memory limiters operate per API process; sharing limits across multiple replicas requires a separate shared-store configuration.
+
+In `NODE_ENV=production`, missing/blank `TRUST_PROXY_HOPS` blocks guest creation, existing guest recharge access, and guest refresh with `403 GUEST_PROXY_CONFIGURATION_REQUIRED`. Normal permanent-account routes remain available. Direct local/test operation can keep proxy trust disabled. No client-IP diagnostic endpoint is exposed. Proxy settings are read when the app is created, so configuration changes require an app restart.
+
 Guest identity and refresh-token lifetime is one hour from creation; refresh rotation never extends that deadline. Access JWTs use the existing issuer/audience and at most 15 minutes, bounded by guest expiry. Stored expiry is also checked on authenticated requests. Browser tokens remain memory-only, so leaving/reloading ends access to that guest identity. Test records are retained for audit, not automatically deleted, and do not transfer to a subsequently registered account. A future retention policy may archive expired guests separately.
 
-Before using this API version with a database, review and apply `migrations/202609221600_guest_customer_expiry/migration.sql`, then generate the Prisma client. The nullable column leaves existing accounts permanent. This change does not run migrations, deploy services, change provider credentials, or enable live gates.
+Before using this API version with a database, review and apply `migrations/202609221600_guest_customer_expiry/migration.sql`, then generate the Prisma client. It uses `ADD COLUMN IF NOT EXISTS` for the nullable column and leaves existing accounts permanent without rewriting records. This change does not run migrations, deploy services, change provider credentials, or enable live gates.
 
 ### Calling codes and fee
 

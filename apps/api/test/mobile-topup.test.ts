@@ -338,11 +338,59 @@ describe('Worldwide mobile recharge sandbox API', () => {
     }
   });
 
-  it('fails closed when a provider country has no calling-code metadata', async () => {
-    const provider = new TestProvider(); provider.countries = [{ code: 'ZZ', name: 'Unknown' }];
+  it('omits legacy AN while returning and caching Haiti with its real calling code', async () => {
+    const provider = new TestProvider();
+    provider.countries = [{ code: 'HT', name: 'Haiti' }, { code: 'AN', name: 'Netherlands Antilles' }];
+    const list = vi.spyOn(provider, 'listCountries');
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
-    const response = await request(app).get('/api/mobile-topups/countries').set(await auth(app, 'unknown-code')).expect(502);
-    expect(response.body.code).toBe('UNSUPPORTED_CALLING_CODE');
+    try {
+      const headers = await auth(app, 'legacy-code');
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
+        expect(response.body.countries).toEqual([{ code: 'HT', name: 'Haiti', callingCode: '+509' }]);
+      }
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(warning.mock.calls).toEqual([['Mobile recharge skipped unsupported country codes:', ['AN']]]);
+    } finally { warning.mockRestore(); list.mockRestore(); }
+  });
+
+  it.each([{ codes: ['ZZ'] }, { codes: ['AN'] }, { codes: ['AN', 'ZZ'] }])('fails closed when all provider destinations lack calling-code metadata: $codes', async ({ codes }) => {
+    const provider = new TestProvider(); provider.countries = codes.map((code) => ({ code, name: 'Unsupported destination' }));
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const headers = await auth(app, 'unknown-codes');
+      const response = await request(app).get('/api/mobile-topups/countries').set(headers).expect(502);
+      expect(response.body.code).toBe('UNSUPPORTED_CALLING_CODE');
+      expect(response.body).not.toHaveProperty('countries');
+      provider.countries = [{ code: 'HT', name: 'Haiti' }];
+      const recovered = await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
+      expect(recovered.body.countries).toEqual([{ code: 'HT', name: 'Haiti', callingCode: '+509' }]);
+    } finally { warning.mockRestore(); }
+  });
+
+  it.each([
+    null, {}, { code: 'H1', name: 'Invalid' }, { code: 'HTI', name: 'Invalid' },
+    { code: 'AN\nsecret', name: 'Invalid' }, { code: 42, name: 'Invalid' }, { code: 'ß', name: 'Invalid' },
+    { code: 'HT', name: null }, { code: 'AN', name: null },
+  ])('rejects malformed provider destinations instead of skipping them: %j', async (malformed) => {
+    const provider = new TestProvider();
+    provider.countries = [{ code: 'HT', name: 'Haiti' }, malformed] as MobileTopUpCountry[];
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const response = await request(app).get('/api/mobile-topups/countries').set(await auth(app, 'malformed-code')).expect(502);
+      expect(response.body).toEqual({ error: 'Provider returned an invalid recharge country', code: 'INVALID_PROVIDER_RESPONSE' });
+      expect(warning).not.toHaveBeenCalled();
+    } finally { warning.mockRestore(); }
+  });
+
+  it('rejects a malformed provider catalog instead of reporting an empty healthy catalog', async () => {
+    const provider = new TestProvider(); provider.countries = null as unknown as MobileTopUpCountry[];
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const response = await request(app).get('/api/mobile-topups/countries').set(await auth(app, 'malformed-catalog')).expect(502);
+    expect(response.body.code).toBe('INVALID_PROVIDER_RESPONSE');
   });
 
   it('blocks existing guest tokens and refresh if sandbox configuration becomes unsafe', async () => {

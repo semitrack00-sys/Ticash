@@ -144,21 +144,37 @@ export class MobileTopUpService {
         this.countriesCache.expiresAt > Date.now()) {
       return this.countriesCache.value;
     }
-    const countries = [...new Map(
-      (await this.provider.listCountries())
-        .map((country) => {
-          const code = normalizeTopUpCountryCode(country.code);
-          if (!isSupportedCountry(code)) {
-            throw new MobileTopUpError('UNSUPPORTED_CALLING_CODE', 'A provider destination has no supported calling-code metadata', 502);
-          }
-          return [code, {
-            code,
-            name: country.name.trim().slice(0, 160) || code,
-            callingCode: `+${getCountryCallingCode(code as CountryCode)}`,
-          }] as const;
-        }),
-    ).values()]
-      .sort((left, right) => left.name.localeCompare(right.name));
+    const providerCountries = await this.provider.listCountries();
+    if (!Array.isArray(providerCountries)) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid country catalog', 502);
+    }
+    const supported = new Map<string, MobileTopUpDestination>();
+    const skipped = new Set<string>();
+    for (const country of providerCountries) {
+      // Validate before filtering: malformed data is not an unsupported destination.
+      if (!country || typeof country.code !== 'string' || typeof country.name !== 'string' ||
+          !/^[A-Za-z]{2}$/.test(country.code.trim())) {
+        throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid recharge country', 502);
+      }
+      const code = normalizeTopUpCountryCode(country.code);
+      if (!isSupportedCountry(code)) {
+        skipped.add(code);
+        continue;
+      }
+      supported.set(code, {
+        code,
+        name: country.name.trim().slice(0, 160) || code,
+        callingCode: `+${getCountryCallingCode(code as CountryCode)}`,
+      });
+    }
+    if (skipped.size) {
+      // Only validated ISO-shaped codes; never log provider documents or names.
+      console.warn('Mobile recharge skipped unsupported country codes:', [...skipped].sort());
+    }
+    if (providerCountries.length && !supported.size) {
+      throw new MobileTopUpError('UNSUPPORTED_CALLING_CODE', 'No provider destinations have supported calling-code metadata', 502);
+    }
+    const countries = [...supported.values()].sort((left, right) => left.name.localeCompare(right.name));
     this.countriesCache = {
       key: cacheKey,
       value: countries,

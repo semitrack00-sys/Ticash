@@ -127,6 +127,56 @@ async function quote(
 describe('Worldwide mobile recharge sandbox API', () => {
   beforeEach(resetStore);
 
+  it('requires authentication on mobile top-up endpoints', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    await request(app).get('/api/mobile-topups/countries').expect(401);
+  });
+
+  it('supports explicit CORS allowlists and preflight headers without wildcard origins', async () => {
+    const previousAllowed = process.env.CORS_ALLOWED_ORIGINS;
+    const previousOrigin = process.env.CORS_ORIGIN;
+    process.env.CORS_ALLOWED_ORIGINS = 'https://ticash-app.com,https://www.ticash-app.com';
+    process.env.CORS_ORIGIN = '';
+    try {
+      const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+      const headers = await auth(app, 'cors');
+      const allowed = await request(app)
+        .get('/api/mobile-topups/status')
+        .set(headers)
+        .set('Origin', 'https://ticash-app.com')
+        .expect(200);
+      expect(allowed.headers['access-control-allow-origin']).toBe('https://ticash-app.com');
+
+      const preflight = await request(app)
+        .options('/api/mobile-topups/transactions')
+        .set('Origin', 'https://ticash-app.com')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'Authorization, Content-Type, Idempotency-Key')
+        .expect(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe('https://ticash-app.com');
+      expect(preflight.headers['access-control-allow-headers']).toContain('Authorization');
+      expect(preflight.headers['access-control-allow-headers']).toContain('Content-Type');
+      expect(preflight.headers['access-control-allow-headers']).toContain('Idempotency-Key');
+      expect(preflight.headers['access-control-allow-origin']).not.toBe('*');
+
+      const localhost = await request(app)
+        .get('/api/mobile-topups/status')
+        .set(headers)
+        .set('Origin', 'http://localhost:3000')
+        .expect(200);
+      expect(localhost.headers['access-control-allow-origin']).toBe('http://localhost:3000');
+
+      await request(app)
+        .get('/api/mobile-topups/status')
+        .set(headers)
+        .set('Origin', 'https://unknown.example.com')
+        .expect(403);
+    } finally {
+      process.env.CORS_ALLOWED_ORIGINS = previousAllowed;
+      process.env.CORS_ORIGIN = previousOrigin;
+    }
+  });
+
   it('reports a fail-closed sandbox environment and provider-backed countries', async () => {
     const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
     const headers = await auth(app, 'status');
@@ -334,5 +384,34 @@ describe('Worldwide mobile recharge sandbox API', () => {
     provider.operatorsByCountry.set('JM', [{ ...jamaicaOperator, status: false }]);
     const repeated = await request(app).post(`/api/mobile-topups/transactions/${id}/repeat`).set(headers).expect(404);
     expect(repeated.body.code).toBe('TOPUP_OPERATOR_UNAVAILABLE');
+  });
+
+  it('requires idempotency keys and rejects conflicting duplicate purchase payloads', async () => {
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    const headers = await auth(app, 'idempotency');
+    const quoted = await quote(app, headers);
+
+    await request(app).post('/api/mobile-topups/transactions')
+      .set(headers)
+      .send({ quoteId: quoted.body.quote.id })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.code).toBe('IDEMPOTENCY_KEY_REQUIRED');
+      });
+
+    const first = await request(app).post('/api/mobile-topups/transactions')
+      .set(headers)
+      .set('Idempotency-Key', 'topup-conflict-key')
+      .send({ quoteId: quoted.body.quote.id })
+      .expect(201);
+
+    await request(app).post('/api/mobile-topups/transactions')
+      .set(headers)
+      .set('Idempotency-Key', 'topup-conflict-key')
+      .send({ quoteId: first.body.transaction.quoteId, recipientId: '11111111-1111-4111-8111-111111111111' })
+      .expect(409)
+      .expect((response) => {
+        expect(response.body.code).toBe('IDEMPOTENCY_CONFLICT');
+      });
   });
 });

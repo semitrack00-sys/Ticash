@@ -129,10 +129,7 @@ const defaultAccessSecret = 'development-access-secret-change-before-production'
 const accessSecret = process.env.JWT_ACCESS_SECRET ?? defaultAccessSecret;
 const paymentsMode = process.env.PAYMENTS_MODE ?? 'mock';
 const payoutsMode = process.env.PAYOUTS_MODE ?? 'mock';
-const configuredOrigins = (process.env.CORS_ORIGIN ?? '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const productionWebOrigins = ['https://ticash-app.com', 'https://www.ticash-app.com'] as const;
 const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@ticash.local';
 const adminPassword = process.env.ADMIN_PASSWORD ?? 'AdminPass123!';
 const demoEmail = process.env.DEMO_EMAIL ?? 'demo@ticash.local';
@@ -148,6 +145,23 @@ if (isProduction && (!process.env.ADMIN_PASSWORD || adminPassword === 'AdminPass
 if (paymentsMode !== 'mock' || payoutsMode !== 'mock') {
   throw new Error('This API supports mock payment and payout modes only');
 }
+
+function parseAllowedOrigins(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function configuredCorsOrigins(env: NodeJS.ProcessEnv): string[] {
+  const configured = [
+    ...parseAllowedOrigins(env.CORS_ALLOWED_ORIGINS),
+    ...parseAllowedOrigins(env.CORS_ORIGIN),
+  ];
+  if (env.NODE_ENV === 'production') configured.push(...productionWebOrigins);
+  return [...new Set(configured)];
+}
+
 const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const credentialsSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
@@ -560,6 +574,7 @@ export interface CreateAppOptions {
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
+  const allowlistedOrigins = configuredCorsOrigins(process.env);
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
@@ -886,12 +901,15 @@ export function createApp(options: CreateAppOptions = {}) {
     origin(origin, callback) {
       const localDevelopmentOrigin = process.env.NODE_ENV !== 'production' &&
         /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin ?? '');
-      if (!origin || localDevelopmentOrigin || configuredOrigins.includes(origin)) {
+      if (!origin || localDevelopmentOrigin || allowlistedOrigins.includes(origin)) {
         callback(null, true);
         return;
       }
-      callback(new Error('Origin is not allowed by CORS'));
+      callback(new SecurityError('CORS_ORIGIN_DENIED', 'Origin is not allowed by CORS', 403));
     },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
+    optionsSuccessStatus: 204,
   }));
   app.use(express.json({ limit: '128kb' }));
   app.use('/api', rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8' }));

@@ -1374,6 +1374,10 @@ export function createApp(options: CreateAppOptions = {}) {
           where: { id: user.id },
           data: { passwordHash: await bcrypt.hash(input.newPassword, 12) },
         });
+        await transaction.passwordResetToken.updateMany({
+          where: { userId: user.id, consumedAt: null, expiresAt: { gt: new Date() } },
+          data: { consumedAt: new Date() },
+        });
         await transaction.session.deleteMany({ where: { userId: user.id } });
         return { status: 'reset' as const, userId: user.id };
       });
@@ -1411,6 +1415,11 @@ export function createApp(options: CreateAppOptions = {}) {
     }
 
     passwordResetTokens.set(hash, { ...passwordReset, consumedAt: Date.now() });
+    for (const [existingHash, session] of passwordResetTokens.entries()) {
+      if (existingHash !== hash && session.userId === user.id && !session.consumedAt && session.expiresAt > Date.now()) {
+        passwordResetTokens.set(existingHash, { ...session, consumedAt: Date.now() });
+      }
+    }
     users.set(user.id, { ...user, passwordHash: await bcrypt.hash(input.newPassword, 12) });
     await revokeUserSessions(user.id);
     await recordAudit(user.id, 'PASSWORD_RESET_COMPLETED', 'User', user.id);

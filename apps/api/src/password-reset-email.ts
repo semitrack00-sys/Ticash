@@ -1,7 +1,3 @@
-import { z } from 'zod';
-
-const passwordResetEmailProviderSchema = z.enum(['', 'resend']);
-
 export interface PasswordResetEmailService {
   readonly configured: boolean;
   sendPasswordReset(input: {
@@ -84,12 +80,12 @@ export function passwordResetUrl(token: string, environment: NodeJS.ProcessEnv =
 export function loadPasswordResetEmailService(
   environment: NodeJS.ProcessEnv = process.env,
 ): PasswordResetEmailService {
-  const provider = passwordResetEmailProviderSchema.parse(
-    (environment.PASSWORD_RESET_EMAIL_PROVIDER ?? '').trim().toLowerCase(),
-  );
+  const provider = (environment.PASSWORD_RESET_EMAIL_PROVIDER ?? '').trim().toLowerCase();
 
   if (!provider) return new DisabledPasswordResetEmailService();
-  if (provider !== 'resend') throw new Error('Unsupported PASSWORD_RESET_EMAIL_PROVIDER');
+  if (provider !== 'resend') {
+    throw new Error('PASSWORD_RESET_EMAIL_PROVIDER must be blank or "resend"');
+  }
 
   const apiKey = environment.RESEND_API_KEY?.trim();
   const from = environment.PASSWORD_RESET_EMAIL_FROM?.trim();

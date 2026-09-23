@@ -53,6 +53,8 @@ import {
 } from './topup/repository.js';
 import { createMobileTopUpRouter } from './topup/router.js';
 import { MobileTopUpService } from './topup/service.js';
+import { loadCheckoutConfig } from './topup/checkout-config.js';
+import { createCheckoutWebhookHandler } from './topup/checkout-webhook.js';
 import {
   MockMobileTopUpPaymentProvider,
   MobileTopUpError,
@@ -880,6 +882,7 @@ export function createApp(options: CreateAppOptions = {}) {
   );
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
+  const checkoutConfig = loadCheckoutConfig();
   // Inspect configuration itself, not the public status object's constant labels.
   const guestAuthError = () => {
     if (!guestProxyConfigured) {
@@ -936,6 +939,8 @@ export function createApp(options: CreateAppOptions = {}) {
   };
   app.disable('x-powered-by');
   app.use(helmet());
+  app.post('/api/webhooks/checkout', express.raw({ type: 'application/json', limit: '128kb' }),
+    createCheckoutWebhookHandler(checkoutConfig, mobileTopUpService));
   app.post(
     '/api/webhooks/dwolla',
     express.raw({ type: 'application/json', limit: '256kb' }),
@@ -1058,6 +1063,9 @@ export function createApp(options: CreateAppOptions = {}) {
     authenticate: authenticateRecharge,
     requireFundingAllowed,
     service: mobileTopUpService,
+    isGuest: async (userId) => Boolean(databaseEnabled
+      ? (await prisma.user.findUnique({ where: { id: userId }, select: { guestExpiresAt: true } }))?.guestExpiresAt
+      : users.get(userId)?.guestExpiresAt),
   }));
 
   const guestLimiter = rateLimit({

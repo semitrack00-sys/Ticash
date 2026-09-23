@@ -1,7 +1,33 @@
 export type MobileTopUpEnvironment = 'sandbox';
 export type MobileTopUpKind = 'AIRTIME' | 'DATA';
 export type MobileTopUpStatus = 'PENDING' | 'PROCESSING' | 'DELIVERED' | 'FAILED' | 'REFUNDED';
-export type MobileTopUpPaymentStatus = 'PENDING' | 'AUTHORIZED' | 'FAILED' | 'REFUNDED';
+export type MobileTopUpPaymentStatus = 'PENDING' | 'SESSION_CREATED' | 'AUTHORIZED' | 'CAPTURED' | 'FAILED' | 'VOID_PENDING' | 'VOIDED' | 'REFUND_PENDING' | 'REFUNDED';
+export type MobileTopUpPaymentMethod = 'CARD' | 'APPLE_PAY' | 'GOOGLE_PAY' | 'BANK_ACCOUNT';
+export type MobileTopUpPaymentProviderName = 'MOCK' | 'CHECKOUT_COM' | 'DWOLLA';
+
+export interface PaymentSessionInput {
+  transactionId: string;
+  amountMinor: number;
+  currency: 'USD';
+}
+
+// Hosted sessions and server authorization are separate capabilities.
+export interface MobileTopUpSessionProvider {
+  createPaymentSession(input: PaymentSessionInput): Promise<Record<string, unknown>>;
+}
+
+export interface MobileTopUpPaymentQuery {
+  getPayment(paymentId: string): Promise<Record<string, unknown>>;
+}
+
+export interface MobileTopUpPaymentCapture {
+  capture(input: { paymentId: string; transactionId: string; amountMinor: number }): Promise<'PENDING' | 'CAPTURED'>;
+}
+
+export interface MobileTopUpPaymentRecovery {
+  void?(input: { paymentId: string; transactionId: string }): Promise<'VOIDED' | 'VOID_PENDING'>;
+  refund?(input: { paymentId: string; transactionId: string; amountMinor: number }): Promise<'REFUNDED' | 'REFUND_PENDING'>;
+}
 
 export interface MobileTopUpConfig {
   enabled: boolean;
@@ -95,7 +121,7 @@ export interface MobileTopUpPaymentAuthorization {
   testMode: true;
 }
 
-export interface MobileTopUpPaymentProvider {
+export interface MobileTopUpPaymentProvider extends MobileTopUpPaymentRecovery {
   authorize(input: {
     userId: string;
     transactionId: string;
@@ -106,6 +132,8 @@ export interface MobileTopUpPaymentProvider {
 }
 
 export class MockMobileTopUpPaymentProvider implements MobileTopUpPaymentProvider {
+  async void(): Promise<'VOIDED'> { return 'VOIDED'; }
+  async refund(): Promise<'REFUNDED'> { return 'REFUNDED'; }
   async authorize(input: {
     userId: string;
     transactionId: string;

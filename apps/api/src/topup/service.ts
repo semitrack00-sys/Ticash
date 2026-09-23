@@ -11,6 +11,8 @@ import type {
   ProviderTopUpResult,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
+import { usdMinorUnits } from './payment-utils.js';
+import { assertVerifiedCheckoutEvent, type VerifiedCheckoutEvent } from './checkout-webhook.js';
 import {
   normalizeTopUpCountryCode,
   normalizeTopUpPhone,
@@ -335,7 +337,7 @@ export class MobileTopUpService {
     return createHash('sha256').update(JSON.stringify({ userId, quoteId, recipientId: recipientId ?? null })).digest('hex');
   }
 
-  async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
+  private async reservePayment(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
     this.assertEnabled();
     if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
       throw new MobileTopUpError('INVALID_IDEMPOTENCY_KEY', 'A valid Idempotency-Key header is required', 400);
@@ -366,9 +368,10 @@ export class MobileTopUpService {
     const { expiresAt: _expiresAt, consumedAt: _consumedAt, ...quoteSnapshot } = quote;
     void _expiresAt;
     void _consumedAt;
+    const transactionId = randomUUID();
     const transaction: MobileTopUpTransactionRecord = {
       ...quoteSnapshot,
-      id: randomUUID(),
+      id: transactionId,
       quoteId: quote.id,
       recipientId: savedRecipient?.id,
       customIdentifier: `ticash-topup-${randomUUID()}`,
@@ -376,6 +379,9 @@ export class MobileTopUpService {
       requestHash: this.requestHash(userId, quote.id, savedRecipient?.id),
       status: 'PENDING',
       paymentStatus: 'PENDING',
+      paymentMethod: 'CARD',
+      paymentProvider: 'MOCK',
+      paymentSessionId: 'mock-session:' + transactionId,
       testMode: true,
       createdAt,
       updatedAt: createdAt,
@@ -387,51 +393,163 @@ export class MobileTopUpService {
       }
       return reservation.record;
     }
-    await this.repository.markQuoteConsumed(userId, quote.id, createdAt);
-    const payment = await this.paymentProvider.authorize({
-      userId,
-      transactionId: transaction.id,
-      amount: quote.totalChargeUsd,
-      currency: 'USD',
-      idempotencyKey,
-    });
-    if (payment.status !== 'AUTHORIZED') {
-      return this.repository.updateTransaction(transaction.id, { paymentStatus: 'FAILED', status: 'FAILED', failureCode: 'PAYMENT_FAILED', failedAt: createdAt });
+    return reservation.record;
+  }
+
+  paymentMethods(guest = false) {
+    return { environment: 'SANDBOX', methods: [
+      { type: 'CARD', enabled: this.config.enabled, provider: 'MOCK', testMode: true, label: 'Test card — Sandbox' },
+      { type: 'APPLE_PAY', enabled: false, provider: 'CHECKOUT_COM', reason: 'PROVIDER_NOT_CONFIGURED' },
+      { type: 'GOOGLE_PAY', enabled: false, provider: 'CHECKOUT_COM', reason: 'PROVIDER_NOT_CONFIGURED' },
+      { type: 'BANK_ACCOUNT', enabled: false, provider: 'DWOLLA', reason: guest ? 'GUEST_SCOPE_RESTRICTED' : 'NOT_ENABLED_FOR_RECHARGE' },
+    ] };
+  }
+
+  async createPaymentSession(userId: string, input: { quoteId: string; recipientId?: string }, key: string) {
+    const reserved = await this.reservePayment(userId, input, key);
+    if (reserved.paymentProvider !== 'MOCK') throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Hosted payments are not enabled', 503);
+    const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
+    if (!reserved.paymentStartedAt && await this.repository.transitionPayment(reserved.id, ['PENDING'], {
+      paymentSessionId: sessionId, paymentStatus: 'SESSION_CREATED',
+    })) await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'MOCK', testMode: true });
+    const current = (await this.repository.getTransaction(userId, reserved.id))!;
+    return { provider: 'MOCK', environment: 'SANDBOX', testMode: true, transactionId: current.id,
+      paymentSession: { id: current.paymentSessionId ?? sessionId }, amountMinor: usdMinorUnits(current.totalChargeUsd), currency: 'USD', paymentStatus: current.paymentStatus };
+  }
+
+  async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
+    const transaction = await this.reservePayment(userId, input, idempotencyKey);
+    // Hosted-provider records can only be fulfilled by verified server events.
+    if (transaction.paymentProvider !== 'MOCK') return transaction;
+    if (await this.repository.claimOperation(transaction.id, 'payment', this.clock().toISOString())) {
+      let payment;
+      try {
+        payment = await this.paymentProvider.authorize({ userId, transactionId: transaction.id,
+          amount: transaction.totalChargeUsd, currency: 'USD', idempotencyKey });
+      } catch {
+        await this.repository.updateTransaction(transaction.id, { paymentRecoveryCode: 'PAYMENT_AUTHORIZATION_UNKNOWN' });
+        await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', transaction.id);
+        throw new MobileTopUpError('PAYMENT_AUTHORIZATION_UNKNOWN', 'Payment requires reconciliation; do not start another attempt', 502);
+      }
+      if (payment.status !== 'AUTHORIZED' || !payment.authorizationId || payment.testMode !== true) {
+        const failed = await this.repository.updateTransaction(transaction.id, { paymentStatus: 'FAILED', status: 'FAILED', failureCode: 'PAYMENT_FAILED', failedAt: this.clock().toISOString() });
+        await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_FAILED', 'MobileTopUpTransaction', transaction.id);
+        return failed;
+      }
+      await this.repository.updateTransaction(transaction.id, { paymentStatus: 'AUTHORIZED', paymentAuthorizationId: payment.authorizationId,
+        paymentProviderTransactionId: payment.authorizationId });
+      await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_AUTHORIZED', 'MobileTopUpTransaction', transaction.id, { provider: 'MOCK' });
     }
-    await this.repository.updateTransaction(transaction.id, {
-      paymentStatus: 'AUTHORIZED',
-      paymentAuthorizationId: payment.authorizationId,
-    });
+    return this.fulfillPaidRecharge(transaction.id);
+  }
+
+  async fulfillPaidRecharge(id: string) {
+    this.assertEnabled();
+    const transaction = await this.repository.getTransactionById(id);
+    if (!transaction) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+    if (!await this.repository.claimOperation(id, 'fulfillment', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
+    await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_STARTED', 'MobileTopUpTransaction', id, { testMode: true });
+    let providerResult: ProviderTopUpResult;
     try {
-      const providerResult = await this.provider.submitTopUp({
-        operatorId: quote.operatorId,
-        amount: quote.providerAmount,
-        recipientPhone: quote.recipientPhone,
-        recipientCountryCode: quote.countryCode,
-        customIdentifier: transaction.customIdentifier,
-      });
-      const updated = await this.applyProviderResult(transaction.id, providerResult);
-      if (savedRecipient) {
-        await this.repository.updateRecipientLastUsed(userId, savedRecipient.id, quote.productId, quote.productName);
-      }
-      await this.audit(userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', updated.id, {
-        provider: 'RELOADLY',
-        countryCode: updated.countryCode,
-        providerStatus: updated.providerStatus,
-        status: updated.status,
-        testMode: true,
-      });
-      return updated;
+      providerResult = await this.provider.submitTopUp({ operatorId: transaction.operatorId, amount: transaction.providerAmount,
+        recipientPhone: transaction.recipientPhone, recipientCountryCode: transaction.countryCode, customIdentifier: transaction.customIdentifier });
     } catch (error) {
-      if (error instanceof MobileTopUpError) {
-        await this.repository.updateTransaction(transaction.id, {
-          status: 'FAILED',
-          failureCode: error.code,
-          failedAt: this.clock().toISOString(),
-        });
-      }
-      throw error;
+      const rejected = error instanceof MobileTopUpError && error.statusCode === 400;
+      await this.repository.updateTransaction(id, { status: rejected ? 'FAILED' : 'PROCESSING',
+        failureCode: rejected ? 'TOPUP_REJECTED' : 'TOPUP_SUBMISSION_UNKNOWN',
+        paymentRecoveryCode: rejected ? 'PAYMENT_RECOVERY_REQUIRED' : 'FULFILLMENT_RECONCILIATION_REQUIRED',
+        ...(rejected ? { failedAt: this.clock().toISOString() } : {}) });
+      await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', id, { rejected });
+      if (rejected) await this.recoverPayment(id);
+      throw new MobileTopUpError(rejected ? 'TOPUP_REJECTED' : 'TOPUP_SUBMISSION_UNKNOWN', 'Recharge needs reconciliation; retrying will not resubmit airtime', 502);
     }
+    // Keep persistence/audit failures out of the provider-submission catch: a known
+    // accepted top-up must never be turned into a rejected top-up or refunded here.
+    const updated = await this.applyProviderResult(id, providerResult);
+    if (transaction.recipientId) await this.repository.updateRecipientLastUsed(transaction.userId, transaction.recipientId, transaction.productId, transaction.productName);
+    await this.audit(transaction.userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', id,
+      { provider: 'RELOADLY', status: updated.status, testMode: true });
+    return updated;
+  }
+
+  private async recoverPayment(id: string, providerReversed = false) {
+    if (!await this.repository.claimOperation(id, 'recovery', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
+    let record;
+    let refund;
+    let pending: 'REFUND_PENDING' | 'VOID_PENDING';
+    // A webhook may confirm capture/recovery while the claim is being acquired.
+    // Compare-and-set prevents downgrading that confirmation to a pending state.
+    do {
+      record = (await this.repository.getTransactionById(id))!;
+      if (!['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return record;
+      refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');
+      pending = refund ? 'REFUND_PENDING' : 'VOID_PENDING';
+    } while (!await this.repository.transitionPayment(id, [record.paymentStatus], {
+      paymentStatus: pending, paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
+    }));
+    await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
+    // No implicit fallback from a hosted provider to a mock refund.
+    const recovery = record.paymentProvider === 'MOCK' ? this.paymentProvider : undefined;
+    const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
+    try {
+      const status = paymentId && (refund
+        ? await recovery?.refund?.({ paymentId, transactionId: id, amountMinor: usdMinorUnits(record.totalChargeUsd) })
+        : await recovery?.void?.({ paymentId, transactionId: id }));
+      if (status === (refund ? 'REFUNDED' : 'VOIDED')) {
+        if (await this.repository.transitionPayment(id, [pending], { paymentStatus: status, paymentRecoveryCode: 'RECOVERY_CONFIRMED' })) {
+          await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + status, 'MobileTopUpTransaction', id);
+        }
+        return (await this.repository.getTransactionById(id))!;
+      }
+    } catch { /* Unknown recovery outcome stays pending for reconciliation. */ }
+    await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', id);
+    return (await this.repository.getTransactionById(id))!;
+  }
+
+  async acceptVerifiedPaymentEvent(event: VerifiedCheckoutEvent) {
+    this.assertEnabled();
+    assertVerifiedCheckoutEvent(event);
+    const record = await this.repository.getTransactionById(event.transactionId);
+    if (!record || record.paymentProvider !== 'CHECKOUT_COM' || !record.paymentSessionId) {
+      throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
+    }
+    if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' ||
+        (record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId)) {
+      throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event did not match the reserved recharge', 409);
+    }
+    if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id)) return;
+    const transitions = {
+      payment_approved: { from: ['PENDING', 'SESSION_CREATED'], to: 'AUTHORIZED' },
+      payment_captured: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'CAPTURED' },
+      payment_declined: { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      // Delivery order is not guaranteed. A verified full refund/void must also
+      // stop fulfillment if it arrives before the approval/capture notification.
+      payment_voided: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'VOID_PENDING', 'FAILED'], to: 'VOIDED' },
+      payment_refunded: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'REFUND_PENDING', 'FAILED'], to: 'REFUNDED' },
+    } as const;
+    const transition = transitions[event.type];
+    const changed = await this.repository.transitionPayment(record.id, [...transition.from], {
+      paymentStatus: transition.to, paymentProviderTransactionId: event.paymentId,
+      ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
+      ...(['VOIDED', 'REFUNDED'].includes(transition.to) ? { paymentRecoveryCode: 'RECOVERY_CONFIRMED' } : {}),
+    });
+    if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: 'CHECKOUT_COM' });
+    if (changed && ['VOIDED', 'REFUNDED'].includes(transition.to)) {
+      const current = (await this.repository.getTransactionById(record.id))!;
+      if (current.fulfillmentStartedAt && !['FAILED', 'REFUNDED'].includes(current.status)) {
+        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'PAYMENT_REVERSAL_AFTER_FULFILLMENT' });
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
+      }
+    }
+    if (!changed && event.type === 'payment_captured') {
+      const current = (await this.repository.getTransactionById(record.id))!;
+      if (['FAILED', 'VOIDED', 'VOID_PENDING'].includes(current.paymentStatus)) {
+        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'CAPTURE_AFTER_TERMINAL_STATE' });
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
+      }
+    }
+    if (event.type === 'payment_captured') await this.fulfillPaidRecharge(record.id);
+    await this.repository.completePaymentEvent(event.eventId);
   }
 
   private async applyProviderResult(id: string, result: ProviderTopUpResult) {
@@ -442,7 +560,6 @@ export class MobileTopUpService {
       ...(result.operatorTransactionId ? { operatorTransactionId: result.operatorTransactionId } : {}),
       providerStatus: result.status,
       status,
-      ...(status === 'REFUNDED' ? { paymentStatus: 'REFUNDED' as const } : {}),
       ...(result.deliveredAmount !== undefined ? { deliveredValue: result.deliveredAmount } : {}),
       ...(result.deliveredAmountCurrencyCode ? { deliveredCurrency: result.deliveredAmountCurrencyCode } : {}),
       ...(status === 'DELIVERED' ? { deliveredAt: timestamp } : {}),
@@ -451,6 +568,7 @@ export class MobileTopUpService {
     });
     if (status === 'DELIVERED') await this.repository.postDeliveredLedger(updated);
     if (status === 'REFUNDED') await this.repository.postRefundLedger(updated);
+    if (status === 'FAILED' || status === 'REFUNDED') return this.recoverPayment(id, status === 'REFUNDED');
     return updated;
   }
 

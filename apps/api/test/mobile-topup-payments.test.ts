@@ -170,7 +170,7 @@ describe('Checkout.com sandbox adapter',()=>{
     const id='11111111-1111-4111-8111-111111111111';const result=await adapter.createPaymentSession({transactionId:id,amountMinor:usdMinorUnits(8.5),currency:'USD',billingCountry:'US'});
     expect(result).toEqual(session);expect(transport).toHaveBeenCalledTimes(1);
     const call=transport.mock.calls[0] as unknown as [string,RequestInit];expect(call[0]).toBe(checkoutEnv.CHECKOUT_COM_API_BASE_URL+'/payment-sessions');
-    expect(call[1]).toMatchObject({redirect:'error',method:'POST',headers:{Authorization:checkoutEnv.CHECKOUT_COM_SECRET_KEY}});
+    expect(call[1]).toMatchObject({redirect:'error',method:'POST',headers:{Authorization:`Bearer ${checkoutEnv.CHECKOUT_COM_SECRET_KEY}`}});
     expect(JSON.parse(call[1].body as string)).toMatchObject({amount:850,currency:'USD',reference:paymentReference(id),processing_channel_id:checkoutEnv.CHECKOUT_COM_PROCESSING_CHANNEL_ID,billing:{address:{country:'US'}},enabled_payment_methods:['card']});
     const contract=adapter.flowContract(id,result);expect(contract.paymentSession).toBe(result);expect(contract.publicKey).toBe(checkoutEnv.CHECKOUT_COM_PUBLIC_KEY);
     expect(JSON.stringify(contract)).not.toContain(checkoutEnv.CHECKOUT_COM_SECRET_KEY);expect(JSON.stringify(contract)).not.toContain(checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET);

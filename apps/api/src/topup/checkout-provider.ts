@@ -26,7 +26,7 @@ export class CheckoutSandboxPaymentProvider implements MobileTopUpSessionProvide
     try {
       const response = await this.transport(this.config.apiBaseUrl!.replace(/\/$/, '') + path, {
         method, redirect: 'error', signal: AbortSignal.timeout(15_000),
-        headers: { Authorization: this.config.secretKey!, 'Content-Type': 'application/json', ...(key ? { 'Cko-Idempotency-Key': key } : {}) },
+        headers: { Authorization: `Bearer ${this.config.secretKey!}`, 'Content-Type': 'application/json', ...(key ? { 'Cko-Idempotency-Key': key } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
       if (!response.ok) throw new Error('Provider rejected request');

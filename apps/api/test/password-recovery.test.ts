@@ -33,8 +33,17 @@ function issuedResetToken(service: MemoryPasswordResetEmailService): string {
 }
 
 describe('password recovery', () => {
-  beforeEach(resetStore);
-  afterEach(() => vi.useRealTimers());
+  const originalResetUrlBase = process.env.PASSWORD_RESET_URL_BASE;
+
+  beforeEach(() => {
+    resetStore();
+    process.env.PASSWORD_RESET_URL_BASE = 'https://ticash.test/recharge/reset-password';
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (originalResetUrlBase === undefined) delete process.env.PASSWORD_RESET_URL_BASE;
+    else process.env.PASSWORD_RESET_URL_BASE = originalResetUrlBase;
+  });
 
   it('returns the same public forgot-password response for known and unknown emails', async () => {
     const emailService = new MemoryPasswordResetEmailService();
@@ -97,6 +106,33 @@ describe('password recovery', () => {
     expect(reused.body.code).toBe('INVALID_RESET_TOKEN');
   });
 
+  it('invalidates older reset links when a newer one is requested', async () => {
+    const emailService = new MemoryPasswordResetEmailService();
+    const app = createApp({ passwordResetEmailService: emailService });
+    await request(app).post('/api/auth/register').send(account).expect(201);
+
+    await request(app).post('/api/auth/forgot-password').send({
+      email: account.email,
+    }).expect(202);
+    const firstToken = issuedResetToken(emailService);
+
+    await request(app).post('/api/auth/forgot-password').send({
+      email: account.email,
+    }).expect(202);
+    const secondToken = issuedResetToken(emailService);
+
+    const firstAttempt = await request(app).post('/api/auth/reset-password').send({
+      token: firstToken,
+      newPassword: 'AnotherSecurePass123',
+    }).expect(400);
+    expect(firstAttempt.body.code).toBe('INVALID_RESET_TOKEN');
+
+    await request(app).post('/api/auth/reset-password').send({
+      token: secondToken,
+      newPassword: 'AnotherSecurePass123',
+    }).expect(204);
+  });
+
   it('rejects expired reset tokens', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'));
@@ -153,6 +189,29 @@ describe('password recovery', () => {
     }).expect(400);
 
     expect(response.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects resetting to the current password', async () => {
+    const samePasswordAccount = {
+      ...account,
+      email: 'strong-recover@example.com',
+      password: 'CurrentSecurePass123',
+    };
+    const emailService = new MemoryPasswordResetEmailService();
+    const app = createApp({ passwordResetEmailService: emailService });
+    await request(app).post('/api/auth/register').send(samePasswordAccount).expect(201);
+    await request(app).post('/api/auth/forgot-password').send({
+      email: samePasswordAccount.email,
+    }).expect(202);
+
+    const token = issuedResetToken(emailService);
+    const response = await request(app).post('/api/auth/reset-password').send({
+      token,
+      newPassword: samePasswordAccount.password,
+    }).expect(400);
+
+    expect(response.body.code).toBe('INVALID_PASSWORD');
+    expect(response.body.error).toBe('New password must be different from the current password');
   });
 
   it('rate limits forgot-password attempts', async () => {

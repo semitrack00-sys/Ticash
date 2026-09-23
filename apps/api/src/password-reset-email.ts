@@ -68,8 +68,8 @@ class ResendPasswordResetEmailService implements PasswordResetEmailService {
 }
 
 export function passwordResetUrl(token: string, environment: NodeJS.ProcessEnv = process.env): string {
-  const baseUrl = environment.PASSWORD_RESET_URL_BASE?.trim() ||
-    new URL('/recharge/reset-password', environment.APP_URL ?? 'http://localhost:3000').toString();
+  const baseUrl = environment.PASSWORD_RESET_URL_BASE?.trim();
+  if (!baseUrl) throw new PasswordResetEmailDeliveryError('Password reset email delivery is not configured');
   const url = new URL(baseUrl);
   url.searchParams.set('token', token);
   return url.toString();
@@ -87,7 +87,8 @@ export function loadPasswordResetEmailService(
 
   const apiKey = environment.RESEND_API_KEY?.trim();
   const from = environment.PASSWORD_RESET_EMAIL_FROM?.trim();
-  if (!apiKey || !from) return new DisabledPasswordResetEmailService();
+  const resetUrlBase = environment.PASSWORD_RESET_URL_BASE?.trim();
+  if (!apiKey || !from || !resetUrlBase) return new DisabledPasswordResetEmailService();
 
   return new ResendPasswordResetEmailService(apiKey, from);
 }

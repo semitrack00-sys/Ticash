@@ -1197,10 +1197,18 @@ export function createApp(options: CreateAppOptions = {}) {
     }
 
     if (databaseEnabled) {
+      await prisma.passwordResetToken.deleteMany({
+        where: { userId: user.id, consumedAt: null, expiresAt: { gt: new Date() } },
+      });
       await prisma.passwordResetToken.create({
         data: { userId: user.id, tokenHash: hash, expiresAt },
       });
     } else {
+      for (const [existingHash, session] of passwordResetTokens.entries()) {
+        if (session.userId === user.id && !session.consumedAt && session.expiresAt > Date.now()) {
+          passwordResetTokens.delete(existingHash);
+        }
+      }
       passwordResetTokens.set(hash, {
         id: randomUUID(),
         userId: user.id,

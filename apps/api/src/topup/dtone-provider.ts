@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { alpha2ToAlpha3, alpha3ToAlpha2 } from 'i18n-iso-countries';
+import isoCountries from 'i18n-iso-countries';
 import { DTONE_PREPROD_URL, type DtOneConfig } from './dtone-config.js';
 import { encodeOperatorId } from './provider-identity.js';
 import { MobileTopUpError, type MobileTopUpProvider, type MobileTopUpOperator, type MobileTopUpProduct, type ProviderTopUpRequest, type ProviderTopUpResult } from './types.js';
@@ -11,10 +11,10 @@ function positiveId(value: unknown): number { if (typeof value !== 'number' || !
 function name(value: unknown): string { if (typeof value !== 'string' || !value.trim()) return invalid(); return value.trim().slice(0, 160); }
 export function dtOneAlpha2(value: unknown): string | undefined {
   if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) return invalid();
-  return alpha3ToAlpha2(value);
+  return isoCountries.alpha3ToAlpha2(value);
 }
 export function dtOneAlpha3(value: string): string {
-  const code = /^[A-Z]{2}$/.test(value) ? alpha2ToAlpha3(value) : undefined;
+  const code = /^[A-Z]{2}$/.test(value) ? isoCountries.alpha2ToAlpha3(value) : undefined;
   if (!code) throw new MobileTopUpError('INVALID_TOPUP_COUNTRY', 'Unsupported DT One destination', 400);
   return code;
 }

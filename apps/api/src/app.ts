@@ -183,6 +183,7 @@ function configuredCorsOrigins(env: NodeJS.ProcessEnv): string[] {
 const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const guestLifetimeMs = 60 * 60 * 1000;
 const passwordResetLifetimeMs = 30 * 60 * 1000;
+const samePasswordMessage = 'New password must be different from the current password';
 const credentialsSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
   password: z.string().min(8).max(128),
@@ -213,7 +214,7 @@ const changePasswordSchema = z.object({
   currentPassword: z.string().min(8).max(128),
   newPassword: z.string().min(8).max(128),
 }).refine((value) => value.currentPassword !== value.newPassword, {
-  message: 'New password must be different from the current password',
+  message: samePasswordMessage,
   path: ['newPassword'],
 });
 const forgotPasswordSchema = z.object({
@@ -1225,6 +1226,9 @@ export function createApp(options: CreateAppOptions = {}) {
       await recordAudit(user.id, 'PASSWORD_RESET_REQUEST_FAILED', 'Security', user.id, {
         reason: error instanceof PasswordResetEmailDeliveryError ? error.message : 'DELIVERY_FAILED',
       });
+      if (!(error instanceof PasswordResetEmailDeliveryError)) {
+        throw new SecurityError('PASSWORD_RESET_UNAVAILABLE', 'Password reset is temporarily unavailable', 503);
+      }
     }
 
     return res.status(202).json(response);
@@ -1368,7 +1372,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
       if (result.status === 'same_password') {
         return res.status(400).json({
-          error: 'New password must be different from the current password',
+          error: samePasswordMessage,
           code: 'INVALID_PASSWORD',
         });
       }
@@ -1393,7 +1397,7 @@ export function createApp(options: CreateAppOptions = {}) {
     }
     if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
       return res.status(400).json({
-        error: 'New password must be different from the current password',
+        error: samePasswordMessage,
         code: 'INVALID_PASSWORD',
       });
     }

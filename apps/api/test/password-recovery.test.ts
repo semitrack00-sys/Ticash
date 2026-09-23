@@ -27,15 +27,21 @@ class MemoryPasswordResetEmailService implements PasswordResetEmailService {
   }
 }
 
-class FailingPasswordResetEmailService implements PasswordResetEmailService {
+class CapturingFailingPasswordResetEmailService implements PasswordResetEmailService {
   readonly configured = true;
+  readonly deliveries: Array<{ to: string; resetUrl: string; expiresAt: Date }> = [];
 
-  async sendPasswordReset(): Promise<void> {
+  async sendPasswordReset(input: {
+    to: string;
+    resetUrl: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    this.deliveries.push(input);
     throw new PasswordResetEmailDeliveryError();
   }
 }
 
-function issuedResetToken(service: MemoryPasswordResetEmailService): string {
+function issuedResetToken(service: { deliveries: Array<{ resetUrl: string }> }): string {
   const latest = service.deliveries.at(-1);
   expect(latest).toBeDefined();
   const token = new URL(latest!.resetUrl).searchParams.get('token');
@@ -56,35 +62,38 @@ describe('password recovery', () => {
     else process.env.PASSWORD_RESET_URL_BASE = originalResetUrlBase;
   });
 
-  it('returns the same public forgot-password response for known and unknown emails', async () => {
+  it('returns the same public forgot-password response for unknown email, successful delivery, and provider failure', async () => {
     const emailService = new MemoryPasswordResetEmailService();
     const app = createApp({ passwordResetEmailService: emailService });
     await request(app).post('/api/auth/register').send(account).expect(201);
 
+    const unknown = await request(app).post('/api/auth/forgot-password').send({
+      email: 'missing@example.com',
+    }).expect(202);
     const existing = await request(app).post('/api/auth/forgot-password').send({
       email: account.email,
     }).expect(202);
-    const unknown = await request(app).post('/api/auth/forgot-password').send({
-      email: 'missing@example.com',
+    const failingService = new CapturingFailingPasswordResetEmailService();
+    const failingApp = createApp({ passwordResetEmailService: failingService });
+    const failedDelivery = await request(failingApp).post('/api/auth/forgot-password').send({
+      email: account.email,
     }).expect(202);
 
     expect(existing.body).toEqual({
       message: 'If an account exists for this email, we sent password reset instructions.',
     });
     expect(unknown.body).toEqual(existing.body);
+    expect(failedDelivery.body).toEqual(existing.body);
     expect(existing.body.resetToken).toBeUndefined();
     expect(emailService.deliveries).toHaveLength(1);
-  });
+    expect(failingService.deliveries).toHaveLength(1);
 
-  it('returns an error when a configured provider cannot deliver the reset email', async () => {
-    const app = createApp({ passwordResetEmailService: new FailingPasswordResetEmailService() });
-    await request(app).post('/api/auth/register').send(account).expect(201);
-
-    const response = await request(app).post('/api/auth/forgot-password').send({
-      email: account.email,
-    }).expect(503);
-
-    expect(response.body.code).toBe('PASSWORD_RESET_UNAVAILABLE');
+    const failedToken = issuedResetToken(failingService);
+    const unusable = await request(failingApp).post('/api/auth/reset-password').send({
+      token: failedToken,
+      newPassword: 'new-pass',
+    }).expect(400);
+    expect(unusable.body.code).toBe('INVALID_RESET_TOKEN');
   });
 
   it('resets the password, revokes all refresh sessions, and rejects token reuse', async () => {
@@ -196,7 +205,7 @@ describe('password recovery', () => {
     expect(wrong.body.code).toBe('INVALID_RESET_TOKEN');
   });
 
-  it('enforces the existing password rules during reset', async () => {
+  it('accepts reset passwords allowed by the existing account policy and rejects weaker ones', async () => {
     const emailService = new MemoryPasswordResetEmailService();
     const app = createApp({ passwordResetEmailService: emailService });
     await request(app).post('/api/auth/register').send(account).expect(201);
@@ -205,15 +214,28 @@ describe('password recovery', () => {
     }).expect(202);
 
     const token = issuedResetToken(emailService);
-    const response = await request(app).post('/api/auth/reset-password').send({
+    await request(app).post('/api/auth/reset-password').send({
       token,
+      newPassword: 'new-pass',
+    }).expect(204);
+    await request(app).post('/api/auth/login').send({
+      email: account.email,
+      password: 'new-pass',
+    }).expect(200);
+
+    await request(app).post('/api/auth/forgot-password').send({
+      email: account.email,
+    }).expect(202);
+    const secondToken = issuedResetToken(emailService);
+    const response = await request(app).post('/api/auth/reset-password').send({
+      token: secondToken,
       newPassword: 'short',
     }).expect(400);
 
     expect(response.body.code).toBe('VALIDATION_ERROR');
   });
 
-  it('rejects resetting to the current password', async () => {
+  it('rejects resetting to the current password without consuming the token', async () => {
     const samePasswordAccount = {
       ...account,
       email: 'strong-recover@example.com',
@@ -234,6 +256,52 @@ describe('password recovery', () => {
 
     expect(response.body.code).toBe('INVALID_PASSWORD');
     expect(response.body.error).toBe('New password must be different from the current password');
+
+    await request(app).post('/api/auth/reset-password').send({
+      token,
+      newPassword: 'changed-1',
+    }).expect(204);
+
+    const reused = await request(app).post('/api/auth/reset-password').send({
+      token,
+      newPassword: 'changed-2',
+    }).expect(400);
+    expect(reused.body.code).toBe('INVALID_RESET_TOKEN');
+  });
+
+  it('allows at most one concurrent successful reset per token', async () => {
+    const emailService = new MemoryPasswordResetEmailService();
+    const app = createApp({ passwordResetEmailService: emailService });
+    await request(app).post('/api/auth/register').send(account).expect(201);
+    await request(app).post('/api/auth/forgot-password').send({
+      email: account.email,
+    }).expect(202);
+
+    const token = issuedResetToken(emailService);
+    const [first, second] = await Promise.all([
+      request(app).post('/api/auth/reset-password').send({
+        token,
+        newPassword: 'concurrent-a',
+      }),
+      request(app).post('/api/auth/reset-password').send({
+        token,
+        newPassword: 'concurrent-b',
+      }),
+    ]);
+
+    const statuses = [first.status, second.status].sort((left, right) => left - right);
+    expect(statuses).toEqual([400, 204]);
+    expect([first.body.code, second.body.code].filter(Boolean)).toEqual(['INVALID_RESET_TOKEN']);
+
+    const loginWithFirst = await request(app).post('/api/auth/login').send({
+      email: account.email,
+      password: 'concurrent-a',
+    });
+    const loginWithSecond = await request(app).post('/api/auth/login').send({
+      email: account.email,
+      password: 'concurrent-b',
+    });
+    expect([loginWithFirst.status, loginWithSecond.status].sort((left, right) => left - right)).toEqual([200, 401]);
   });
 
   it('rate limits forgot-password attempts', async () => {

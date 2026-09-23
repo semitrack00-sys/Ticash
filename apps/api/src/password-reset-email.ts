@@ -13,6 +13,32 @@ export class PasswordResetEmailDeliveryError extends Error {
   }
 }
 
+function isAllowedDevelopmentHttpHost(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function validatedPasswordResetUrlBase(
+  environment: NodeJS.ProcessEnv = process.env,
+): URL | undefined {
+  const baseUrl = environment.PASSWORD_RESET_URL_BASE?.trim();
+  if (!baseUrl) return undefined;
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.username || url.password) return undefined;
+  if (url.protocol === 'https:') return url;
+  if (environment.NODE_ENV !== 'production' &&
+      url.protocol === 'http:' &&
+      isAllowedDevelopmentHttpHost(url.hostname)) {
+    return url;
+  }
+  return undefined;
+}
+
 class DisabledPasswordResetEmailService implements PasswordResetEmailService {
   readonly configured = false;
 
@@ -70,9 +96,8 @@ class ResendPasswordResetEmailService implements PasswordResetEmailService {
 }
 
 export function passwordResetUrl(token: string, environment: NodeJS.ProcessEnv = process.env): string {
-  const baseUrl = environment.PASSWORD_RESET_URL_BASE?.trim();
-  if (!baseUrl) throw new PasswordResetEmailDeliveryError('Password reset email delivery is not configured');
-  const url = new URL(baseUrl);
+  const url = validatedPasswordResetUrlBase(environment);
+  if (!url) throw new PasswordResetEmailDeliveryError('Password reset email delivery is not configured');
   url.searchParams.set('token', token);
   return url.toString();
 }
@@ -89,7 +114,7 @@ export function loadPasswordResetEmailService(
 
   const apiKey = environment.RESEND_API_KEY?.trim();
   const from = environment.PASSWORD_RESET_EMAIL_FROM?.trim();
-  const resetUrlBase = environment.PASSWORD_RESET_URL_BASE?.trim();
+  const resetUrlBase = validatedPasswordResetUrlBase(environment);
   if (!apiKey || !from || !resetUrlBase) return new DisabledPasswordResetEmailService();
 
   return new ResendPasswordResetEmailService(apiKey, from);

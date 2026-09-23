@@ -184,14 +184,11 @@ const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const guestLifetimeMs = 60 * 60 * 1000;
 const passwordResetLifetimeMs = 30 * 60 * 1000;
 const samePasswordMessage = 'New password must be different from the current password';
+const accountPasswordSchema = z.string().min(8).max(128);
 const credentialsSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
-  password: z.string().min(8).max(128),
+  password: accountPasswordSchema,
 });
-const passwordPolicySchema = z.string().min(12).max(128)
-  .regex(/[a-z]/, 'Password must include a lowercase letter')
-  .regex(/[A-Z]/, 'Password must include an uppercase letter')
-  .regex(/[0-9]/, 'Password must include a number');
 const internationalAddressShape = {
   countryCode: z.string().trim().length(2).transform((value) => value.toUpperCase()),
   addressLine1: z.string().trim().min(3).max(180),
@@ -211,8 +208,8 @@ const registerSchema = credentialsSchema.extend({
   postalCode: internationalAddressShape.postalCode,
 });
 const changePasswordSchema = z.object({
-  currentPassword: z.string().min(8).max(128),
-  newPassword: z.string().min(8).max(128),
+  currentPassword: accountPasswordSchema,
+  newPassword: accountPasswordSchema,
 }).refine((value) => value.currentPassword !== value.newPassword, {
   message: samePasswordMessage,
   path: ['newPassword'],
@@ -222,7 +219,7 @@ const forgotPasswordSchema = z.object({
 }).strict();
 const resetPasswordSchema = z.object({
   token: z.string().trim().regex(/^[A-Za-z0-9_-]{43,512}$/),
-  newPassword: passwordPolicySchema,
+  newPassword: accountPasswordSchema,
 }).strict();
 const profileSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
@@ -654,6 +651,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const passwordResetEmailService = options.passwordResetEmailService ?? loadPasswordResetEmailService();
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
+  const passwordResetMutex = new KeyedMutex();
   const transferMutex = new KeyedMutex();
   const resolveRole = async (userId: string) => {
     const user = databaseEnabled
@@ -1234,9 +1232,9 @@ export function createApp(options: CreateAppOptions = {}) {
         passwordResetTokens.delete(hash);
       }
       await recordAudit(user.id, 'PASSWORD_RESET_REQUEST_FAILED', 'Security', user.id, {
-        reason: error instanceof PasswordResetEmailDeliveryError ? error.message : 'DELIVERY_FAILED',
+        reason: error instanceof PasswordResetEmailDeliveryError ? 'DELIVERY_FAILED' : 'DELIVERY_UNAVAILABLE',
       });
-      throw new SecurityError('PASSWORD_RESET_UNAVAILABLE', 'Password reset is temporarily unavailable', 503);
+      return res.status(202).json(response);
     }
 
     return res.status(202).json(response);
@@ -1354,6 +1352,16 @@ export function createApp(options: CreateAppOptions = {}) {
 
     if (databaseEnabled) {
       const result = await prisma.$transaction(async (transaction) => {
+        const resolvedAt = new Date();
+        const passwordReset = await transaction.passwordResetToken.findUnique({ where: { tokenHash: hash } });
+        if (!passwordReset || passwordReset.consumedAt || passwordReset.expiresAt <= resolvedAt) {
+          return { status: 'invalid' as const };
+        }
+        const user = await transaction.user.findUnique({ where: { id: passwordReset.userId } });
+        if (!user) return { status: 'invalid' as const };
+        if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
+          return { status: 'same_password' as const };
+        }
         const claimedAt = new Date();
         const consumed = await transaction.passwordResetToken.updateMany({
           where: { tokenHash: hash, consumedAt: null, expiresAt: { gt: claimedAt } },
@@ -1362,20 +1370,13 @@ export function createApp(options: CreateAppOptions = {}) {
         if (consumed.count !== 1) {
           return { status: 'invalid' as const };
         }
-        const passwordReset = await transaction.passwordResetToken.findUnique({ where: { tokenHash: hash } });
-        if (!passwordReset) return { status: 'invalid' as const };
-        const user = await transaction.user.findUnique({ where: { id: passwordReset.userId } });
-        if (!user) return { status: 'invalid' as const };
-        if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
-          return { status: 'same_password' as const };
-        }
         await transaction.user.update({
           where: { id: user.id },
           data: { passwordHash: await bcrypt.hash(input.newPassword, 12) },
         });
         await transaction.passwordResetToken.updateMany({
-          where: { userId: user.id, consumedAt: null, expiresAt: { gt: new Date() } },
-          data: { consumedAt: new Date() },
+          where: { userId: user.id, consumedAt: null, expiresAt: { gt: claimedAt } },
+          data: { consumedAt: claimedAt },
         });
         await transaction.session.deleteMany({ where: { userId: user.id } });
         return { status: 'reset' as const, userId: user.id };
@@ -1395,35 +1396,44 @@ export function createApp(options: CreateAppOptions = {}) {
       return res.status(204).end();
     }
 
-    const passwordReset = passwordResetTokens.get(hash);
-    if (!passwordReset || passwordReset.consumedAt || passwordReset.expiresAt <= Date.now()) {
-      await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
-      return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
-    }
-    const claimedAt = Date.now();
-    passwordResetTokens.set(hash, { ...passwordReset, consumedAt: claimedAt });
-
-    const user = users.get(passwordReset.userId);
-    if (!user) {
-      await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
-      return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
-    }
-    if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
-      return res.status(400).json({
-        error: samePasswordMessage,
-        code: 'INVALID_PASSWORD',
-      });
-    }
-
-    for (const [existingHash, session] of passwordResetTokens.entries()) {
-      if (existingHash !== hash && session.userId === user.id && !session.consumedAt && session.expiresAt > claimedAt) {
-        passwordResetTokens.set(existingHash, { ...session, consumedAt: claimedAt });
+    return passwordResetMutex.run(hash, async () => {
+      const resolvedAt = Date.now();
+      const passwordReset = passwordResetTokens.get(hash);
+      if (!passwordReset || passwordReset.consumedAt || passwordReset.expiresAt <= resolvedAt) {
+        await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
+        return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
       }
-    }
-    users.set(user.id, { ...user, passwordHash: await bcrypt.hash(input.newPassword, 12) });
-    await revokeUserSessions(user.id);
-    await recordAudit(user.id, 'PASSWORD_RESET_COMPLETED', 'User', user.id);
-    return res.status(204).end();
+
+      const user = users.get(passwordReset.userId);
+      if (!user) {
+        await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
+        return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
+      }
+      if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
+        return res.status(400).json({
+          error: samePasswordMessage,
+          code: 'INVALID_PASSWORD',
+        });
+      }
+
+      const claimedAt = Date.now();
+      const claimableToken = passwordResetTokens.get(hash);
+      if (!claimableToken || claimableToken.consumedAt || claimableToken.expiresAt <= claimedAt) {
+        await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
+        return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
+      }
+      passwordResetTokens.set(hash, { ...claimableToken, consumedAt: claimedAt });
+
+      for (const [existingHash, session] of passwordResetTokens.entries()) {
+        if (existingHash !== hash && session.userId === user.id && !session.consumedAt && session.expiresAt > claimedAt) {
+          passwordResetTokens.set(existingHash, { ...session, consumedAt: claimedAt });
+        }
+      }
+      users.set(user.id, { ...user, passwordHash: await bcrypt.hash(input.newPassword, 12) });
+      await revokeUserSessions(user.id);
+      await recordAudit(user.id, 'PASSWORD_RESET_COMPLETED', 'User', user.id);
+      return res.status(204).end();
+    });
   });
 
   app.get('/api/users/me', authenticate, async (req: AuthRequest, res) => {

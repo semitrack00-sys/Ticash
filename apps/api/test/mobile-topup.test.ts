@@ -189,7 +189,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
       billingCurrency: 'USD',
       paymentMode: 'MOCK',
       testMode: true,
-      supportedGeographicScope: 'Provider-supported Reloadly Sandbox catalog countries only',
+      supportedGeographicScope: 'Configured sandbox provider catalog countries only',
       productionEnabled: false,
       approvedForLiveUse: false,
       liveRechargeEnabled: false,

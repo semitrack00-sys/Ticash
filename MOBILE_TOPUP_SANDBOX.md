@@ -8,8 +8,8 @@ without creating a MonCash, NatCash, bank, or remittance money transfer.
 
 ## Safety status
 
-- Coverage: only provider-supported Reloadly Sandbox countries and operators.
-- Provider: Reloadly Airtime Sandbox.
+- Coverage: union of actual enabled sandbox provider country/operator catalogs.
+- Providers: Reloadly Airtime Sandbox primary; DT One pre-production optional secondary.
 - Billing: USD in the TiCash Sandbox checkout flow.
 - Payment: explicit mock authorization; Dwolla ACH is not used.
 - Recurring recharge: architecture-only and unavailable.
@@ -95,6 +95,7 @@ Authenticated routes are under `/api/mobile-topups`:
 
 - `GET /status`
 - `GET /countries`
+- `GET /coverage`
 - `GET /operators?country=JM`
 - `GET /operators/detect?country=JM&phone=+1876...`
 - `GET /operators/:id/products?country=JM`
@@ -153,3 +154,117 @@ Official references reviewed for this implementation:
 - [Approved event](https://www.checkout.com/docs/developer-resources/event-notifications/event-types/payment_approved), [captured event](https://www.checkout.com/docs/developer-resources/event-notifications/event-types/payment_captured), [declined event](https://www.checkout.com/docs/developer-resources/event-notifications/event-types/payment_declined), [refunded event](https://www.checkout.com/docs/developer-resources/event-notifications/event-types/payment_refunded), and [voided event](https://www.checkout.com/docs/developer-resources/event-notifications/event-types/payment_voided): provider event identities, references, amount and currency.
 
 Run `npm ci`, `npm run prisma:validate`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, and `npm audit --omit=dev`. Tests use in-memory stores, mocked Prisma clients and injected provider transports; database migration execution and real provider integration are separate future validation gates.
+
+
+## Global recharge provider routing
+
+Reloadly remains the primary discovery provider and its numeric operator IDs and
+`reloadly:JM:255:airtime:5.00` product IDs remain unchanged. DT One is an optional
+secondary pre-production provider; DING is reserved in the identity scheme but
+has no configured adapter. Country discovery queries every enabled provider and
+returns the sorted union of actual catalog entries. A failed/malformed provider
+catalog is excluded, with a sanitized reason in coverage, while healthy provider
+results remain available. If every provider fails, discovery returns a controlled
+502. The existing calling-code filter still excludes unsupported destinations
+such as AN without inventing a prefix. ISO metadata alone never adds availability.
+There is no guarantee of coverage for literally every sovereign state or of a
+purchasable product for every catalog destination. DT One availability and prices
+depend on the account pricelist and supported transaction requirements.
+
+### Optional DT One configuration
+
+Configure only the backend environment, leaving the default disabled:
+
+```dotenv
+DTONE_ENABLED=false
+DTONE_API_KEY=
+DTONE_API_SECRET=
+DTONE_BASE_URL=https://preprod-dvs-api.dtone.com/v1
+```
+
+The adapter uses HTTP Basic authentication (API key as username, API secret as
+password), never client-side credentials. Enabling without credentials fails
+startup; any other URL, including production, is rejected. Live approval/money
+flags must remain false. Keep `CHECKOUT_COM_ENABLED=false`, `PAYMENTS_MODE=mock`
+and `MOBILE_TOPUP_PAYMENT_MODE=mock`. This implementation does not edit deployed
+environments, activate an account, or perform provider transactions.
+
+Countries, operators, products and mobile lookup are paginated. ISO alpha-3/alpha-2
+conversion uses `i18n-iso-countries`, never country-name guessing. Only Mobile
+service 1 and Airtime/Bundle/Data subservices 11/12/13 are eligible. Initially only
+fixed-value recharge products with USD source amounts representable in cents,
+matching USD wholesale amounts and zero additional provider fee are exposed.
+Ranges, FX/non-USD pricing, discounts/different wholesale prices, provider fees,
+and unsupported sender/beneficiary/account/compliance requirements remain gated.
+A product must explicitly declare requirements compatible with the mobile number
+TiCash supplies. Unknown or absent requirements fail closed. Non-monetary data
+allowances are not mislabeled as a delivered currency amount.
+
+### Immutable provider identity and recovery
+
+Global operator IDs use slots of 700000000: Reloadly 0, DT One 1, DING 2. Raw IDs
+must be 1 through 699999999, and public IDs remain positive PostgreSQL Int values.
+Quotes and transactions snapshot the provider, public operator, exact product ID,
+raw provider product ID where applicable, amount/currency, delivered value when
+known, fee, total and expiration. Saved recipients persist the selected provider.
+The additive migration is
+`migrations/202609240900_global_recharge_provider_router/migration.sql`: add DTONE
+to the existing enum, nullable recipient provider and nullable quote/transaction
+providerProductId fields; backfill existing selected recipients as RELOADLY.
+Review/apply this migration separately before using the new Prisma client against
+a deployed database. No migration is applied by this task and no db push is used.
+
+Provider fallback is permitted only during discovery. A paid quote routes only to
+its owner. DT One rechecks the exact product and quoted source price before its
+one-step asynchronous transaction; a changed/ineligible product is rejected,
+never substituted. The normalized E.164 number is sent as
+`credit_party_identifier.mobile_number`. The SHA-256 of TiCash's stable custom
+identifier, truncated to 40 hexadecimal characters, supplies a deterministic
+DT One external_id. The existing database fulfillment claim prevents replay;
+there is no automatic retry of uncertain submissions. Such attempts retain the
+existing reconciliation-required state. Definite failure uses the existing
+payment void/refund recovery path; airtime reversal alone is not payment refund
+confirmation.
+
+New provider transaction references include the provider prefix; historical
+unprefixed references still route to Reloadly. Status refresh uses only the
+original provider and validates the returned transaction ID. DT One status class
+COMPLETED maps to DELIVERED, CREATED to PENDING, CONFIRMED/SUBMITTED to PROCESSING,
+REJECTED/DECLINED/CANCELLED to FAILED, REVERSED to REFUNDED. Its raw status message
+is stored separately. Unknown/malformed status responses fail safely without
+claiming success. Guest scope, payment authorization, quote ownership, fees and
+production gates are unchanged. The Jamaica $5 + $3.50 = $8.50 regression remains
+covered with fixtures.
+
+### Coverage and status
+
+Authenticated `GET /api/mobile-topups/coverage` reports `uniqueCountries`,
+per-provider enabled/count/reason values and sorted `overlapCountries`,
+`reloadlyOnlyCountries`, `dtoneOnlyCountries` arrays. Counts use actual provider
+catalogs after the same calling-code eligibility filter as public country
+selection. Failed providers report zero and a sanitized reason; these counts
+are degraded coverage, not proof that the failed provider has no destinations.
+`GET /api/mobile-topups/status` reports the configured provider names and
+SINGLE_PROVIDER/MULTI_PROVIDER mode, with sandbox/live flags unchanged.
+
+After authorized pre-production credentials, migration and configuration have
+been supplied, use an existing TiCash access token without printing it. Here
+`TICASH_API_ORIGIN` is the backend origin without a trailing slash:
+
+```powershell
+$coverage = Invoke-RestMethod "$env:TICASH_API_ORIGIN/api/mobile-topups/coverage" -Headers @{ Authorization = "Bearer $env:TICASH_ACCESS_TOKEN" }
+$coverage | Select-Object uniqueCountries, providers, overlapCountries, reloadlyOnlyCountries, dtoneOnlyCountries
+```
+
+Fixture tests verify routing and mapping without actual provider/database calls.
+Account-specific discovery, eligible pricelist verification and authorized
+pre-production purchase acceptance tests are still required before claiming
+working DT One coverage.
+
+Official contracts used:
+
+- [Countries](https://developers.dtone.com/reference/getcountries), [operators](https://developers.dtone.com/reference/getoperators), [products](https://developers.dtone.com/reference/getproducts).
+- [Fixed airtime fields and requirements](https://developers.dtone.com/docs/airtime-fixed-copy).
+- [Asynchronous transactions](https://developers.dtone.com/reference/posttransactionasync), [transaction status](https://developers.dtone.com/reference/gettransactionbyid).
+- [Mobile lookup](https://developers.dtone.com/reference/postlookupmobilenumber) and [lookup semantics](https://developers.dtone.com/docs/look-up-mobile-numbers).
+- [Pagination](https://developers.dtone.com/reference/pagination) and [ISO code conversion](https://github.com/michaelwittig/node-i18n-iso-countries).

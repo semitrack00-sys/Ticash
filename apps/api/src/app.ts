@@ -1,3 +1,6 @@
+import { GlobalRechargeProviderRouter } from './topup/provider-router.js';
+import { DtOnePreproductionProvider } from './topup/dtone-provider.js';
+import { loadDtOneConfig } from './topup/dtone-config.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
@@ -920,6 +923,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
   const checkoutConfig = loadCheckoutConfig();
+  const dtOneConfig = loadDtOneConfig();
   // Inspect configuration itself, not the public status object's constant labels.
   const guestAuthError = () => {
     if (!guestProxyConfigured) {
@@ -936,7 +940,10 @@ export function createApp(options: CreateAppOptions = {}) {
   const mobileTopUpRepository = options.mobileTopUpRepository ?? (
     databaseEnabled ? new PrismaMobileTopUpRepository(prisma) : new MemoryMobileTopUpRepository()
   );
-  const mobileTopUpProvider = options.mobileTopUpProvider ?? new ReloadlySandboxTopUpProvider(mobileTopUpConfig);
+  const mobileTopUpProvider = options.mobileTopUpProvider ?? new GlobalRechargeProviderRouter(mobileTopUpConfig.enabled ? [
+    ['RELOADLY', new ReloadlySandboxTopUpProvider(mobileTopUpConfig)],
+    ...(dtOneConfig.enabled ? [['DTONE', new DtOnePreproductionProvider(dtOneConfig)] as ['DTONE', MobileTopUpProvider]] : []),
+  ] : []);
   const mobileTopUpPaymentProvider = options.mobileTopUpPaymentProvider ?? new MockMobileTopUpPaymentProvider();
   const mobileTopUpService = new MobileTopUpService(
     mobileTopUpConfig,

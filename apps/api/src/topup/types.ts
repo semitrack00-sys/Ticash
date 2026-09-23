@@ -1,3 +1,4 @@
+export type MobileTopUpProviderName = 'RELOADLY' | 'DTONE' | 'DING';
 export type MobileTopUpEnvironment = 'sandbox';
 export type MobileTopUpKind = 'AIRTIME' | 'DATA';
 export type MobileTopUpStatus = 'PENDING' | 'PROCESSING' | 'DELIVERED' | 'FAILED' | 'REFUNDED';
@@ -56,6 +57,7 @@ export interface MobileTopUpDestination extends MobileTopUpCountry {
 }
 
 export interface MobileTopUpOperator {
+  provider?: MobileTopUpProviderName;
   id: number;
   name: string;
   countryCode: string;
@@ -73,6 +75,9 @@ export interface MobileTopUpOperator {
 }
 
 export interface MobileTopUpProduct {
+  provider?: MobileTopUpProviderName;
+  providerProductId?: string;
+  classification?: 'AIRTIME' | 'DATA' | 'BUNDLE';
   id: string;
   countryCode: string;
   operatorId: number;
@@ -88,6 +93,10 @@ export interface MobileTopUpProduct {
 }
 
 export interface ProviderTopUpRequest {
+  provider?: MobileTopUpProviderName;
+  productId?: string;
+  providerProductId?: string;
+  providerCurrency?: string;
   operatorId: number;
   amount: number;
   recipientPhone: string;
@@ -96,6 +105,7 @@ export interface ProviderTopUpRequest {
 }
 
 export interface ProviderTopUpResult {
+  rawStatus?: string;
   transactionId: string;
   status: string;
   operatorTransactionId?: string;
@@ -106,13 +116,26 @@ export interface ProviderTopUpResult {
   fee?: number;
 }
 
+export interface ProviderCoverage {
+  environment: 'SANDBOX';
+  uniqueCountries: number;
+  providers: { provider: MobileTopUpProviderName; enabled: boolean; countries: number; reason?: string }[];
+  overlapCountries: string[];
+  reloadlyOnlyCountries: string[];
+  dtoneOnlyCountries: string[];
+}
+
 export interface MobileTopUpProvider {
+  readonly name?: MobileTopUpProviderName;
+  readonly providerNames?: MobileTopUpProviderName[];
+  coverage?(): Promise<ProviderCoverage>;
+  listProducts?(countryCode: string, operatorId: number): Promise<MobileTopUpProduct[] | undefined>;
   listCountries(): Promise<MobileTopUpCountry[]>;
   listOperators(countryCode: string): Promise<MobileTopUpOperator[]>;
   detectOperator(phone: string, countryCode: string): Promise<MobileTopUpOperator>;
   getOperator(operatorId: number): Promise<MobileTopUpOperator>;
   submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult>;
-  getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult>;
+  getTopUpStatus(transactionId: string, provider?: MobileTopUpProviderName): Promise<ProviderTopUpResult>;
 }
 
 export interface MobileTopUpPaymentAuthorization {

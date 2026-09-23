@@ -1,3 +1,4 @@
+import { decodeOperatorId } from './provider-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import type {
@@ -46,12 +47,15 @@ function planName(operator: MobileTopUpOperator, amount: number): string | undef
 }
 
 export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUpProduct[] {
+  const provider = operator.provider ?? decodeOperatorId(operator.id).provider;
+  if (provider !== 'RELOADLY') return [];
   const destinationCurrency = operator.destinationCurrencyCode.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(destinationCurrency)) return [];
   if (operator.denominationType === 'RANGE') {
     if (!operator.minAmount || !operator.maxAmount || operator.senderCurrencyCode !== 'USD') return [];
     return [{
       id: `reloadly:${operator.countryCode}:${operator.id}:airtime:range`,
+      provider,
       countryCode: operator.countryCode,
       operatorId: operator.id,
       kind: 'AIRTIME',
@@ -71,6 +75,7 @@ export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUp
     const deliveredValue = operator.localFixedAmounts[index] ?? Number.NaN;
     return {
       id: `reloadly:${operator.countryCode}:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
+      provider,
       countryCode: operator.countryCode,
       operatorId: operator.id,
       kind,
@@ -87,9 +92,9 @@ export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUp
 function mapProviderStatus(value: string): MobileTopUpStatus {
   const status = value.toUpperCase();
   if (['SUCCESSFUL', 'DELIVERED', 'COMPLETED'].includes(status)) return 'DELIVERED';
-  if (['FAILED', 'REJECTED', 'CANCELLED'].includes(status)) return 'FAILED';
+  if (['FAILED', 'REJECTED', 'DECLINED', 'CANCELLED'].includes(status)) return 'FAILED';
   if (['REFUNDED', 'REVERSED'].includes(status)) return 'REFUNDED';
-  if (['PROCESSING', 'IN_PROGRESS'].includes(status)) return 'PROCESSING';
+  if (['PROCESSING', 'IN_PROGRESS', 'CONFIRMED', 'SUBMITTED'].includes(status)) return 'PROCESSING';
   return 'PENDING';
 }
 
@@ -106,20 +111,34 @@ export class MobileTopUpService {
   ) {}
 
   availability() {
+    const providers = this.config.enabled ? this.provider.providerNames ?? [this.provider.name ?? 'RELOADLY'] : [];
     return {
       enabled: this.config.enabled,
       environment: 'SANDBOX',
       billingCurrency: this.config.billingCurrency,
-      provider: 'RELOADLY',
+      provider: providers.length === 1 ? providers[0] : providers.length ? 'MULTI_PROVIDER' : null,
+      providerMode: providers.length > 1 ? 'MULTI_PROVIDER' : providers.length ? 'SINGLE_PROVIDER' : 'DISABLED',
+      providers,
       paymentMode: 'MOCK',
       testMode: true,
-      supportedGeographicScope: 'Provider-supported Reloadly Sandbox catalog countries only',
+      supportedGeographicScope: 'Configured sandbox provider catalog countries only',
       supportedCountriesPath: '/api/mobile-topups/countries',
       productionEnabled: false,
       approvedForLiveUse: false,
       liveRechargeEnabled: false,
       recurringRechargeEnabled: false,
     };
+  }
+
+  async coverage() {
+    this.assertEnabled();
+    if (this.provider.coverage) return this.provider.coverage();
+    const countries = await this.listCountries();
+    const provider = this.provider.name ?? 'RELOADLY';
+    return { environment: 'SANDBOX', uniqueCountries: countries.length,
+      providers: [{ provider, enabled: true, countries: countries.length }],
+      overlapCountries: [], reloadlyOnlyCountries: provider === 'RELOADLY' ? countries.map(country => country.code) : [],
+      dtoneOnlyCountries: provider === 'DTONE' ? countries.map(country => country.code) : [] };
   }
 
   private countriesCacheKey() {
@@ -234,7 +253,18 @@ export class MobileTopUpService {
     if (!operator.status) {
       throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'This recharge operator is unavailable', 404);
     }
-    return { operator, products: productsFromOperator(operator) };
+    const owner = decodeOperatorId(operatorId).provider;
+    if (operator.id !== operatorId || (operator.provider && operator.provider !== owner)) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Recharge operator identity did not match', 502);
+    }
+    const products = await this.provider.listProducts?.(normalizedCountry, operatorId) ?? productsFromOperator(operator);
+    if (!Array.isArray(products) || products.some(product => !product || typeof product.id !== 'string' || product.operatorId !== operatorId || product.countryCode !== normalizedCountry ||
+        (product.provider && product.provider !== owner) || !product.id.startsWith(`${owner.toLowerCase()}:${normalizedCountry}:${operatorId}:`) ||
+        product.priceCurrency !== 'USD' || !Number.isFinite(product.price) || product.price <= 0 ||
+        (owner !== 'RELOADLY' && !product.providerProductId))) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
+    }
+    return { operator: { ...operator, provider: owner }, products };
   }
 
   listRecipients(userId: string) { return this.repository.listRecipients(userId); }
@@ -272,6 +302,7 @@ export class MobileTopUpService {
       phone,
       countryCode,
       operatorId,
+      provider: operatorId === undefined ? undefined : decodeOperatorId(operatorId).provider,
       operatorName,
     });
     await this.audit(userId, 'MOBILE_TOPUP_RECIPIENT_SAVED', 'MobileTopUpRecipient', record.id, {
@@ -313,6 +344,8 @@ export class MobileTopUpService {
       recipientPhone: phone,
       operatorId: operator.id,
       operatorName: operator.name,
+      provider: operator.provider ?? decodeOperatorId(operator.id).provider,
+      providerProductId: product.providerProductId,
       productId: product.id,
       productName: product.name,
       kind: product.kind,
@@ -452,6 +485,8 @@ export class MobileTopUpService {
     let providerResult: ProviderTopUpResult;
     try {
       providerResult = await this.provider.submitTopUp({ operatorId: transaction.operatorId, amount: transaction.providerAmount,
+        provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, productId: transaction.productId,
+        providerProductId: transaction.providerProductId, providerCurrency: transaction.providerCurrency,
         recipientPhone: transaction.recipientPhone, recipientCountryCode: transaction.countryCode, customIdentifier: transaction.customIdentifier });
     } catch (error) {
       const rejected = error instanceof MobileTopUpError && error.statusCode === 400;
@@ -468,7 +503,7 @@ export class MobileTopUpService {
     const updated = await this.applyProviderResult(id, providerResult);
     if (transaction.recipientId) await this.repository.updateRecipientLastUsed(transaction.userId, transaction.recipientId, transaction.productId, transaction.productName);
     await this.audit(transaction.userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', id,
-      { provider: 'RELOADLY', status: updated.status, testMode: true });
+      { provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, status: updated.status, testMode: true });
     return updated;
   }
 
@@ -558,7 +593,7 @@ export class MobileTopUpService {
     const updated = await this.repository.updateTransaction(id, {
       providerTransactionId: result.transactionId,
       ...(result.operatorTransactionId ? { operatorTransactionId: result.operatorTransactionId } : {}),
-      providerStatus: result.status,
+      providerStatus: result.rawStatus ?? result.status,
       status,
       ...(result.deliveredAmount !== undefined ? { deliveredValue: result.deliveredAmount } : {}),
       ...(result.deliveredAmountCurrencyCode ? { deliveredCurrency: result.deliveredAmountCurrencyCode } : {}),
@@ -577,7 +612,7 @@ export class MobileTopUpService {
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     if (refresh && record.providerTransactionId && !['FAILED', 'REFUNDED'].includes(record.status)) {
-      return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId));
+      return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, record.provider ?? decodeOperatorId(record.operatorId).provider));
     }
     return record;
   }

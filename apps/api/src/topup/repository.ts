@@ -1,7 +1,9 @@
+import { decodeOperatorId } from './provider-identity.js';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
   MobileTopUpKind,
+  MobileTopUpProviderName,
   MobileTopUpPaymentStatus,
   MobileTopUpPaymentMethod,
   MobileTopUpPaymentProviderName,
@@ -10,6 +12,7 @@ import type {
 import { MobileTopUpError } from './types.js';
 
 export interface SavedTopUpRecipientRecord {
+  provider?: MobileTopUpProviderName;
   id: string;
   userId: string;
   nickname: string;
@@ -24,6 +27,8 @@ export interface SavedTopUpRecipientRecord {
 }
 
 export interface MobileTopUpQuoteRecord {
+  provider?: MobileTopUpProviderName;
+  providerProductId?: string;
   id: string;
   userId: string;
   countryCode: string;
@@ -248,6 +253,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 }
 
 function quoteFromDb(record: {
+  provider?: MobileTopUpProviderName; providerProductId?: string | null;
   id: string; userId: string; countryCode: string; recipientPhone: string; operatorId: number; operatorName: string;
   productId: string; productName: string; kind: MobileTopUpKind; providerAmount: Prisma.Decimal;
   providerCurrency: string; deliveredValue: Prisma.Decimal | null; deliveredCurrency: string;
@@ -255,6 +261,8 @@ function quoteFromDb(record: {
 }): MobileTopUpQuoteRecord {
   return {
     id: record.id,
+    provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
+    providerProductId: record.providerProductId ?? undefined,
     userId: record.userId,
     countryCode: record.countryCode,
     recipientPhone: record.recipientPhone,
@@ -276,6 +284,7 @@ function quoteFromDb(record: {
 }
 
 function transactionFromDb(record: {
+  provider?: MobileTopUpProviderName; providerProductId?: string | null;
   id: string; userId: string; recipientId: string | null; quoteId: string; providerTransactionId: string | null;
   operatorTransactionId: string | null; customIdentifier: string; idempotencyKey: string; requestHash: string;
   status: MobileTopUpStatus; paymentStatus: MobileTopUpPaymentStatus; paymentAuthorizationId: string | null;
@@ -291,6 +300,8 @@ function transactionFromDb(record: {
 }): MobileTopUpTransactionRecord {
   return {
     id: record.id,
+    provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
+    providerProductId: record.providerProductId ?? undefined,
     userId: record.userId,
     quoteId: record.quoteId,
     recipientId: record.recipientId ?? undefined,
@@ -383,6 +394,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     return records.map((item) => ({
       ...item,
       countryCode: item.countryCode,
+      provider: item.provider ?? undefined,
       operatorId: item.operatorId ?? undefined,
       operatorName: item.operatorName ?? undefined,
       lastProductId: item.lastProductId ?? undefined,
@@ -401,6 +413,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     return {
       ...record,
       countryCode: record.countryCode,
+      provider: record.provider ?? undefined,
       operatorId: record.operatorId ?? undefined,
       operatorName: record.operatorName ?? undefined,
       lastProductId: record.lastProductId ?? undefined,
@@ -417,7 +430,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   async createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>) {
     const record = await this.prisma.mobileTopUpQuote.create({ data: {
       ...input,
-      provider: 'RELOADLY',
+      provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
       testMode: true,
       expiresAt: new Date(input.expiresAt),
       consumedAt: input.consumedAt ? new Date(input.consumedAt) : null,
@@ -451,7 +464,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
         if (claimed.count !== 1) throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote is no longer available', 409);
         return tx.mobileTopUpTransaction.create({ data: {
           ...input,
-          provider: 'RELOADLY',
+          provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
           testMode: true,
           paymentStartedAt: input.paymentStartedAt ? new Date(input.paymentStartedAt) : null,
           fulfillmentStartedAt: input.fulfillmentStartedAt ? new Date(input.fulfillmentStartedAt) : null,

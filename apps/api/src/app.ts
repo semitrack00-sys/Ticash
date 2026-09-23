@@ -76,6 +76,12 @@ import {
   type SanctionsAmlProvider,
   type SecurityConfig,
 } from './security.js';
+import {
+  loadPasswordResetEmailService,
+  passwordResetUrl,
+  PasswordResetEmailDeliveryError,
+  type PasswordResetEmailService,
+} from './password-reset-email.js';
 import { runPrismaReconciliation } from './reconciliation.js';
 import { requirePermission, type AdminPermission, type AdminRequest } from './admin-access.js';
 import {
@@ -100,6 +106,14 @@ type StoredUser = PublicUser & {
 };
 type AuthRequest = AdminRequest;
 type RefreshSession = { userId: string; tokenHash: string; expiresAt: number };
+type PasswordResetSession = {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: number;
+  consumedAt?: number;
+  createdAt: string;
+};
 type AuditRecord = {
   id: string; userId?: string; action: string; entity: string;
   entityId?: string; metadata?: Record<string, unknown>; createdAt: string;
@@ -116,6 +130,7 @@ const users = new Map<string, StoredUser>();
 const recipients = new Map<string, Recipient & { userId: string }>();
 const transfers = new Map<string, Transfer & { userId: string }>();
 const refreshSessions = new Map<string, RefreshSession>();
+const passwordResetTokens = new Map<string, PasswordResetSession>();
 const idempotentTransfers = new Map<
   string,
   { requestFingerprint: string; transfer: Transfer }
@@ -167,10 +182,15 @@ function configuredCorsOrigins(env: NodeJS.ProcessEnv): string[] {
 
 const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const guestLifetimeMs = 60 * 60 * 1000;
+const passwordResetLifetimeMs = 30 * 60 * 1000;
 const credentialsSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
   password: z.string().min(8).max(128),
 });
+const passwordPolicySchema = z.string().min(12).max(128)
+  .regex(/[a-z]/, 'Password must include a lowercase letter')
+  .regex(/[A-Z]/, 'Password must include an uppercase letter')
+  .regex(/[0-9]/, 'Password must include a number');
 const internationalAddressShape = {
   countryCode: z.string().trim().length(2).transform((value) => value.toUpperCase()),
   addressLine1: z.string().trim().min(3).max(180),
@@ -196,6 +216,13 @@ const changePasswordSchema = z.object({
   message: 'New password must be different from the current password',
   path: ['newPassword'],
 });
+const forgotPasswordSchema = z.object({
+  email: z.email().transform((value) => value.toLowerCase()),
+}).strict();
+const resetPasswordSchema = z.object({
+  token: z.string().trim().regex(/^[A-Za-z0-9_-]{43,512}$/),
+  newPassword: passwordPolicySchema,
+}).strict();
 const profileSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
@@ -468,6 +495,16 @@ async function issueTokens(userId: string, guestExpiresAt?: Date | null) {
   return { accessToken, refreshToken };
 }
 
+async function revokeUserSessions(userId: string) {
+  if (databaseEnabled) {
+    await prisma.session.deleteMany({ where: { userId } });
+    return;
+  }
+  for (const [hash, session] of refreshSessions.entries()) {
+    if (session.userId === userId) refreshSessions.delete(hash);
+  }
+}
+
 // Permanent-account authentication is the default for every authenticated route.
 async function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
   return authenticateAccount(req, res, next, false);
@@ -567,6 +604,7 @@ export function resetStore() {
   recipients.clear();
   transfers.clear();
   refreshSessions.clear();
+  passwordResetTokens.clear();
   idempotentTransfers.clear();
   auditRecords.length = 0;
   memoryCompliance.clear();
@@ -597,6 +635,7 @@ export interface CreateAppOptions {
   mobileTopUpPaymentProvider?: MobileTopUpPaymentProvider;
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
+  passwordResetEmailService?: PasswordResetEmailService;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -611,6 +650,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const guestProxyConfigured = process.env.NODE_ENV !== 'production' || trustProxyHops !== undefined;
   const allowlistedOrigins = configuredCorsOrigins(process.env);
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
+  const passwordResetEmailService = options.passwordResetEmailService ?? loadPasswordResetEmailService();
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
   const transferMutex = new KeyedMutex();
@@ -1072,6 +1112,10 @@ export function createApp(options: CreateAppOptions = {}) {
     windowMs: 15 * 60_000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false,
     message: { error: 'Too many guest sessions. Please try again later.', code: 'RATE_LIMITED' },
   });
+  const forgotPasswordLimiter = rateLimit({
+    windowMs: 15 * 60_000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Too many password reset requests. Please try again later.', code: 'RATE_LIMITED' },
+  });
   app.post('/api/auth/guest', guestLimiter, async (req, res) => {
     const guestError = guestAuthError();
     if (guestError) return res.status(403).json(guestError);
@@ -1128,6 +1172,62 @@ export function createApp(options: CreateAppOptions = {}) {
     if (!databaseEnabled) users.set(user.id, user);
     await recordAudit(user.id, 'ACCOUNT_REGISTERED', 'User', user.id);
     res.status(201).json({ user: publicUser(user), ...await issueTokens(user.id) });
+  });
+
+  app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req, res) => {
+    const input = forgotPasswordSchema.parse(req.body);
+    const response = {
+      message: 'If an account exists for this email, we sent password reset instructions.',
+    };
+    const resetToken = randomBytes(32).toString('base64url');
+    const hash = tokenHash(resetToken);
+    const expiresAt = new Date(Date.now() + passwordResetLifetimeMs);
+    const user = databaseEnabled
+      ? (await prisma.user.findUnique({ where: { email: input.email } }))
+      : [...users.values()].find((candidate) => candidate.email === input.email);
+
+    if (!user || user.guestExpiresAt || !passwordResetEmailService.configured) {
+      if (user && !user.guestExpiresAt) {
+        await recordAudit(user.id, 'PASSWORD_RESET_REQUEST_ACCEPTED', 'Security', user.id, {
+          emailConfigured: passwordResetEmailService.configured,
+        });
+      }
+      return res.status(202).json(response);
+    }
+
+    if (databaseEnabled) {
+      await prisma.passwordResetToken.create({
+        data: { userId: user.id, tokenHash: hash, expiresAt },
+      });
+    } else {
+      passwordResetTokens.set(hash, {
+        id: randomUUID(),
+        userId: user.id,
+        tokenHash: hash,
+        expiresAt: expiresAt.getTime(),
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    try {
+      await passwordResetEmailService.sendPasswordReset({
+        to: user.email,
+        resetUrl: passwordResetUrl(resetToken),
+        expiresAt,
+      });
+      await recordAudit(user.id, 'PASSWORD_RESET_REQUEST_ACCEPTED', 'Security', user.id);
+    } catch (error) {
+      if (databaseEnabled) {
+        await prisma.passwordResetToken.deleteMany({ where: { tokenHash: hash } });
+      } else {
+        passwordResetTokens.delete(hash);
+      }
+      await recordAudit(user.id, 'PASSWORD_RESET_REQUEST_FAILED', 'Security', user.id, {
+        reason: error instanceof PasswordResetEmailDeliveryError ? error.message : 'DELIVERY_FAILED',
+      });
+    }
+
+    return res.status(202).json(response);
   });
 
   app.post('/api/auth/login', authenticationLimiter, async (req, res) => {
@@ -1236,6 +1336,75 @@ export function createApp(options: CreateAppOptions = {}) {
     res.status(204).end();
   });
 
+  app.post('/api/auth/reset-password', async (req, res) => {
+    const input = resetPasswordSchema.parse(req.body);
+    const hash = tokenHash(input.token);
+
+    if (databaseEnabled) {
+      const result = await prisma.$transaction(async (transaction) => {
+        const passwordReset = await transaction.passwordResetToken.findUnique({
+          where: { tokenHash: hash },
+        });
+        if (!passwordReset || passwordReset.consumedAt || passwordReset.expiresAt <= new Date()) {
+          return { status: 'invalid' as const };
+        }
+        const user = await transaction.user.findUnique({ where: { id: passwordReset.userId } });
+        if (!user) return { status: 'invalid' as const };
+        if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
+          return { status: 'same_password' as const };
+        }
+        const consumed = await transaction.passwordResetToken.updateMany({
+          where: { id: passwordReset.id, consumedAt: null, expiresAt: { gt: new Date() } },
+          data: { consumedAt: new Date() },
+        });
+        if (consumed.count !== 1) return { status: 'invalid' as const };
+        await transaction.user.update({
+          where: { id: user.id },
+          data: { passwordHash: await bcrypt.hash(input.newPassword, 12) },
+        });
+        await transaction.session.deleteMany({ where: { userId: user.id } });
+        return { status: 'reset' as const, userId: user.id };
+      });
+
+      if (result.status === 'same_password') {
+        return res.status(400).json({
+          error: 'New password must be different from the current password',
+          code: 'INVALID_PASSWORD',
+        });
+      }
+      if (result.status !== 'reset') {
+        await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
+        return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
+      }
+      await recordAudit(result.userId, 'PASSWORD_RESET_COMPLETED', 'User', result.userId);
+      return res.status(204).end();
+    }
+
+    const passwordReset = passwordResetTokens.get(hash);
+    if (!passwordReset || passwordReset.consumedAt || passwordReset.expiresAt <= Date.now()) {
+      await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
+      return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
+    }
+
+    const user = users.get(passwordReset.userId);
+    if (!user) {
+      await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
+      return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
+    }
+    if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
+      return res.status(400).json({
+        error: 'New password must be different from the current password',
+        code: 'INVALID_PASSWORD',
+      });
+    }
+
+    passwordResetTokens.set(hash, { ...passwordReset, consumedAt: Date.now() });
+    users.set(user.id, { ...user, passwordHash: await bcrypt.hash(input.newPassword, 12) });
+    await revokeUserSessions(user.id);
+    await recordAudit(user.id, 'PASSWORD_RESET_COMPLETED', 'User', user.id);
+    return res.status(204).end();
+  });
+
   app.get('/api/users/me', authenticate, async (req: AuthRequest, res) => {
     const dbUser = databaseEnabled
       ? await prisma.user.findUnique({ where: { id: req.userId! } })
@@ -1316,9 +1485,7 @@ export function createApp(options: CreateAppOptions = {}) {
       ]);
     } else {
       users.set(user.id, { ...user, passwordHash });
-      for (const [hash, session] of refreshSessions.entries()) {
-        if (session.userId === user.id) refreshSessions.delete(hash);
-      }
+      await revokeUserSessions(user.id);
     }
     await recordAudit(user.id, 'PASSWORD_CHANGED', 'User', user.id);
     return res.status(204).end();
@@ -1964,7 +2131,7 @@ export function createApp(options: CreateAppOptions = {}) {
         fundingRestricted: input.fundingRestricted, payoutRestricted: input.payoutRestricted,
         restrictionReason: input.reason });
       if (input.accountLocked) {
-        for (const [hash, session] of refreshSessions) if (session.userId === userId) refreshSessions.delete(hash);
+        await revokeUserSessions(userId);
       }
     }
     await recordAudit(req.userId, 'ACCOUNT_RESTRICTIONS_UPDATED', 'User', userId, {

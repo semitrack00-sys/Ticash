@@ -56,6 +56,30 @@ describe('Reloadly Sandbox top-up provider', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/countries`);
   });
 
+  it('uses normalized digits in the Reloadly auto-detect path', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json({
+        operatorId: 12,
+        name: 'Sandbox Jamaica Mobile',
+        status: true,
+        country: { isoName: 'JM' },
+        denominationType: 'FIXED',
+        senderCurrencyCode: 'USD',
+        destinationCurrencyCode: 'JMD',
+        fixedAmounts: [5],
+        localFixedAmounts: [780],
+      }));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.detectOperator('+18765551234', 'JM')).resolves.toMatchObject({
+      id: 12,
+      countryCode: 'JM',
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `${config.airtimeBaseUrl}/operators/auto-detect/phone/18765551234/countries/JM`,
+    );
+  });
   it('submits a provider purchase without exposing credentials in its body', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))

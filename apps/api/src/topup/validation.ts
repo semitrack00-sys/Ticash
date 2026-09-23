@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isSupportedCountry, parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js';
 import { MobileTopUpError } from './types.js';
 
 export const topUpCountryCodeShape = z.string().trim().min(1).max(8);
@@ -16,46 +17,57 @@ export function normalizeTopUpCountryCode(value: string): string {
   return normalized;
 }
 
-function normalizeGenericInternationalPhone(value: string): string {
+export function normalizeTopUpPhone(value: string, countryCode: string): string {
+  const normalizedCountry = normalizeTopUpCountryCode(countryCode);
+  if (!isSupportedCountry(normalizedCountry)) {
+    throw new MobileTopUpError(
+      'INVALID_TOPUP_COUNTRY',
+      'This destination country does not have supported phone metadata',
+      400,
+    );
+  }
+
   const compact = value.trim().replace(/[\s().-]/g, '');
   if (!compact) {
     throw new MobileTopUpError(
       'INVALID_TOPUP_PHONE',
-      'Enter a valid international mobile number',
+      'Enter a valid mobile number',
       400,
     );
   }
 
-  let normalized = compact;
-  if (/^00\d+$/.test(normalized)) normalized = `+${normalized.slice(2)}`;
-  if (!/^\+\d+$/.test(normalized)) {
+  const candidate = /^00\d+$/.test(compact)
+    ? `+${compact.slice(2)}`
+    : compact;
+
+  if (!/^\+?\d+$/.test(candidate)) {
     throw new MobileTopUpError(
       'INVALID_TOPUP_PHONE',
-      'Enter a valid international mobile number with a country prefix',
+      'Enter a valid mobile number',
       400,
     );
   }
-  if (!/^\+[1-9]\d{7,14}$/.test(normalized)) {
+
+  const parsed = parsePhoneNumberFromString(
+    candidate,
+    normalizedCountry as CountryCode,
+  );
+
+  if (!parsed || !parsed.isPossible()) {
     throw new MobileTopUpError(
       'INVALID_TOPUP_PHONE',
-      'Enter a valid international mobile number',
+      'Enter a valid mobile number for the selected destination country',
       400,
     );
   }
-  return normalized;
-}
 
-export function normalizeTopUpPhone(value: string, countryCode: string): string {
-  const normalizedCountry = normalizeTopUpCountryCode(countryCode);
-  const compact = value.trim().replace(/[\s().-]/g, '');
-
-  if (normalizedCountry === 'HT' && /^\+?\d+$/.test(compact)) {
-    const digits = compact.replace(/^\+/, '');
-    const localDigits = digits.startsWith('509') ? digits.slice(3) : digits;
-    if (/^\d{8}$/.test(localDigits)) {
-      return `+509${localDigits}`;
-    }
+  if (parsed.country !== normalizedCountry) {
+    throw new MobileTopUpError(
+      'INVALID_TOPUP_PHONE',
+      'The mobile number does not belong to the selected destination country',
+      400,
+    );
   }
 
-  return normalizeGenericInternationalPhone(value);
+  return parsed.number;
 }

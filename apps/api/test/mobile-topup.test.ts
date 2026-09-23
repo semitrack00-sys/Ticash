@@ -443,13 +443,19 @@ describe('Worldwide mobile recharge sandbox API', () => {
       .expect(200);
     expect(detected.body.operator).toMatchObject({ id: 99, countryCode: 'HT' });
 
-    const invalidPhone = await request(app).post('/api/mobile-topups/quotes').set(headers).send({
+    const jamaicaQuote = await request(app).post('/api/mobile-topups/quotes').set(headers).send({
       countryCode: 'JM',
       phone: '8765551234',
       operatorId: 77,
       productId: 'reloadly:JM:77:airtime:7.50',
-    }).expect(400);
-    expect(invalidPhone.body.code).toBe('INVALID_TOPUP_PHONE');
+    }).expect(201);
+    expect(jamaicaQuote.body.quote.recipientPhone).toBe('+18765551234');
+
+    const mismatch = await request(app)
+      .get('/api/mobile-topups/operators/detect?country=HT&phone=%2B18765551234')
+      .set(headers)
+      .expect(400);
+    expect(mismatch.body.code).toBe('INVALID_TOPUP_PHONE');
   });
 
   it('uses provider-returned operators and products for multiple supported countries', async () => {

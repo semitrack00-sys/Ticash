@@ -1180,9 +1180,6 @@ export function createApp(options: CreateAppOptions = {}) {
     const response = {
       message: 'If an account exists for this email, we sent password reset instructions.',
     };
-    const resetToken = randomBytes(32).toString('base64url');
-    const hash = tokenHash(resetToken);
-    const expiresAt = new Date(Date.now() + passwordResetLifetimeMs);
     const user = databaseEnabled
       ? (await prisma.user.findUnique({ where: { email: input.email } }))
       : [...users.values()].find((candidate) => candidate.email === input.email);
@@ -1196,6 +1193,9 @@ export function createApp(options: CreateAppOptions = {}) {
       return res.status(202).json(response);
     }
 
+    const resetToken = randomBytes(32).toString('base64url');
+    const hash = tokenHash(resetToken);
+    const expiresAt = new Date(Date.now() + passwordResetLifetimeMs);
     if (databaseEnabled) {
       await prisma.$transaction([
         prisma.passwordResetToken.deleteMany({
@@ -1354,22 +1354,21 @@ export function createApp(options: CreateAppOptions = {}) {
 
     if (databaseEnabled) {
       const result = await prisma.$transaction(async (transaction) => {
-        const passwordReset = await transaction.passwordResetToken.findUnique({
-          where: { tokenHash: hash },
+        const claimedAt = new Date();
+        const consumed = await transaction.passwordResetToken.updateMany({
+          where: { tokenHash: hash, consumedAt: null, expiresAt: { gt: claimedAt } },
+          data: { consumedAt: claimedAt },
         });
-        if (!passwordReset || passwordReset.consumedAt || passwordReset.expiresAt <= new Date()) {
+        if (consumed.count !== 1) {
           return { status: 'invalid' as const };
         }
+        const passwordReset = await transaction.passwordResetToken.findUnique({ where: { tokenHash: hash } });
+        if (!passwordReset) return { status: 'invalid' as const };
         const user = await transaction.user.findUnique({ where: { id: passwordReset.userId } });
         if (!user) return { status: 'invalid' as const };
         if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
           return { status: 'same_password' as const };
         }
-        const consumed = await transaction.passwordResetToken.updateMany({
-          where: { id: passwordReset.id, consumedAt: null, expiresAt: { gt: new Date() } },
-          data: { consumedAt: new Date() },
-        });
-        if (consumed.count !== 1) return { status: 'invalid' as const };
         await transaction.user.update({
           where: { id: user.id },
           data: { passwordHash: await bcrypt.hash(input.newPassword, 12) },
@@ -1401,6 +1400,8 @@ export function createApp(options: CreateAppOptions = {}) {
       await recordAudit(undefined, 'PASSWORD_RESET_REJECTED', 'Security');
       return res.status(400).json({ error: 'Invalid or expired reset token', code: 'INVALID_RESET_TOKEN' });
     }
+    const claimedAt = Date.now();
+    passwordResetTokens.set(hash, { ...passwordReset, consumedAt: claimedAt });
 
     const user = users.get(passwordReset.userId);
     if (!user) {
@@ -1414,10 +1415,9 @@ export function createApp(options: CreateAppOptions = {}) {
       });
     }
 
-    passwordResetTokens.set(hash, { ...passwordReset, consumedAt: Date.now() });
     for (const [existingHash, session] of passwordResetTokens.entries()) {
-      if (existingHash !== hash && session.userId === user.id && !session.consumedAt && session.expiresAt > Date.now()) {
-        passwordResetTokens.set(existingHash, { ...session, consumedAt: Date.now() });
+      if (existingHash !== hash && session.userId === user.id && !session.consumedAt && session.expiresAt > claimedAt) {
+        passwordResetTokens.set(existingHash, { ...session, consumedAt: claimedAt });
       }
     }
     users.set(user.id, { ...user, passwordHash: await bcrypt.hash(input.newPassword, 12) });

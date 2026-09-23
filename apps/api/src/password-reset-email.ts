@@ -38,6 +38,12 @@ class ResendPasswordResetEmailService implements PasswordResetEmailService {
     resetUrl: string;
     expiresAt: Date;
   }): Promise<void> {
+    const escapedResetUrl = input.resetUrl
+      .replaceAll('&', '&amp;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -56,7 +62,7 @@ class ResendPasswordResetEmailService implements PasswordResetEmailService {
         ].join('\n\n'),
         html: [
           '<p>We received a request to reset your TiCash password.</p>',
-          `<p><a href="${input.resetUrl}">Reset your password</a></p>`,
+          `<p><a href="${escapedResetUrl}">Reset your password</a></p>`,
           `<p>This link expires at ${input.expiresAt.toISOString()}.</p>`,
           '<p>If you did not request this change, you can ignore this email.</p>',
         ].join(''),

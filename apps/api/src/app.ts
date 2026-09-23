@@ -1197,12 +1197,14 @@ export function createApp(options: CreateAppOptions = {}) {
     }
 
     if (databaseEnabled) {
-      await prisma.passwordResetToken.deleteMany({
-        where: { userId: user.id, consumedAt: null, expiresAt: { gt: new Date() } },
-      });
-      await prisma.passwordResetToken.create({
-        data: { userId: user.id, tokenHash: hash, expiresAt },
-      });
+      await prisma.$transaction([
+        prisma.passwordResetToken.deleteMany({
+          where: { userId: user.id, consumedAt: null, expiresAt: { gt: new Date() } },
+        }),
+        prisma.passwordResetToken.create({
+          data: { userId: user.id, tokenHash: hash, expiresAt },
+        }),
+      ]);
     } else {
       for (const [existingHash, session] of passwordResetTokens.entries()) {
         if (session.userId === user.id && !session.consumedAt && session.expiresAt > Date.now()) {
@@ -1234,9 +1236,7 @@ export function createApp(options: CreateAppOptions = {}) {
       await recordAudit(user.id, 'PASSWORD_RESET_REQUEST_FAILED', 'Security', user.id, {
         reason: error instanceof PasswordResetEmailDeliveryError ? error.message : 'DELIVERY_FAILED',
       });
-      if (!(error instanceof PasswordResetEmailDeliveryError)) {
-        throw new SecurityError('PASSWORD_RESET_UNAVAILABLE', 'Password reset is temporarily unavailable', 503);
-      }
+      throw new SecurityError('PASSWORD_RESET_UNAVAILABLE', 'Password reset is temporarily unavailable', 503);
     }
 
     return res.status(202).json(response);

@@ -2,7 +2,10 @@ import { randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
-import type { PasswordResetEmailService } from '../src/password-reset-email.js';
+import {
+  PasswordResetEmailDeliveryError,
+  type PasswordResetEmailService,
+} from '../src/password-reset-email.js';
 
 const account = {
   email: 'recover@example.com',
@@ -21,6 +24,14 @@ class MemoryPasswordResetEmailService implements PasswordResetEmailService {
     expiresAt: Date;
   }): Promise<void> {
     this.deliveries.push(input);
+  }
+}
+
+class FailingPasswordResetEmailService implements PasswordResetEmailService {
+  readonly configured = true;
+
+  async sendPasswordReset(): Promise<void> {
+    throw new PasswordResetEmailDeliveryError();
   }
 }
 
@@ -63,6 +74,17 @@ describe('password recovery', () => {
     expect(unknown.body).toEqual(existing.body);
     expect(existing.body.resetToken).toBeUndefined();
     expect(emailService.deliveries).toHaveLength(1);
+  });
+
+  it('returns an error when a configured provider cannot deliver the reset email', async () => {
+    const app = createApp({ passwordResetEmailService: new FailingPasswordResetEmailService() });
+    await request(app).post('/api/auth/register').send(account).expect(201);
+
+    const response = await request(app).post('/api/auth/forgot-password').send({
+      email: account.email,
+    }).expect(503);
+
+    expect(response.body.code).toBe('PASSWORD_RESET_UNAVAILABLE');
   });
 
   it('resets the password, revokes all refresh sessions, and rejects token reuse', async () => {

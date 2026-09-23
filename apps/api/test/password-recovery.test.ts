@@ -290,7 +290,7 @@ describe('password recovery', () => {
     ]);
 
     const statuses = [first.status, second.status].sort((left, right) => left - right);
-    expect(statuses).toEqual([400, 204]);
+    expect(statuses).toEqual([204, 400]);
     expect([first.body.code, second.body.code].filter(Boolean)).toEqual(['INVALID_RESET_TOKEN']);
 
     const loginWithFirst = await request(app).post('/api/auth/login').send({

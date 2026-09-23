@@ -150,9 +150,27 @@ enum MobileTopUpStatus {
 
 enum MobileTopUpPaymentStatus {
   PENDING
+  SESSION_CREATED
   AUTHORIZED
+  CAPTURED
   FAILED
+  VOID_PENDING
+  VOIDED
+  REFUND_PENDING
   REFUNDED
+}
+
+enum MobileTopUpPaymentMethod {
+  CARD
+  APPLE_PAY
+  GOOGLE_PAY
+  BANK_ACCOUNT
+}
+
+enum MobileTopUpPaymentProviderName {
+  MOCK
+  CHECKOUT_COM
+  DWOLLA
 }
 
 model User {
@@ -558,6 +576,15 @@ model MobileTopUpTransaction {
   status                MobileTopUpStatus         @default(PENDING)
   paymentStatus         MobileTopUpPaymentStatus  @default(PENDING)
   paymentAuthorizationId String?
+  paymentMethod         MobileTopUpPaymentMethod?
+  paymentProvider       MobileTopUpPaymentProviderName?
+  paymentSessionId      String?
+  paymentProviderTransactionId String?
+  paymentStartedAt      DateTime?
+  fulfillmentStartedAt  DateTime?
+  recoveryStartedAt     DateTime?
+  paymentRecoveryCode   String?
+  paymentEvents         MobileTopUpPaymentEvent[]
   countryCode           String                    @default("HT")
   recipientPhone        String
   operatorId            Int
@@ -585,8 +612,26 @@ model MobileTopUpTransaction {
 
   @@unique([userId, idempotencyKey])
   @@unique([provider, providerTransactionId])
+  @@unique([paymentProvider, paymentSessionId])
+  @@unique([paymentProvider, paymentProviderTransactionId])
+  @@index([paymentStatus, updatedAt])
   @@index([userId, createdAt])
   @@index([status, updatedAt])
+}
+
+// No raw webhook payloads, card data or payment session tokens are stored.
+model MobileTopUpPaymentEvent {
+  id            String @id @default(uuid())
+  provider      MobileTopUpPaymentProviderName
+  eventId       String
+  payloadHash   String
+  transactionId String
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+  transaction   MobileTopUpTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, eventId])
+  @@index([transactionId, createdAt])
 }
 
 model CorridorConfig {

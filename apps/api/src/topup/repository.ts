@@ -3,6 +3,8 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
   MobileTopUpKind,
   MobileTopUpPaymentStatus,
+  MobileTopUpPaymentMethod,
+  MobileTopUpPaymentProviderName,
   MobileTopUpStatus,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
@@ -53,6 +55,14 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   status: MobileTopUpStatus;
   paymentStatus: MobileTopUpPaymentStatus;
   paymentAuthorizationId?: string;
+  paymentMethod?: MobileTopUpPaymentMethod;
+  paymentProvider?: MobileTopUpPaymentProviderName;
+  paymentSessionId?: string;
+  paymentProviderTransactionId?: string;
+  paymentStartedAt?: string;
+  fulfillmentStartedAt?: string;
+  recoveryStartedAt?: string;
+  paymentRecoveryCode?: string;
   providerStatus?: string;
   failureCode?: string;
   testMode: true;
@@ -70,33 +80,75 @@ export interface MobileTopUpRepository {
   getQuote(userId: string, id: string): Promise<MobileTopUpQuoteRecord | undefined>;
   markQuoteConsumed(userId: string, id: string, when: string): Promise<void>;
   reserveTransaction(input: MobileTopUpTransactionRecord): Promise<{ record: MobileTopUpTransactionRecord; created: boolean }>;
+  getTransactionById(id: string): Promise<MobileTopUpTransactionRecord | undefined>;
+  claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
+  transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
+  registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string): Promise<boolean>;
+  completePaymentEvent(eventId: string): Promise<void>;
   getTransactionByIdempotency(userId: string, key: string): Promise<MobileTopUpTransactionRecord | undefined>;
   getTransaction(userId: string, id: string): Promise<MobileTopUpTransactionRecord | undefined>;
   listTransactions(userId: string): Promise<MobileTopUpTransactionRecord[]>;
-  updateTransaction(id: string, input: Partial<Pick<MobileTopUpTransactionRecord,
-    'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
-    'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
-    'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt'>>): Promise<MobileTopUpTransactionRecord>;
+  updateTransaction(id: string, input: TransactionUpdate): Promise<MobileTopUpTransactionRecord>;
   postDeliveredLedger(record: MobileTopUpTransactionRecord): Promise<void>;
   postRefundLedger(record: MobileTopUpTransactionRecord): Promise<void>;
   reset?(): void;
 }
 
+export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
+    'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
+    'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
+    'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
+    'paymentProvider' | 'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode'>>;
+
 const recipients = new Map<string, SavedTopUpRecipientRecord>();
 const quotes = new Map<string, MobileTopUpQuoteRecord>();
 const transactions = new Map<string, MobileTopUpTransactionRecord>();
 const ledgerReferences = new Set<string>();
+const paymentEvents = new Map<string, { payloadHash: string; transactionId: string; processed: boolean }>();
 
 export function resetMobileTopUpStore(): void {
   recipients.clear();
   quotes.clear();
   transactions.clear();
   ledgerReferences.clear();
+  paymentEvents.clear();
 }
 
 function now(): string { return new Date().toISOString(); }
 
 export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
+  async getTransactionById(id: string) { return transactions.get(id); }
+
+  async claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string) {
+    const record = transactions.get(id);
+    const field = operationField(operation);
+    if (!record || record[field]) return false;
+    if (operation === 'payment' && (!['PENDING', 'SESSION_CREATED'].includes(record.paymentStatus) || record.paymentProvider !== 'MOCK')) return false;
+    if (operation === 'fulfillment' && (record.providerTransactionId || record.status !== 'PENDING' || !paid(record))) return false;
+    if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
+    transactions.set(id, { ...record, [field]: when, updatedAt: now() });
+    return true;
+  }
+
+  async transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate) {
+    const record = transactions.get(id);
+    if (!record || !from.includes(record.paymentStatus)) return false;
+    if (input.paymentProviderTransactionId && record.paymentProviderTransactionId && input.paymentProviderTransactionId !== record.paymentProviderTransactionId) return false;
+    transactions.set(id, { ...record, ...input, updatedAt: now() });
+    return true;
+  }
+
+  async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
+    const existing = paymentEvents.get(eventId);
+    if (existing) {
+      assertSameEvent(existing, payloadHash, transactionId);
+      return !existing.processed;
+    }
+    paymentEvents.set(eventId, { payloadHash, transactionId, processed: false });
+    return true;
+  }
+  async completePaymentEvent(eventId: string) { paymentEvents.get(eventId)!.processed = true; }
+
   async listRecipients(userId: string) {
     return [...recipients.values()]
       .filter((item) => item.userId === userId)
@@ -150,6 +202,11 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     if (replay) return { record: replay, created: false };
     const sameQuote = [...transactions.values()].find((item) => item.quoteId === input.quoteId);
     if (sameQuote) throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote was already submitted', 409);
+    const quote = quotes.get(input.quoteId);
+    if (!quote || quote.userId !== input.userId || quote.consumedAt || quote.expiresAt <= input.createdAt) {
+      throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote is no longer available', 409);
+    }
+    quotes.set(quote.id, { ...quote, consumedAt: input.createdAt });
     transactions.set(input.id, input);
     return { record: input, created: true };
   }
@@ -227,6 +284,10 @@ function transactionFromDb(record: {
   deliveredCurrency: string; feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; providerStatus: string | null;
   failureCode: string | null; testMode: boolean; createdAt: Date; updatedAt: Date; deliveredAt: Date | null;
   failedAt: Date | null; refundedAt: Date | null;
+  paymentMethod?: MobileTopUpPaymentMethod | null; paymentProvider?: MobileTopUpPaymentProviderName | null;
+  paymentSessionId?: string | null; paymentProviderTransactionId?: string | null;
+  paymentStartedAt?: Date | null; fulfillmentStartedAt?: Date | null; recoveryStartedAt?: Date | null;
+  paymentRecoveryCode?: string | null;
 }): MobileTopUpTransactionRecord {
   return {
     id: record.id,
@@ -241,6 +302,14 @@ function transactionFromDb(record: {
     status: record.status,
     paymentStatus: record.paymentStatus,
     paymentAuthorizationId: record.paymentAuthorizationId ?? undefined,
+    paymentMethod: record.paymentMethod ?? undefined,
+    paymentProvider: record.paymentProvider ?? undefined,
+    paymentSessionId: record.paymentSessionId ?? undefined,
+    paymentProviderTransactionId: record.paymentProviderTransactionId ?? undefined,
+    paymentStartedAt: record.paymentStartedAt?.toISOString(),
+    fulfillmentStartedAt: record.fulfillmentStartedAt?.toISOString(),
+    recoveryStartedAt: record.recoveryStartedAt?.toISOString(),
+    paymentRecoveryCode: record.paymentRecoveryCode ?? undefined,
     countryCode: record.countryCode,
     recipientPhone: record.recipientPhone,
     operatorId: record.operatorId,
@@ -267,6 +336,47 @@ function transactionFromDb(record: {
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async getTransactionById(id: string) {
+    const record = await this.prisma.mobileTopUpTransaction.findUnique({ where: { id } });
+    return record ? transactionFromDb(record) : undefined;
+  }
+
+  async claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string) {
+    const where: Prisma.MobileTopUpTransactionWhereInput = { id, [operationField(operation)]: null };
+    if (operation === 'payment') Object.assign(where, { paymentProvider: 'MOCK', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } });
+    if (operation === 'fulfillment') Object.assign(where, {
+      providerTransactionId: null, status: 'PENDING', OR: [
+        { paymentProvider: 'MOCK', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
+        { paymentProvider: 'CHECKOUT_COM', paymentStatus: 'CAPTURED' },
+      ],
+    });
+    if (operation === 'recovery') where.paymentStatus = { in: ['AUTHORIZED', 'CAPTURED'] };
+    const result = await this.prisma.mobileTopUpTransaction.updateMany({ where, data: { [operationField(operation)]: new Date(when) } });
+    return result.count === 1;
+  }
+
+  async transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate) {
+    const result = await this.prisma.mobileTopUpTransaction.updateMany({
+      where: { id, paymentStatus: { in: from }, ...(input.paymentProviderTransactionId ? { OR: [
+        { paymentProviderTransactionId: null }, { paymentProviderTransactionId: input.paymentProviderTransactionId },
+      ] } : {}) },
+      data: transactionUpdateData(input),
+    });
+    return result.count === 1;
+  }
+
+  async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
+    const record = await this.prisma.mobileTopUpPaymentEvent.upsert({
+      where: { provider_eventId: { provider: 'CHECKOUT_COM', eventId } },
+      create: { provider: 'CHECKOUT_COM', eventId, payloadHash, transactionId }, update: {},
+    });
+    assertSameEvent(record, payloadHash, transactionId);
+    return !record.processedAt;
+  }
+  async completePaymentEvent(eventId: string) {
+    await this.prisma.mobileTopUpPaymentEvent.update({ where: { provider_eventId: { provider: 'CHECKOUT_COM', eventId } }, data: { processedAt: new Date() } });
+  }
 
   async listRecipients(userId: string) {
     const records = await this.prisma.mobileTopUpRecipient.findMany({ where: { userId }, orderBy: { updatedAt: 'desc' } });
@@ -333,22 +443,33 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     });
     if (existing) return { record: transactionFromDb(existing), created: false };
     try {
-      const record = await this.prisma.mobileTopUpTransaction.create({ data: {
-        ...input,
-        provider: 'RELOADLY',
-        testMode: true,
-        recipientId: input.recipientId,
-        countryCode: input.countryCode,
-        deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : null,
-        failedAt: input.failedAt ? new Date(input.failedAt) : null,
-        refundedAt: input.refundedAt ? new Date(input.refundedAt) : null,
-        createdAt: new Date(input.createdAt),
-        updatedAt: new Date(input.updatedAt),
-      } });
+      const record = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.mobileTopUpQuote.updateMany({
+          where: { id: input.quoteId, userId: input.userId, consumedAt: null, expiresAt: { gt: new Date(input.createdAt) } },
+          data: { consumedAt: new Date(input.createdAt) },
+        });
+        if (claimed.count !== 1) throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote is no longer available', 409);
+        return tx.mobileTopUpTransaction.create({ data: {
+          ...input,
+          provider: 'RELOADLY',
+          testMode: true,
+          paymentStartedAt: input.paymentStartedAt ? new Date(input.paymentStartedAt) : null,
+          fulfillmentStartedAt: input.fulfillmentStartedAt ? new Date(input.fulfillmentStartedAt) : null,
+          recoveryStartedAt: input.recoveryStartedAt ? new Date(input.recoveryStartedAt) : null,
+          recipientId: input.recipientId,
+          countryCode: input.countryCode,
+          deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : null,
+          failedAt: input.failedAt ? new Date(input.failedAt) : null,
+          refundedAt: input.refundedAt ? new Date(input.refundedAt) : null,
+          createdAt: new Date(input.createdAt),
+          updatedAt: new Date(input.updatedAt),
+        } });
+      });
       return { record: transactionFromDb(record), created: true };
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const replay = await this.prisma.mobileTopUpTransaction.findUnique({ where: { quoteId: input.quoteId } });
+      if ((error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') ||
+          (error instanceof MobileTopUpError && error.code === 'TOPUP_QUOTE_ALREADY_USED')) {
+        const replay = await this.prisma.mobileTopUpTransaction.findUnique({ where: { userId_idempotencyKey: { userId: input.userId, idempotencyKey: input.idempotencyKey } } });
         if (replay?.userId === input.userId && replay.idempotencyKey === input.idempotencyKey) {
           return { record: transactionFromDb(replay), created: false };
         }
@@ -376,20 +497,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async updateTransaction(id: string, input: Partial<MobileTopUpTransactionRecord>) {
-    const record = await this.prisma.mobileTopUpTransaction.update({ where: { id }, data: {
-      providerTransactionId: input.providerTransactionId,
-      operatorTransactionId: input.operatorTransactionId,
-      status: input.status,
-      paymentStatus: input.paymentStatus,
-      paymentAuthorizationId: input.paymentAuthorizationId,
-      providerStatus: input.providerStatus,
-      failureCode: input.failureCode,
-      deliveredValue: input.deliveredValue,
-      deliveredCurrency: input.deliveredCurrency,
-      deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : undefined,
-      failedAt: input.failedAt ? new Date(input.failedAt) : undefined,
-      refundedAt: input.refundedAt ? new Date(input.refundedAt) : undefined,
-    } });
+    const record = await this.prisma.mobileTopUpTransaction.update({ where: { id }, data: transactionUpdateData(input) });
     return transactionFromDb(record);
   }
 
@@ -437,4 +545,24 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       ] });
     });
   }
+}
+
+function operationField(operation: 'payment' | 'fulfillment' | 'recovery') {
+  return ({ payment: 'paymentStartedAt', fulfillment: 'fulfillmentStartedAt', recovery: 'recoveryStartedAt' } as const)[operation];
+}
+function paid(record: MobileTopUpTransactionRecord) {
+  return record.paymentProvider === 'CHECKOUT_COM' ? record.paymentStatus === 'CAPTURED'
+    : record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
+}
+function assertSameEvent(record: { payloadHash: string; transactionId: string }, hash: string, transactionId: string) {
+  if (record.payloadHash !== hash || record.transactionId !== transactionId) {
+    throw new MobileTopUpError('PAYMENT_EVENT_CONFLICT', 'Payment event identity conflict', 409);
+  }
+}
+function transactionUpdateData(input: TransactionUpdate): Prisma.MobileTopUpTransactionUpdateManyMutationInput {
+  return { ...input,
+    deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : undefined,
+    failedAt: input.failedAt ? new Date(input.failedAt) : undefined,
+    refundedAt: input.refundedAt ? new Date(input.refundedAt) : undefined,
+  };
 }

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
 import {
   PasswordResetEmailDeliveryError,
+  loadPasswordResetEmailService,
+  passwordResetUrl,
   type PasswordResetEmailService,
 } from '../src/password-reset-email.js';
 
@@ -27,10 +29,9 @@ class MemoryPasswordResetEmailService implements PasswordResetEmailService {
   }
 }
 
-class FailingPasswordResetEmailService implements PasswordResetEmailService {
-  readonly configured = true;
-
-  async sendPasswordReset(): Promise<void> {
+class FailingPasswordResetEmailService extends MemoryPasswordResetEmailService {
+  async sendPasswordReset(input: { to: string; resetUrl: string; expiresAt: Date }): Promise<void> {
+    this.deliveries.push(input);
     throw new PasswordResetEmailDeliveryError();
   }
 }
@@ -76,15 +77,18 @@ describe('password recovery', () => {
     expect(emailService.deliveries).toHaveLength(1);
   });
 
-  it('returns an error when a configured provider cannot deliver the reset email', async () => {
-    const app = createApp({ passwordResetEmailService: new FailingPasswordResetEmailService() });
+  it('conceals provider failure and removes the undelivered reset token', async () => {
+    const service = new FailingPasswordResetEmailService();
+    const app = createApp({ passwordResetEmailService: service });
     await request(app).post('/api/auth/register').send(account).expect(201);
 
     const response = await request(app).post('/api/auth/forgot-password').send({
       email: account.email,
-    }).expect(503);
-
-    expect(response.body.code).toBe('PASSWORD_RESET_UNAVAILABLE');
+    }).expect(202);
+    const unknown = await request(app).post('/api/auth/forgot-password').send({email:'unknown@example.com'}).expect(202);
+    expect(response.body).toEqual(unknown.body);
+    expect(response.body).toEqual({message:'If an account exists for this email, we sent password reset instructions.'});
+    await request(app).post('/api/auth/reset-password').send({token:issuedResetToken(service),newPassword:'different-password'}).expect(400);
   });
 
   it('resets the password, revokes all refresh sessions, and rejects token reuse', async () => {
@@ -234,6 +238,19 @@ describe('password recovery', () => {
 
     expect(response.body.code).toBe('INVALID_PASSWORD');
     expect(response.body.error).toBe('New password must be different from the current password');
+    await request(app).post('/api/auth/reset-password').send({token,newPassword:'lowercase-only'}).expect(204);
+    await request(app).post('/api/auth/reset-password').send({token,newPassword:'another-password'}).expect(400);
+  });
+
+
+  it('allows only one concurrent reset using the same token', async () => {
+    const service = new MemoryPasswordResetEmailService();
+    const app = createApp({passwordResetEmailService:service});
+    await request(app).post('/api/auth/register').send(account).expect(201);
+    await request(app).post('/api/auth/forgot-password').send({email:account.email}).expect(202);
+    const token=issuedResetToken(service);
+    const results=await Promise.all(['different-password-one','different-password-two'].map(newPassword=>request(app).post('/api/auth/reset-password').send({token,newPassword})));
+    expect(results.map(r=>r.status).sort()).toEqual([204,400]);
   });
 
   it('rate limits forgot-password attempts', async () => {
@@ -249,5 +266,18 @@ describe('password recovery', () => {
       email: 'rate-limit-6@example.com',
     }).expect(429);
     expect(limited.body.code).toBe('RATE_LIMITED');
+  });
+});
+
+
+describe('password reset URL security', () => {
+  it.each(['javascript:alert(1)','data:text/plain,hello','/reset','not a url','http://example.com/reset','https://user:password@example.com/reset','https://example.com/reset#fragment'])('rejects unsafe URL %s', base => {
+    expect(()=>passwordResetUrl('fixture', {PASSWORD_RESET_URL_BASE:base,NODE_ENV:'development'})).toThrow();
+    expect(()=>loadPasswordResetEmailService({PASSWORD_RESET_URL_BASE:base})).toThrow();
+  });
+  it('permits HTTPS and development loopback HTTP, but rejects HTTP in production',()=>{
+    expect(passwordResetUrl('fixture',{PASSWORD_RESET_URL_BASE:'https://example.com/recharge/reset-password',NODE_ENV:'production'})).toBe('https://example.com/recharge/reset-password?token=fixture');
+    expect(passwordResetUrl('fixture',{PASSWORD_RESET_URL_BASE:'http://localhost:3000/reset',NODE_ENV:'test'})).toContain('token=fixture');
+    expect(()=>passwordResetUrl('fixture',{PASSWORD_RESET_URL_BASE:'http://localhost:3000/reset',NODE_ENV:'production'})).toThrow();
   });
 });

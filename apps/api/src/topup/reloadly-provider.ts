@@ -215,8 +215,16 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
 
   async detectOperator(phone: string, countryCode: string): Promise<MobileTopUpOperator> {
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
+    const providerPhone = phone.replace(/\D/g, '');
+    if (!/^[1-9]\d{7,14}$/.test(providerPhone)) {
+      throw new MobileTopUpError(
+        'INVALID_TOPUP_PHONE',
+        'Enter a valid mobile number',
+        400,
+      );
+    }
     const body = await this.request(
-      `operators/auto-detect/phone/${encodeURIComponent(phone)}/countries/${normalizedCountry}`,
+      `operators/auto-detect/phone/${providerPhone}/countries/${normalizedCountry}`,
     );
     return mapOperator(body);
   }

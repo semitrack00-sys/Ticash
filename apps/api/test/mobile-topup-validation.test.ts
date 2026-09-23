@@ -15,9 +15,10 @@ describe('mobile top-up validation helpers', () => {
     expect(normalizeTopUpPhone('+509 37 12 34 56', 'HT')).toBe('+50937123456');
   });
 
-  it('requires international numbers when safe country-specific normalization is unavailable', () => {
+  it('normalizes national and international numbers for the selected country', () => {
     expect(normalizeTopUpPhone('00 1 876 555 1234', 'JM')).toBe('+18765551234');
-    expect(() => normalizeTopUpPhone('8765551234', 'JM')).toThrow(/international mobile number/i);
+    expect(normalizeTopUpPhone('8765551234', 'JM')).toBe('+18765551234');
+    expect(() => normalizeTopUpPhone('+1 876 555 1234', 'HT')).toThrow(/selected destination country/i);
     expect(() => normalizeTopUpCountryCode('1')).toThrow(/destination country code/i);
   });
 });

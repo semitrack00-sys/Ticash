@@ -75,6 +75,7 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
   const maxAmount = Number(raw.maxAmount);
   return {
     id,
+    provider: 'RELOADLY',
     name: String(raw.name ?? `Operator ${id}`).slice(0, 160),
     countryCode,
     status: raw.status !== false,
@@ -125,6 +126,7 @@ function mapTopUp(raw: ReloadlyDocument): ProviderTopUpResult {
 }
 
 export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
+  readonly name = 'RELOADLY' as const;
   private token?: { value: string; expiresAt: number };
 
   constructor(
@@ -197,7 +199,10 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
 
   async listCountries(): Promise<MobileTopUpCountry[]> {
     const body = await this.request('countries');
-    const raw = Array.isArray(body) ? body : Array.isArray(body.content) ? body.content : [];
+    const raw = Array.isArray(body) ? body : body.content;
+    if (!Array.isArray(raw) || raw.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned an invalid catalog', 502);
+    }
     return raw
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
       .map(mapCountry);
@@ -206,7 +211,10 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
   async listOperators(countryCode: string): Promise<MobileTopUpOperator[]> {
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const body = await this.request(`operators/countries/${normalizedCountry}`);
-    const raw = Array.isArray(body) ? body : Array.isArray(body.content) ? body.content : [];
+    const raw = Array.isArray(body) ? body : body.content;
+    if (!Array.isArray(raw) || raw.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned an invalid catalog', 502);
+    }
     return raw
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
       .map(mapOperator)

@@ -49,7 +49,7 @@ describe('PrismaMobileTopUpRepository', () => {
       expiresAt: storedQuote.expiresAt.toISOString(),
     });
 
-    expect(quote).not.toHaveProperty('provider');
+    expect(quote.provider).toBe('RELOADLY');
     expect(quote).not.toHaveProperty('testMode');
     expect(quote).toMatchObject({
       id: 'quote-id',
@@ -73,6 +73,28 @@ describe('payment foundation persistence', () => {
     paymentMethod:null,paymentProvider:null,paymentSessionId:null,paymentProviderTransactionId:null,
     paymentStartedAt:null,fulfillmentStartedAt:null,recoveryStartedAt:null,paymentRecoveryCode:null };
 
+  it('persists DT One provider and exact product in quote, transaction and recipient database writes', async () => {
+    const identity = { provider: 'DTONE' as const, providerProductId: '56876', operatorId: 700000255, productId: 'dtone:JM:700000255:product:56876' };
+    const quoteRow = { ...row, ...identity, id: 'quote', expiresAt: timestamp, consumedAt: null };
+    const quoteCreate = vi.fn(async () => quoteRow);
+    const transactionCreate = vi.fn(async () => ({ ...row, ...identity }));
+    const recipientRow = { id: 'recipient', userId: 'customer', nickname: 'Test', phone: '+18765551234', countryCode: 'JM', provider: 'DTONE' as const, operatorId: 700000255, operatorName: 'Fixture', lastProductId: null, lastProductName: null, createdAt: timestamp, updatedAt: timestamp };
+    const upsert = vi.fn().mockResolvedValue(recipientRow);
+    const repository = new PrismaMobileTopUpRepository({
+      mobileTopUpQuote: { create: quoteCreate }, mobileTopUpRecipient: { upsert },
+      mobileTopUpTransaction: { findUnique: vi.fn(async () => null) },
+      $transaction: async (fn: (tx: unknown) => unknown) => fn({ mobileTopUpQuote: { updateMany: vi.fn(async () => ({ count: 1 })) }, mobileTopUpTransaction: { create: transactionCreate } }),
+    } as never);
+    const quote = await repository.createQuote({ ...identity, userId: 'customer', countryCode: 'JM', recipientPhone: recipientRow.phone, operatorName: 'Fixture', productName: 'Exact product', kind: 'AIRTIME', providerAmount: 5, providerCurrency: 'USD', deliveredCurrency: 'JMD', feeUsd: 3.5, totalChargeUsd: 8.5, expiresAt: timestamp.toISOString() });
+    expect(quote).toMatchObject(identity);
+    expect(quoteCreate).toHaveBeenCalledWith({ data: expect.objectContaining(identity) });
+    const reserved = await repository.reserveTransaction({ ...quote, id: 'transaction', quoteId: quote.id, idempotencyKey: 'fixture-key', requestHash: 'hash', customIdentifier: 'fixture-reference', status: 'PENDING', paymentStatus: 'AUTHORIZED', testMode: true, updatedAt: timestamp.toISOString() });
+    expect(reserved.record).toMatchObject(identity);
+    expect(transactionCreate).toHaveBeenCalledWith({ data: expect.objectContaining(identity) });
+    const recipient = await repository.saveRecipient({ userId: 'customer', nickname: 'Test', phone: recipientRow.phone, countryCode: 'JM', provider: 'DTONE', operatorId: 700000255 });
+    expect(recipient).toMatchObject({ provider: 'DTONE', operatorId: 700000255 });
+    expect(upsert.mock.calls[0]![0]).toMatchObject({ create: { provider: 'DTONE', operatorId: 700000255 }, update: { provider: 'DTONE', operatorId: 700000255 } });
+  });
   it('reads legacy NULL metadata without relabeling existing payment records', async () => {
     const repository=new PrismaMobileTopUpRepository({mobileTopUpTransaction:{findUnique:vi.fn(async()=>row)}} as never);
     expect(await repository.getTransactionById('transaction')).toMatchObject({paymentStatus:'AUTHORIZED',paymentAuthorizationId:'old-authorization',paymentProvider:undefined,paymentMethod:undefined,totalChargeUsd:8.5});

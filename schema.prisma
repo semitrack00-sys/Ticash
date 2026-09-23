@@ -131,6 +131,7 @@ enum NotificationStatus {
 }
 
 enum MobileTopUpProviderName {
+  DTONE
   RELOADLY
   DING
 }
@@ -530,6 +531,7 @@ model LedgerEntry {
 }
 
 model MobileTopUpRecipient {
+  provider        MobileTopUpProviderName?
   id              String                   @id @default(uuid())
   userId          String
   nickname        String
@@ -549,6 +551,7 @@ model MobileTopUpRecipient {
 }
 
 model MobileTopUpQuote {
+  providerProductId     String?
   id                    String                   @id @default(uuid())
   userId                String
   provider              MobileTopUpProviderName @default(RELOADLY)
@@ -577,6 +580,7 @@ model MobileTopUpQuote {
 }
 
 model MobileTopUpTransaction {
+  providerProductId     String?
   id                    String                    @id @default(uuid())
   userId                String
   recipientId           String?

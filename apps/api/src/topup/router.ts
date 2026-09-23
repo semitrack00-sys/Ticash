@@ -17,14 +17,14 @@ const recipientSchema = z.object({
   nickname: z.string().trim().min(1).max(80),
   phone: topUpPhoneShape,
   countryCode: topUpCountryCodeShape,
-  operatorId: z.number().int().positive().optional(),
+  operatorId: z.number().int().positive().max(2_147_483_647).optional(),
   operatorName: z.string().trim().min(1).max(160).optional(),
 }).strict();
 
 const quoteSchema = z.object({
   countryCode: topUpCountryCodeShape,
   phone: topUpPhoneShape,
-  operatorId: z.number().int().positive(),
+  operatorId: z.number().int().positive().max(2_147_483_647),
   productId: z.string().min(1).max(240),
   amount: z.number().positive().multipleOf(0.01).optional(),
 }).strict();
@@ -57,6 +57,10 @@ export function createMobileTopUpRouter(options: {
     res.json(options.service.availability());
   }));
 
+  router.get('/coverage', ...protectedRoute, asyncRoute(async (_req, res) => {
+    res.json(await options.service.coverage());
+  }));
+
   router.get('/countries', ...protectedRoute, asyncRoute(async (_req, res) => {
     res.json({ countries: await options.service.listCountries() });
   }));
@@ -73,7 +77,7 @@ export function createMobileTopUpRouter(options: {
   }));
 
   router.get('/operators/:id/products', ...protectedRoute, asyncRoute(async (req, res) => {
-    const operatorId = z.coerce.number().int().positive().parse(req.params.id);
+    const operatorId = z.coerce.number().int().positive().max(2_147_483_647).parse(req.params.id);
     const countryCode = topUpCountryCodeShape.parse(req.query.country);
     res.json(await options.service.products(countryCode, operatorId));
   }));

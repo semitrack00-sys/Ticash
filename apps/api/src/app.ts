@@ -59,6 +59,7 @@ import {
 import { createMobileTopUpRouter } from './topup/router.js';
 import { MobileTopUpService } from './topup/service.js';
 import { loadCheckoutConfig } from './topup/checkout-config.js';
+import { CheckoutSandboxPaymentProvider } from './topup/checkout-provider.js';
 import { createCheckoutWebhookHandler } from './topup/checkout-webhook.js';
 import {
   MockMobileTopUpPaymentProvider,
@@ -635,6 +636,8 @@ export interface CreateAppOptions {
   mobileTopUpConfig?: MobileTopUpConfig;
   mobileTopUpProvider?: MobileTopUpProvider;
   mobileTopUpPaymentProvider?: MobileTopUpPaymentProvider;
+  mobileTopUpCheckoutProvider?: CheckoutSandboxPaymentProvider;
+  checkoutConfig?: ReturnType<typeof loadCheckoutConfig>;
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
   passwordResetEmailService?: PasswordResetEmailService;
@@ -924,7 +927,7 @@ export function createApp(options: CreateAppOptions = {}) {
   );
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
-  const checkoutConfig = loadCheckoutConfig();
+  const checkoutConfig = options.checkoutConfig ?? loadCheckoutConfig();
   const dtOneConfig = loadDtOneConfig();
   const dingConfig = loadDingConfig();
   // Inspect configuration itself, not the public status object's constant labels.
@@ -948,7 +951,24 @@ export function createApp(options: CreateAppOptions = {}) {
     ...(dtOneConfig.enabled ? [['DTONE', new DtOnePreproductionProvider(dtOneConfig)] as ['DTONE', MobileTopUpProvider]] : []),
     ...(dingConfig.enabled ? [['DING', new DingUatProvider(dingConfig)] as ['DING', MobileTopUpProvider]] : []),
   ] : []);
-  const mobileTopUpPaymentProvider = options.mobileTopUpPaymentProvider ?? new MockMobileTopUpPaymentProvider();
+  const mobileTopUpPaymentProvider =
+    options.mobileTopUpPaymentProvider ?? new MockMobileTopUpPaymentProvider();
+
+  const mobileTopUpCheckoutProvider =
+    options.mobileTopUpCheckoutProvider ??
+    (checkoutConfig.enabled
+      ? new CheckoutSandboxPaymentProvider(checkoutConfig)
+      : undefined);
+
+  if (
+    mobileTopUpConfig.paymentMode === 'checkout_sandbox' &&
+    !mobileTopUpCheckoutProvider
+  ) {
+    throw new Error(
+      'MOBILE_TOPUP_PAYMENT_MODE=checkout_sandbox requires complete Checkout.com Sandbox configuration',
+    );
+  }
+
   const mobileTopUpService = new MobileTopUpService(
     mobileTopUpConfig,
     mobileTopUpProvider,
@@ -956,6 +976,7 @@ export function createApp(options: CreateAppOptions = {}) {
     mobileTopUpRepository,
     recordAudit,
     options.mobileTopUpClock,
+    mobileTopUpCheckoutProvider,
   );
   const effectiveQuotePricing = async () => {
     let active = await activeAdminConfiguration();
@@ -1114,6 +1135,19 @@ export function createApp(options: CreateAppOptions = {}) {
     isGuest: async (userId) => Boolean(databaseEnabled
       ? (await prisma.user.findUnique({ where: { id: userId }, select: { guestExpiresAt: true } }))?.guestExpiresAt
       : users.get(userId)?.guestExpiresAt),
+    billingCountryForUser: async (userId) => {
+      const countryCode = databaseEnabled
+        ? (await prisma.user.findUnique({
+            where: { id: userId },
+            select: { countryCode: true },
+          }))?.countryCode
+        : users.get(userId)?.countryCode;
+
+      return typeof countryCode === 'string' &&
+        /^[A-Za-z]{2}$/.test(countryCode)
+        ? countryCode.toUpperCase()
+        : undefined;
+    },
   }));
 
   const guestLimiter = rateLimit({

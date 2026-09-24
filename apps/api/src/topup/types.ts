@@ -42,7 +42,7 @@ export interface MobileTopUpConfig {
   billingCurrency: 'USD';
   feeUsd: string;
   quoteTtlSeconds: number;
-  paymentMode: 'mock';
+  paymentMode: 'mock' | 'checkout_sandbox';
   productionEnabled: false;
   approvedForLiveUse: false;
 }

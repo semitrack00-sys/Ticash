@@ -39,6 +39,7 @@ export function createMobileTopUpRouter(options: {
   requireFundingAllowed: RequestHandler;
   service: MobileTopUpService;
   isGuest: (userId: string) => Promise<boolean>;
+  billingCountryForUser: (userId: string) => Promise<string | undefined>;
 }) {
   const router = express.Router();
   const protectedRoute = [options.authenticate, options.requireFundingAllowed];
@@ -50,7 +51,13 @@ export function createMobileTopUpRouter(options: {
   router.post('/payment-sessions', ...protectedRoute, asyncRoute(async (req, res) => {
     const key = req.header('idempotency-key');
     if (!key) throw new MobileTopUpError('IDEMPOTENCY_KEY_REQUIRED', 'An Idempotency-Key header is required', 400);
-    res.status(201).json(await options.service.createPaymentSession(req.userId!, purchaseSchema.parse(req.body), key));
+    const billingCountry = await options.billingCountryForUser(req.userId!);
+    res.status(201).json(await options.service.createPaymentSession(
+      req.userId!,
+      purchaseSchema.parse(req.body),
+      key,
+      billingCountry,
+    ));
   }));
 
   router.get('/status', options.authenticate, asyncRoute(async (_req, res) => {

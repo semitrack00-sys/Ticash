@@ -10,8 +10,8 @@ export function loadDingConfig(env: NodeJS.ProcessEnv = process.env): DingConfig
   const enabled = env.DING_ENABLED === 'true';
   const clientId = env.DING_CLIENT_ID?.trim(); const clientSecret = env.DING_CLIENT_SECRET?.trim();
   if (enabled && (!clientId || !clientSecret)) throw new Error('DING_CLIENT_ID and DING_CLIENT_SECRET are required when Ding is enabled');
-  if (enabled && ['MOBILE_TOPUP_PRODUCTION_ENABLED', 'MOBILE_TOPUP_APPROVED_FOR_LIVE_USE', 'APPROVED_FOR_LIVE_USE', 'LIVE_MONEY_ENABLED', 'CHECKOUT_COM_ENABLED'].some(key => (env[key] ?? 'false').toLowerCase() !== 'false')) {
-    throw new Error('Ding requires production, live money and Checkout.com gates disabled');
+  if (enabled && ['MOBILE_TOPUP_PRODUCTION_ENABLED', 'MOBILE_TOPUP_APPROVED_FOR_LIVE_USE', 'APPROVED_FOR_LIVE_USE', 'LIVE_MONEY_ENABLED'].some(key => (env[key] ?? 'false').toLowerCase() !== 'false')) {
+    throw new Error('Ding requires production and live-money gates disabled');
   }
   if (enabled && ['PAYMENTS_MODE', 'MOBILE_TOPUP_PAYMENT_MODE'].some(key => (env[key] ?? 'mock') !== 'mock')) throw new Error('Ding requires mock payments');
   return { enabled, environment: 'uat', clientId, clientSecret, tokenUrl, baseUrl };

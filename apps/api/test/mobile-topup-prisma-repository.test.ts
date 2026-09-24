@@ -107,7 +107,7 @@ describe('payment foundation persistence', () => {
     expect(await repository.claimOperation('transaction','fulfillment',timestamp.toISOString())).toBe(true);
     expect(await repository.claimOperation('transaction','fulfillment',timestamp.toISOString())).toBe(false);
     expect(updateMany.mock.calls[0][0]).toMatchObject({where:{id:'transaction',fulfillmentStartedAt:null,providerTransactionId:null,status:'PENDING',OR:[
-      {paymentProvider:'MOCK',paymentStatus:{in:['AUTHORIZED','CAPTURED']}},{paymentProvider:'CHECKOUT_COM',paymentStatus:'CAPTURED'},{paymentProvider:'STRIPE',paymentStatus:{in:['AUTHORIZED','CAPTURED']}},
+      {paymentProvider:'MOCK',paymentStatus:{in:['AUTHORIZED','CAPTURED']}},{paymentProvider:'STRIPE',paymentStatus:{in:['AUTHORIZED','CAPTURED']}},
     ]},data:{fulfillmentStartedAt:timestamp}});
   });
   it('never creates a transaction when atomic quote consumption fails', async () => {
@@ -127,7 +127,7 @@ describe('payment foundation persistence', () => {
     expect(await repository.registerPaymentEvent('evt_one','hash','transaction')).toBe(true);
     expect(await repository.registerPaymentEvent('evt_one','hash','transaction')).toBe(false);
     await expect(repository.registerPaymentEvent('evt_one','hash','transaction')).rejects.toMatchObject({code:'PAYMENT_EVENT_CONFLICT'});
-    expect(upsert.mock.calls[0][0].create).toEqual({provider:'CHECKOUT_COM',eventId:'evt_one',payloadHash:'hash',transactionId:'transaction'});
+    expect(upsert.mock.calls[0][0].create).toEqual({provider:'STRIPE',eventId:'evt_one',payloadHash:'hash',transactionId:'transaction'});
   });
   it('payment transitions constrain both prior state and bound provider payment ID', async () => {
     const updateMany=vi.fn(async()=>({count:0}));const repository=new PrismaMobileTopUpRepository({mobileTopUpTransaction:{updateMany}} as never);

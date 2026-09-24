@@ -25,9 +25,12 @@ const quoteSchema = z.object({
   countryCode: topUpCountryCodeShape,
   phone: topUpPhoneShape,
   operatorId: z.number().int().positive().max(2_147_483_647),
-  productId: z.string().min(1).max(240),
-  amount: z.number().positive().multipleOf(0.01).optional(),
-}).strict();
+  productId: z.string().min(1).max(240).optional(),
+  amount: z.number().finite().min(5).max(100).multipleOf(0.01).optional(),
+}).strict().refine((value) => Boolean(value.productId || value.amount !== undefined), {
+  message: 'Either productId or amount must be supplied',
+  path: ['productId'],
+});
 
 const purchaseSchema = z.object({
   quoteId: z.uuid(),

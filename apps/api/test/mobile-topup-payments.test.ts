@@ -9,6 +9,9 @@ import { MobileTopUpError, MockMobileTopUpPaymentProvider, type MobileTopUpConfi
 import { loadCheckoutConfig } from '../src/topup/checkout-config.js';
 import { CheckoutSandboxPaymentProvider, paymentReference } from '../src/topup/checkout-provider.js';
 import { createCheckoutWebhookHandler, verifyCheckoutEvent } from '../src/topup/checkout-webhook.js';
+import { loadStripeConfig } from '../src/topup/stripe-config.js';
+import { StripeSandboxPaymentProvider } from '../src/topup/stripe-provider.js';
+import { verifyStripeEvent } from '../src/topup/stripe-webhook.js';
 import { usdMinorUnits } from '../src/topup/payment-utils.js';
 
 const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId:'fixture', clientSecret:'fixture',
@@ -394,6 +397,125 @@ describe('Checkout.com sandbox adapter',()=>{
     const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),vi.fn(async()=>new Response('{}',{status:202})));
     const input={transactionId:'11111111-1111-4111-8111-111111111111',paymentId:'pay_fixture1',amountMinor:599};
     expect(await adapter.void(input)).toBe('VOID_PENDING');expect(await adapter.refund(input)).toBe('REFUND_PENDING');expect(await adapter.capture(input)).toBe('PENDING');
+  });
+});
+
+describe('Stripe sandbox flow',()=>{
+  const stripeEnv = {
+    STRIPE_ENABLED: 'true',
+    STRIPE_ENVIRONMENT: 'sandbox',
+    STRIPE_SECRET_KEY: 'sk_test_fixture_secret',
+    STRIPE_PUBLIC_KEY: 'pk_test_fixture_public',
+    STRIPE_WEBHOOK_SECRET: 'whsec_fixture_signing_key',
+    STRIPE_SUCCESS_URL: 'https://website.example/success',
+    STRIPE_FAILURE_URL: 'https://website.example/failure',
+  } as const;
+
+  function stripeFixture() {
+    const submit = vi.fn(async () => ({
+      transactionId: 'reloadly-fixture',
+      status: 'PROCESSING',
+      requestedAmount: 5,
+      requestedAmountCurrencyCode: 'USD',
+    }));
+
+    const provider: MobileTopUpProvider = {
+      listCountries: async () => [{ code: 'JM', name: 'Jamaica' }],
+      listOperators: async () => [operator],
+      getOperator: async () => operator,
+      detectOperator: async () => operator,
+      submitTopUp: submit,
+      getTopUpStatus: async () => ({
+        transactionId: 'reloadly-fixture',
+        status: 'SUCCESSFUL',
+        requestedAmount: 5,
+        requestedAmountCurrencyCode: 'USD',
+      }),
+    };
+
+    const service = new MobileTopUpService(
+      { ...config, paymentMode: 'stripe_sandbox' },
+      provider,
+      new MockMobileTopUpPaymentProvider(),
+      new MemoryMobileTopUpRepository(),
+      vi.fn(async () => {}),
+      undefined,
+      undefined,
+      new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), vi.fn(async () => new Response(JSON.stringify({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }), { status: 200 }))),
+    );
+
+    return { service, provider, submit };
+  }
+
+  it('creates a Stripe payment intent from the authoritative server-side quote and blocks browser tampering', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-001', 'US');
+    expect(session).toMatchObject({
+      provider: 'STRIPE',
+      environment: 'SANDBOX',
+      paymentStatus: 'SESSION_CREATED',
+      amountMinor: 599,
+      currency: 'USD',
+    });
+    expect(session.paymentSession).toMatchObject({ id: 'pi_fixture_123', client_secret: expect.any(String) });
+    expect(session.paymentSession).not.toHaveProperty('secret');
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('requires a verified Stripe signature and rejects invalid payloads before fulfillment', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-002', 'US');
+    const payload = JSON.stringify({
+      id: 'evt_test_stripe_1',
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_fixture_123',
+          amount_received: 599,
+          currency: 'usd',
+          status: 'succeeded',
+          metadata: { transactionId: session.transactionId },
+        },
+      },
+    });
+    const raw = Buffer.from(payload, 'utf8');
+    const signed = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${Math.floor(Date.now() / 1000)}.${payload}`).digest('hex')}`;
+
+    expect(() => verifyStripeEvent(raw, undefined, stripeEnv.STRIPE_WEBHOOK_SECRET)).toThrow();
+    expect(() => verifyStripeEvent(raw, signed, 'wrong-secret')).toThrow();
+    expect(verifyStripeEvent(raw, signed, stripeEnv.STRIPE_WEBHOOK_SECRET)).toMatchObject({
+      eventId: 'evt_test_stripe_1',
+      paymentId: 'pi_fixture_123',
+      type: 'payment_intent.succeeded',
+      transactionId: session.transactionId,
+    });
+  });
+
+  it('only successful server-verified Stripe payments can trigger Reloadly fulfillment, and duplicates are ignored', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-003', 'US');
+    const rawSuccess = Buffer.from(JSON.stringify({
+      id: 'evt_stripe_success_1',
+      type: 'payment_intent.succeeded',
+      data: { object: { id: 'pi_stripe_success_1', amount_received: 599, currency: 'usd', status: 'succeeded', metadata: { transactionId: session.transactionId } } },
+    }));
+    const successSig = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${Math.floor(Date.now() / 1000)}.${rawSuccess.toString('utf8')}`).digest('hex')}`;
+
+    await f.service.acceptVerifiedPaymentEvent(verifyStripeEvent(rawSuccess, successSig, stripeEnv.STRIPE_WEBHOOK_SECRET));
+    expect(f.submit).toHaveBeenCalledTimes(1);
+
+    const rawFailed = Buffer.from(JSON.stringify({
+      id: 'evt_stripe_failed_1',
+      type: 'payment_intent.payment_failed',
+      data: { object: { id: 'pi_stripe_failed_1', amount: 599, currency: 'usd', status: 'requires_payment_method', metadata: { transactionId: session.transactionId } } },
+    }));
+    const failedSig = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${Math.floor(Date.now() / 1000)}.${rawFailed.toString('utf8')}`).digest('hex')}`;
+    await expect(f.service.acceptVerifiedPaymentEvent(verifyStripeEvent(rawFailed, failedSig, stripeEnv.STRIPE_WEBHOOK_SECRET))).resolves.toBeUndefined();
+    expect(f.submit).toHaveBeenCalledTimes(1);
   });
 });
 

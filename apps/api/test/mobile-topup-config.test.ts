@@ -29,4 +29,18 @@ describe('mobile top-up configuration', () => {
     expect(() => loadMobileTopUpConfig({ RELOADLY_AIRTIME_BASE_URL: 'https://example.com' } as NodeJS.ProcessEnv))
       .toThrow(/Sandbox URL/);
   });
+  it('accepts only the explicit Checkout.com sandbox payment mode', () => {
+    expect(loadMobileTopUpConfig({
+      MOBILE_TOPUP_PAYMENT_MODE: 'checkout_sandbox',
+    } as NodeJS.ProcessEnv).paymentMode).toBe('checkout_sandbox');
+
+    expect(() => loadMobileTopUpConfig({
+      MOBILE_TOPUP_PAYMENT_MODE: 'checkout',
+    } as NodeJS.ProcessEnv)).toThrow();
+
+    expect(() => loadMobileTopUpConfig({
+      MOBILE_TOPUP_PAYMENT_MODE: 'live',
+    } as NodeJS.ProcessEnv)).toThrow();
+  });
+
 });

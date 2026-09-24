@@ -14,6 +14,7 @@ import type {
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
 import { assertVerifiedCheckoutEvent, type VerifiedCheckoutEvent } from './checkout-webhook.js';
+import type { CheckoutSandboxPaymentProvider } from './checkout-provider.js';
 import {
   normalizeTopUpCountryCode,
   normalizeTopUpPhone,
@@ -108,6 +109,7 @@ export class MobileTopUpService {
     private readonly repository: MobileTopUpRepository,
     private readonly audit: AuditRecorder,
     private readonly clock: () => Date = () => new Date(),
+    private readonly checkoutProvider?: CheckoutSandboxPaymentProvider,
   ) {}
 
   availability() {
@@ -119,7 +121,9 @@ export class MobileTopUpService {
       provider: providers.length === 1 ? providers[0] : providers.length ? 'MULTI_PROVIDER' : null,
       providerMode: providers.length > 1 ? 'MULTI_PROVIDER' : providers.length ? 'SINGLE_PROVIDER' : 'DISABLED',
       providers,
-      paymentMode: 'MOCK',
+      paymentMode: this.config.paymentMode === 'checkout_sandbox'
+        ? 'CHECKOUT_COM_SANDBOX'
+        : 'MOCK',
       testMode: true,
       supportedGeographicScope: 'Configured sandbox provider catalog countries only',
       supportedCountriesPath: '/api/mobile-topups/countries',
@@ -413,8 +417,12 @@ export class MobileTopUpService {
       status: 'PENDING',
       paymentStatus: 'PENDING',
       paymentMethod: 'CARD',
-      paymentProvider: 'MOCK',
-      paymentSessionId: 'mock-session:' + transactionId,
+      paymentProvider: this.config.paymentMode === 'checkout_sandbox'
+        ? 'CHECKOUT_COM'
+        : 'MOCK',
+      paymentSessionId: this.config.paymentMode === 'mock'
+        ? 'mock-session:' + transactionId
+        : undefined,
       testMode: true,
       createdAt,
       updatedAt: createdAt,
@@ -430,24 +438,185 @@ export class MobileTopUpService {
   }
 
   paymentMethods(guest = false) {
+    const checkout = this.config.paymentMode === 'checkout_sandbox';
+    const checkoutReady = checkout && Boolean(this.checkoutProvider);
+    const cardEnabled = this.config.enabled &&
+      (!checkout || (checkoutReady && !guest));
+
+    const cardReason = !this.config.enabled
+      ? 'RECHARGE_DISABLED'
+      : checkout && guest
+        ? 'GUEST_BILLING_PROFILE_REQUIRED'
+        : checkout && !checkoutReady
+          ? 'PROVIDER_NOT_CONFIGURED'
+          : undefined;
+
     return { environment: 'SANDBOX', methods: [
-      { type: 'CARD', enabled: this.config.enabled, provider: 'MOCK', testMode: true, label: 'Test card — Sandbox' },
+      {
+        type: 'CARD',
+        enabled: cardEnabled,
+        provider: checkout ? 'CHECKOUT_COM' : 'MOCK',
+        testMode: true,
+        label: checkout ? 'Test card - Checkout.com Sandbox' : 'Test card — Sandbox',
+        ...(cardReason ? { reason: cardReason } : {}),
+      },
       { type: 'APPLE_PAY', enabled: false, provider: 'CHECKOUT_COM', reason: 'PROVIDER_NOT_CONFIGURED' },
       { type: 'GOOGLE_PAY', enabled: false, provider: 'CHECKOUT_COM', reason: 'PROVIDER_NOT_CONFIGURED' },
       { type: 'BANK_ACCOUNT', enabled: false, provider: 'DWOLLA', reason: guest ? 'GUEST_SCOPE_RESTRICTED' : 'NOT_ENABLED_FOR_RECHARGE' },
     ] };
   }
 
-  async createPaymentSession(userId: string, input: { quoteId: string; recipientId?: string }, key: string) {
+  async createPaymentSession(
+    userId: string,
+    input: { quoteId: string; recipientId?: string },
+    key: string,
+    billingCountry?: string,
+  ) {
     const reserved = await this.reservePayment(userId, input, key);
-    if (reserved.paymentProvider !== 'MOCK') throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Hosted payments are not enabled', 503);
-    const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
-    if (!reserved.paymentStartedAt && await this.repository.transitionPayment(reserved.id, ['PENDING'], {
-      paymentSessionId: sessionId, paymentStatus: 'SESSION_CREATED',
-    })) await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'MOCK', testMode: true });
-    const current = (await this.repository.getTransaction(userId, reserved.id))!;
-    return { provider: 'MOCK', environment: 'SANDBOX', testMode: true, transactionId: current.id,
-      paymentSession: { id: current.paymentSessionId ?? sessionId }, amountMinor: usdMinorUnits(current.totalChargeUsd), currency: 'USD', paymentStatus: current.paymentStatus };
+
+    if (reserved.paymentProvider === 'MOCK') {
+      const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
+      if (!reserved.paymentStartedAt && await this.repository.transitionPayment(reserved.id, ['PENDING'], {
+        paymentSessionId: sessionId,
+        paymentStatus: 'SESSION_CREATED',
+      })) {
+        await this.audit(
+          userId,
+          'MOBILE_TOPUP_PAYMENT_SESSION_CREATED',
+          'MobileTopUpTransaction',
+          reserved.id,
+          { provider: 'MOCK', testMode: true },
+        );
+      }
+
+      const current = (await this.repository.getTransaction(userId, reserved.id))!;
+      return {
+        provider: 'MOCK',
+        environment: 'SANDBOX',
+        testMode: true,
+        transactionId: current.id,
+        paymentSession: { id: current.paymentSessionId ?? sessionId },
+        amountMinor: usdMinorUnits(current.totalChargeUsd),
+        currency: 'USD',
+        paymentStatus: current.paymentStatus,
+      };
+    }
+
+    if (
+      reserved.paymentProvider !== 'CHECKOUT_COM' ||
+      this.config.paymentMode !== 'checkout_sandbox' ||
+      !this.checkoutProvider
+    ) {
+      throw new MobileTopUpError(
+        'PAYMENT_PROVIDER_DISABLED',
+        'Checkout.com Sandbox is not enabled',
+        503,
+      );
+    }
+
+    const country = billingCountry?.trim().toUpperCase();
+    if (!country || !/^[A-Z]{2}$/.test(country)) {
+      throw new MobileTopUpError(
+        'BILLING_COUNTRY_REQUIRED',
+        'A verified billing country is required for Checkout.com Sandbox',
+        409,
+      );
+    }
+
+    /*
+     * Flow requires the unmodified Payment Session response.
+     * Do not silently create a second provider session on retry.
+     */
+    if (reserved.paymentSessionId) {
+      throw new MobileTopUpError(
+        'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
+        'This Checkout.com payment session was already created; do not create another attempt',
+        409,
+      );
+    }
+
+    if (!await this.repository.claimOperation(
+      reserved.id,
+      'payment',
+      this.clock().toISOString(),
+    )) {
+      const current = await this.repository.getTransaction(userId, reserved.id);
+      if (current?.paymentSessionId) {
+        throw new MobileTopUpError(
+          'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
+          'This Checkout.com payment session was already created; do not create another attempt',
+          409,
+        );
+      }
+
+      throw new MobileTopUpError(
+        'PAYMENT_SESSION_IN_PROGRESS',
+        'Checkout.com payment session creation is already in progress',
+        409,
+      );
+    }
+
+    let paymentSession: Record<string, unknown>;
+    try {
+      paymentSession = await this.checkoutProvider.createPaymentSession({
+        transactionId: reserved.id,
+        amountMinor: usdMinorUnits(reserved.totalChargeUsd),
+        currency: 'USD',
+        billingCountry: country,
+      });
+    } catch (error) {
+      await this.repository.updateTransaction(reserved.id, {
+        paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN',
+      });
+      await this.audit(
+        userId,
+        'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED',
+        'MobileTopUpTransaction',
+        reserved.id,
+        { provider: 'CHECKOUT_COM', stage: 'PAYMENT_SESSION' },
+      );
+
+      if (error instanceof MobileTopUpError) throw error;
+
+      throw new MobileTopUpError(
+        'PAYMENT_SESSION_CREATION_UNKNOWN',
+        'Checkout.com payment session creation requires reconciliation',
+        502,
+      );
+    }
+
+    const sessionId = typeof paymentSession.id === 'string'
+      ? paymentSession.id
+      : '';
+
+    if (!/^ps_[A-Za-z0-9]+$/.test(sessionId)) {
+      throw new MobileTopUpError(
+        'INVALID_PAYMENT_SESSION',
+        'Checkout.com returned an invalid payment session',
+        502,
+      );
+    }
+
+    await this.repository.updateTransaction(reserved.id, {
+      paymentSessionId: sessionId,
+      paymentStatus: 'SESSION_CREATED',
+    });
+
+    await this.audit(
+      userId,
+      'MOBILE_TOPUP_PAYMENT_SESSION_CREATED',
+      'MobileTopUpTransaction',
+      reserved.id,
+      { provider: 'CHECKOUT_COM', testMode: true },
+    );
+
+    return {
+      ...this.checkoutProvider.flowContract(reserved.id, paymentSession),
+      testMode: true,
+      amountMinor: usdMinorUnits(reserved.totalChargeUsd),
+      currency: 'USD',
+      paymentStatus: 'SESSION_CREATED',
+    };
   }
 
   async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
@@ -524,7 +693,11 @@ export class MobileTopUpService {
     }));
     await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
     // No implicit fallback from a hosted provider to a mock refund.
-    const recovery = record.paymentProvider === 'MOCK' ? this.paymentProvider : undefined;
+    const recovery = record.paymentProvider === 'MOCK'
+      ? this.paymentProvider
+      : record.paymentProvider === 'CHECKOUT_COM'
+        ? this.checkoutProvider
+        : undefined;
     const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
     try {
       const status = paymentId && (refund

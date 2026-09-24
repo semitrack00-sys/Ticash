@@ -128,7 +128,15 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     const record = transactions.get(id);
     const field = operationField(operation);
     if (!record || record[field]) return false;
-    if (operation === 'payment' && (!['PENDING', 'SESSION_CREATED'].includes(record.paymentStatus) || record.paymentProvider !== 'MOCK')) return false;
+    if (operation === 'payment') {
+      const mockAllowed =
+        record.paymentProvider === 'MOCK' &&
+        ['PENDING', 'SESSION_CREATED'].includes(record.paymentStatus);
+      const checkoutAllowed =
+        record.paymentProvider === 'CHECKOUT_COM' &&
+        record.paymentStatus === 'PENDING';
+      if (!mockAllowed && !checkoutAllowed) return false;
+    }
     if (operation === 'fulfillment' && (record.providerTransactionId || record.status !== 'PENDING' || !paid(record))) return false;
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
     transactions.set(id, { ...record, [field]: when, updatedAt: now() });
@@ -355,7 +363,12 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string) {
     const where: Prisma.MobileTopUpTransactionWhereInput = { id, [operationField(operation)]: null };
-    if (operation === 'payment') Object.assign(where, { paymentProvider: 'MOCK', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } });
+    if (operation === 'payment') Object.assign(where, {
+      OR: [
+        { paymentProvider: 'MOCK', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } },
+        { paymentProvider: 'CHECKOUT_COM', paymentStatus: 'PENDING' },
+      ],
+    });
     if (operation === 'fulfillment') Object.assign(where, {
       providerTransactionId: null, status: 'PENDING', OR: [
         { paymentProvider: 'MOCK', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },

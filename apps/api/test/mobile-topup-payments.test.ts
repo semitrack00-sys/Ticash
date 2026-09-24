@@ -155,6 +155,191 @@ describe('payment routes and guest restrictions',()=>{
   });
 });
 
+
+describe('Checkout.com sandbox application wiring',()=>{
+  const checkoutConfig: MobileTopUpConfig = {
+    ...config,
+    paymentMode: 'checkout_sandbox',
+  };
+
+  function checkoutFixture() {
+    const submit = vi.fn(async () => ({
+      transactionId:'reloadly-fixture',
+      status:'PROCESSING',
+      requestedAmount:5,
+      requestedAmountCurrencyCode:'USD',
+    }));
+
+    const provider: MobileTopUpProvider = {
+      listCountries:async()=>[{code:'JM',name:'Jamaica'}],
+      listOperators:async()=>[operator],
+      getOperator:async()=>operator,
+      detectOperator:async()=>operator,
+      submitTopUp:submit,
+      getTopUpStatus:async()=>({
+        transactionId:'reloadly-fixture',
+        status:'SUCCESSFUL',
+        requestedAmount:5,
+        requestedAmountCurrencyCode:'USD',
+      }),
+    };
+
+    const repository = new MemoryMobileTopUpRepository();
+    const audit = vi.fn(async()=>{});
+
+    const providerSession = {
+      id:'ps_fixturecheckout',
+      payment_session_token:'fixture-client-token',
+    };
+
+    const transport = vi.fn(async()=>new Response(
+      JSON.stringify(providerSession),
+      {status:201},
+    ));
+
+    const checkout = new CheckoutSandboxPaymentProvider(
+      loadCheckoutConfig(checkoutEnv),
+      transport,
+    );
+
+    const service = new MobileTopUpService(
+      checkoutConfig,
+      provider,
+      new MockMobileTopUpPaymentProvider(),
+      repository,
+      audit,
+      undefined,
+      checkout,
+    );
+
+    return {
+      service,
+      repository,
+      provider,
+      submit,
+      audit,
+      checkout,
+      transport,
+      providerSession,
+    };
+  }
+
+  it('reports Checkout.com Sandbox rather than mock when selected',()=>{
+    const f=checkoutFixture();
+
+    expect(f.service.availability()).toMatchObject({
+      environment:'SANDBOX',
+      paymentMode:'CHECKOUT_COM_SANDBOX',
+      testMode:true,
+      productionEnabled:false,
+      approvedForLiveUse:false,
+      liveRechargeEnabled:false,
+    });
+
+    expect(f.service.paymentMethods(false).methods).toContainEqual(
+      expect.objectContaining({
+        type:'CARD',
+        provider:'CHECKOUT_COM',
+        enabled:true,
+        testMode:true,
+      }),
+    );
+
+    expect(f.service.paymentMethods(true).methods).toContainEqual(
+      expect.objectContaining({
+        type:'CARD',
+        provider:'CHECKOUT_COM',
+        enabled:false,
+        reason:'GUEST_BILLING_PROFILE_REQUIRED',
+      }),
+    );
+  });
+
+  it('creates one real Checkout Sandbox payment session from the server quote',async()=>{
+    const f=checkoutFixture();
+    const quote=await f.service.createQuote('customer',quoteInput);
+
+    const session=await f.service.createPaymentSession(
+      'customer',
+      {quoteId:quote.id},
+      'checkout-key-001',
+      'US',
+    );
+
+    expect(session).toMatchObject({
+      provider:'CHECKOUT_COM',
+      environment:'SANDBOX',
+      transactionId:expect.any(String),
+      paymentSession:f.providerSession,
+      publicKey:checkoutEnv.CHECKOUT_COM_PUBLIC_KEY,
+      testMode:true,
+      amountMinor:850,
+      currency:'USD',
+      paymentStatus:'SESSION_CREATED',
+    });
+
+    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(f.submit).not.toHaveBeenCalled();
+
+    const stored=await f.repository.getTransactionById(session.transactionId);
+
+    expect(stored).toMatchObject({
+      paymentProvider:'CHECKOUT_COM',
+      paymentSessionId:'ps_fixturecheckout',
+      paymentStatus:'SESSION_CREATED',
+      status:'PENDING',
+    });
+  });
+
+  it('requires server billing country and never creates Checkout HTTP without it',async()=>{
+    const f=checkoutFixture();
+    const quote=await f.service.createQuote('customer',quoteInput);
+
+    await expect(f.service.createPaymentSession(
+      'customer',
+      {quoteId:quote.id},
+      'checkout-key-002',
+    )).rejects.toMatchObject({
+      code:'BILLING_COUNTRY_REQUIRED',
+      statusCode:409,
+    });
+
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('never silently creates a second Checkout session for the same reservation',async()=>{
+    const f=checkoutFixture();
+    const quote=await f.service.createQuote('customer',quoteInput);
+
+    await f.service.createPaymentSession(
+      'customer',
+      {quoteId:quote.id},
+      'checkout-key-003',
+      'US',
+    );
+
+    await expect(f.service.createPaymentSession(
+      'customer',
+      {quoteId:quote.id},
+      'checkout-key-003',
+      'US',
+    )).rejects.toMatchObject({
+      code:'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
+      statusCode:409,
+    });
+
+    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('requires complete Checkout sandbox configuration when createApp selects checkout_sandbox',()=>{
+    expect(()=>createApp({
+      mobileTopUpConfig:checkoutConfig,
+    })).toThrow(/requires complete Checkout.com Sandbox configuration/);
+  });
+});
+
 describe('Checkout.com sandbox adapter',()=>{
   it('is disabled by default with no guessed URL',()=>{expect(loadCheckoutConfig({})).toMatchObject({enabled:false,environment:'sandbox',apiBaseUrl:undefined});});
   for(const [field,value] of [['CHECKOUT_COM_ENVIRONMENT','production'],['CHECKOUT_COM_API_BASE_URL','https://abcdefgh.api.checkout.com'],

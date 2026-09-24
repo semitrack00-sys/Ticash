@@ -115,22 +115,40 @@ class MobileTopUpCountry {
 }
 
 class MobileTopUpOperator {
+  static String? parseLogoUrl(Object? value) {
+    if (value is! String ||
+        !RegExp(r'^https://[^/\\?#]', caseSensitive: false).hasMatch(value) ||
+        RegExp(r'[\s\x00-\x1f\x7f\\]').hasMatch(value) ||
+        RegExp(r'%(?![0-9a-f]{2})', caseSensitive: false).hasMatch(value)) {
+      return null;
+    }
+    final uri = Uri.tryParse(value);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      return null;
+    }
+    return value;
+  }
+
   const MobileTopUpOperator({
     required this.id,
     required this.name,
     required this.countryCode,
     required this.bundle,
+    this.logoUrl,
   });
   final int id;
   final String name;
   final String countryCode;
   final bool bundle;
+  final String? logoUrl;
   factory MobileTopUpOperator.fromJson(Map<String, dynamic> json) =>
       MobileTopUpOperator(
         id: (json['id'] as num).toInt(),
         name: json['name'] as String,
         countryCode: _countryCodeFromJson(json),
         bundle: json['bundle'] as bool? ?? false,
+        logoUrl: parseLogoUrl(json['logoUrl']),
       );
 }
 

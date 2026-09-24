@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { providerLogoUrl } from './logo-url.js';
 import { DING_API_URL, DING_TOKEN_URL, type DingConfig } from './ding-config.js';
 import { encodeOperatorId, SLOT_SIZE } from './provider-identity.js';
 import { MobileTopUpError, type MobileTopUpOperator, type MobileTopUpProduct, type MobileTopUpProvider, type ProviderTopUpRequest, type ProviderTopUpResult } from './types.js';
@@ -31,7 +32,7 @@ export function dingOperatorCode(id: number): string {
   return code;
 }
 function operator(raw: Doc): MobileTopUpOperator {
-  return { id: dingOperatorId(text(raw.ProviderCode)), provider: 'DING', countryCode: country(raw.CountryIso), name: text(raw.Name), status: true,
+  return { id: dingOperatorId(text(raw.ProviderCode)), provider: 'DING', countryCode: country(raw.CountryIso), name: text(raw.Name), logoUrl: providerLogoUrl(raw.LogoUrl), status: true,
     bundle: false, denominationType: 'FIXED', senderCurrencyCode: '', destinationCurrencyCode: '', fixedAmounts: [], localFixedAmounts: [], fixedAmountsPlanNames: {}, localFixedAmountsPlanNames: {} };
 }
 function fixedPrice(value: unknown): Doc | undefined {

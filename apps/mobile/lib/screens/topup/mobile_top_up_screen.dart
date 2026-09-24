@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../config/theme.dart';
 import '../../models/mobile_top_up.dart';
 import '../../providers/mobile_top_up_provider.dart';
+import '../../widgets/mobile_operator_logo.dart';
 
 class MobileTopUpScreen extends ConsumerStatefulWidget {
   const MobileTopUpScreen({super.key});
@@ -25,6 +26,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   List<MobileTopUpProduct> _products = const [];
   MobileTopUpQuote? _quote;
   MobileTopUpTransaction? _receipt;
+  String? _receiptLogoUrl;
   bool _busy = false;
   bool _history = false;
   String? _error;
@@ -91,6 +93,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     _products = const [];
     _quote = null;
     _receipt = null;
+    _receiptLogoUrl = null;
     _error = null;
     if (clearPhone) _phone.clear();
     if (clearNickname) _nickname.clear();
@@ -152,6 +155,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   Future<void> _purchase() => _run(() async {
     final quote = _quote;
     if (quote == null) return;
+    final logoUrl = _operator?.id == quote.operatorId ? _operator?.logoUrl : null;
     String? recipientId;
     if (_nickname.text.trim().isNotEmpty) {
       final saved = await ref
@@ -176,6 +180,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     if (mounted) {
       setState(() {
         _receipt = transaction;
+        _receiptLogoUrl = logoUrl;
         _quote = null;
       });
     }
@@ -299,6 +304,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     if (_receipt != null) {
       return _Receipt(
         transaction: _receipt!,
+        logoUrl: _receiptLogoUrl,
         onAnother: _reset,
         onRefresh: () => _run(() async {
           final updated = await ref
@@ -395,7 +401,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             ),
             DropdownButtonFormField<String>(
               key: ValueKey(selectedCountryCode),
-              value: selectedCountryCode,
+              initialValue: selectedCountryCode,
               decoration: const InputDecoration(
                 labelText: 'Destination country',
                 prefixIcon: Icon(Icons.public_outlined),
@@ -438,11 +444,22 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           const SizedBox(height: 12),
           DropdownButtonFormField<MobileTopUpOperator>(
             initialValue: _operator,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Operator'),
             items: _operators
                 .map(
-                  (item) =>
-                      DropdownMenuItem(value: item, child: Text(item.name)),
+                  (item) => DropdownMenuItem(
+                    value: item,
+                    child: Row(
+                      children: [
+                        MobileOperatorLogo(logoUrl: item.logoUrl),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  ),
                 )
                 .toList(),
             onChanged: (value) {
@@ -466,7 +483,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
         if (_operator != null) ...[
           const SizedBox(height: 20),
           _InfoRow(
-            icon: Icons.sim_card_outlined,
+            leading: MobileOperatorLogo(logoUrl: _operator!.logoUrl),
             label: 'Detected operator',
             value: _operator!.name,
           ),
@@ -549,7 +566,10 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
         ],
         if (_quote != null) ...[
           const SizedBox(height: 20),
-          _ReviewCard(quote: _quote!),
+          _ReviewCard(
+            quote: _quote!,
+            logoUrl: _operator?.id == _quote!.operatorId ? _operator?.logoUrl : null,
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _nickname,
@@ -590,11 +610,11 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
 
 class _InfoRow extends StatelessWidget {
   const _InfoRow({
-    required this.icon,
+    required this.leading,
     required this.label,
     required this.value,
   });
-  final IconData icon;
+  final Widget leading;
   final String label;
   final String value;
   @override
@@ -607,7 +627,7 @@ class _InfoRow extends StatelessWidget {
     ),
     child: Row(
       children: [
-        Icon(icon, color: AppTheme.gold),
+        leading,
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -627,8 +647,9 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _ReviewCard extends StatelessWidget {
-  const _ReviewCard({required this.quote});
+  const _ReviewCard({required this.quote, this.logoUrl});
   final MobileTopUpQuote quote;
+  final String? logoUrl;
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
@@ -643,7 +664,7 @@ class _ReviewCard extends StatelessWidget {
           const Divider(height: 24),
           _line('Country', quote.countryCode),
           _line('Phone', quote.phone),
-          _line('Operator', quote.operatorName),
+          _operatorLine(quote.operatorName, logoUrl),
           _line('Product', quote.productName),
           _line(
             'Recharge price',
@@ -669,6 +690,22 @@ class _ReviewCard extends StatelessWidget {
       ),
     ),
   );
+  static Widget _operatorLine(String name, String? logoUrl) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        const Text('Operator', style: TextStyle(color: AppTheme.muted)),
+        const SizedBox(width: 12),
+        MobileOperatorLogo(logoUrl: logoUrl),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(name, textAlign: TextAlign.right,
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+        ),
+      ],
+    ),
+  );
+
   static Widget _line(String label, String value, {bool strong = false}) =>
       Padding(
         padding: const EdgeInsets.symmetric(vertical: 5),
@@ -698,10 +735,12 @@ class _Receipt extends StatelessWidget {
     required this.transaction,
     required this.onAnother,
     required this.onRefresh,
+    this.logoUrl,
   });
   final MobileTopUpTransaction transaction;
   final VoidCallback onAnother;
   final VoidCallback onRefresh;
+  final String? logoUrl;
   @override
   Widget build(BuildContext context) {
     final delivered = transaction.status == MobileTopUpStatus.delivered;
@@ -741,7 +780,7 @@ class _Receipt extends StatelessWidget {
                   transaction.countryCode ?? 'Unknown',
                 ),
                 _ReviewCard._line('Phone', transaction.phone),
-                _ReviewCard._line('Operator', transaction.operatorName),
+                _ReviewCard._operatorLine(transaction.operatorName, logoUrl),
                 _ReviewCard._line('Product', transaction.productName),
                 _ReviewCard._line(
                   'Price',

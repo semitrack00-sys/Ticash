@@ -57,6 +57,7 @@ export interface MobileTopUpDestination extends MobileTopUpCountry {
 }
 
 export interface MobileTopUpOperator {
+  logoUrl?: string;
   provider?: MobileTopUpProviderName;
   id: number;
   name: string;

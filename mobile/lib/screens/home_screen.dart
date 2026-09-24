@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/transaction_provider.dart';
@@ -85,6 +84,6 @@ class HomeScreen extends ConsumerWidget {
           const SizedBox(height: 20),
         ],
       ),
-    ).animate().fadeIn(duration: 250.ms);
+    );
   }
 }

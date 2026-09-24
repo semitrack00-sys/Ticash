@@ -13,14 +13,24 @@ import { usdMinorUnits } from '../src/topup/payment-utils.js';
 
 const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId:'fixture', clientSecret:'fixture',
   authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com', billingCurrency:'USD',
-  feeUsd:'3.50', quoteTtlSeconds:300, paymentMode:'mock', productionEnabled:false, approvedForLiveUse:false };
+  quoteTtlSeconds:300, paymentMode:'mock', productionEnabled:false, approvedForLiveUse:false };
 const checkoutEnv = { CHECKOUT_COM_ENABLED:'true', CHECKOUT_COM_ENVIRONMENT:'sandbox', CHECKOUT_COM_API_BASE_URL:'https://abcdefgh.api.sandbox.checkout.com',
   CHECKOUT_COM_PROCESSING_CHANNEL_ID:'pc_abcdefghijklmnopqrstuvwxyz',
   CHECKOUT_COM_SECRET_KEY:'sk_sbox_fixture_secret', CHECKOUT_COM_PUBLIC_KEY:'pk_sbox_fixture_public', CHECKOUT_COM_WEBHOOK_SECRET:'fixture-signing-key',
   CHECKOUT_COM_SUCCESS_URL:'https://website.example/success', CHECKOUT_COM_FAILURE_URL:'https://website.example/failure' };
+const approvedRechargeGrid = [
+  [5, 0.99, 5.99],
+  [10, 1.05, 11.05],
+  [20, 1.49, 21.49],
+  [30, 1.79, 31.79],
+  [50, 2.49, 52.49],
+  [75, 3.49, 78.49],
+  [100, 4.49, 104.49],
+] as const;
 const operator = { id:77,name:'Fixture operator',countryCode:'JM',status:true,bundle:false,denominationType:'FIXED' as const,
-  senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',fixedAmounts:[5],localFixedAmounts:[800],fixedAmountsPlanNames:{},localFixedAmountsPlanNames:{} };
+  senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',fixedAmounts:[5,10,20,30,50,75,100],localFixedAmounts:[800,1300,2400,3500,5700,8200,10800],fixedAmountsPlanNames:{},localFixedAmountsPlanNames:{} };
 const quoteInput = { countryCode:'JM',phone:'+18765551234',operatorId:77,productId:'reloadly:JM:77:airtime:5.00' };
+const quoteInputFor = (amount: number) => ({ countryCode:'JM', phone:'+18765551234', operatorId:77, productId:`reloadly:JM:77:airtime:${amount.toFixed(2)}` });
 function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymentProvider()) {
   const submit = vi.fn(async () => ({transactionId:'reloadly-fixture',status:'PROCESSING',requestedAmount:5,requestedAmountCurrencyCode:'USD'}));
   const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[operator],
@@ -30,7 +40,7 @@ function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymen
   const service=new MobileTopUpService(config,provider,payment,repository,audit);
   return {service,repository,provider,submit,audit};
 }
-function event(transactionId: string, type = 'payment_captured', id = 'evt_test1', amount = 850) {
+function event(transactionId: string, type = 'payment_captured', id = 'evt_test1', amount = 599) {
   const raw=Buffer.from(JSON.stringify({id,type,data:{id:'pay_fixture1',reference:paymentReference(transactionId),amount,currency:'USD'}}));
   const signature=createHmac('sha256',checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET).update(raw).digest('hex');
   return {raw,signature,verified:()=>verifyCheckoutEvent(raw,signature,checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET)};
@@ -47,13 +57,20 @@ afterEach(()=>vi.unstubAllGlobals());
 describe('sandbox payment foundation',()=>{
   it('reserves a server-priced mock session and completes the existing purchase contract',async()=>{
     const f=fixture();const quote=await f.service.createQuote('customer',quoteInput);
-    expect(quote).toMatchObject({providerAmount:5,feeUsd:3.5,totalChargeUsd:8.5});
+    expect(quote).toMatchObject({providerAmount:5,feeUsd:0.99,totalChargeUsd:5.99});
     const session=await f.service.createPaymentSession('customer',{quoteId:quote.id},'session-key-001');
-    expect(session).toMatchObject({provider:'MOCK',environment:'SANDBOX',amountMinor:850,currency:'USD',paymentStatus:'SESSION_CREATED'});
+    expect(session).toMatchObject({provider:'MOCK',environment:'SANDBOX',amountMinor:599,currency:'USD',paymentStatus:'SESSION_CREATED'});
     expect(f.submit).not.toHaveBeenCalled();
     const receipt=await f.service.purchase('customer',{quoteId:quote.id},'session-key-001');
     expect(receipt).toMatchObject({id:session.transactionId,paymentMethod:'CARD',paymentProvider:'MOCK',paymentStatus:'AUTHORIZED',status:'PROCESSING'});
     expect(receipt.paymentSessionId).toBe(session.paymentSession.id);expect(receipt.paymentAuthorizationId).toBeTruthy();expect(f.submit).toHaveBeenCalledTimes(1);
+  });
+  it.each(approvedRechargeGrid)('uses the approved TiCash fee grid for $%s recharge', async (amount, fee, total) => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInputFor(amount));
+    expect(quote).toMatchObject({ providerAmount: amount, feeUsd: fee, totalChargeUsd: total });
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, `grid-session-${amount}`);
+    expect(session.amountMinor).toBe(Math.round(total * 100));
   });
   it('survives concurrent session and purchase retries across service instances',async()=>{
     const f=fixture();const second=new MobileTopUpService(config,f.provider,new MockMobileTopUpPaymentProvider(),f.repository,f.audit);
@@ -149,7 +166,7 @@ describe('payment routes and guest restrictions',()=>{
     }
     await request(app).post('/api/mobile-topups/payment-sessions').auth(token,{type:'bearer'}).send({quoteId:quoted.body.quote.id}).expect(400);
     const response=await request(app).post('/api/mobile-topups/payment-sessions').auth(token,{type:'bearer'}).set('Idempotency-Key','safe-key-123').send({quoteId:quoted.body.quote.id}).expect(201);
-    expect(response.body.amountMinor).toBe(850);expect(f.submit).not.toHaveBeenCalled();
+    expect(response.body.amountMinor).toBe(599);expect(f.submit).not.toHaveBeenCalled();
     expect(JSON.stringify(response.body)).not.toMatch(/secret|cardNumber|cvv|accountNumber|routingNumber/);
     await request(app).post('/api/webhooks/checkout').send({}).expect(503);
   });
@@ -273,7 +290,7 @@ describe('Checkout.com sandbox application wiring',()=>{
       paymentSession:f.providerSession,
       publicKey:checkoutEnv.CHECKOUT_COM_PUBLIC_KEY,
       testMode:true,
-      amountMinor:850,
+      amountMinor:599,
       currency:'USD',
       paymentStatus:'SESSION_CREATED',
     });
@@ -352,30 +369,30 @@ describe('Checkout.com sandbox adapter',()=>{
     const session={id:'ps_fixture1',payment_session_token:'fixture-client-token',_links:{self:{href:'https://abcdefgh.api.sandbox.checkout.com/payment-sessions/ps_fixture1'}}};
     const transport=vi.fn(async()=>new Response(JSON.stringify(session),{status:201}));
     const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),transport);
-    const id='11111111-1111-4111-8111-111111111111';const result=await adapter.createPaymentSession({transactionId:id,amountMinor:usdMinorUnits(8.5),currency:'USD',billingCountry:'US'});
+    const id='11111111-1111-4111-8111-111111111111';const result=await adapter.createPaymentSession({transactionId:id,amountMinor:usdMinorUnits(5.99),currency:'USD',billingCountry:'US'});
     expect(result).toEqual(session);expect(transport).toHaveBeenCalledTimes(1);
     const call=transport.mock.calls[0] as unknown as [string,RequestInit];expect(call[0]).toBe(checkoutEnv.CHECKOUT_COM_API_BASE_URL+'/payment-sessions');
     expect(call[1]).toMatchObject({redirect:'error',method:'POST',headers:{Authorization:`Bearer ${checkoutEnv.CHECKOUT_COM_SECRET_KEY}`}});
-    expect(JSON.parse(call[1].body as string)).toMatchObject({amount:850,currency:'USD',reference:paymentReference(id),processing_channel_id:checkoutEnv.CHECKOUT_COM_PROCESSING_CHANNEL_ID,billing:{address:{country:'US'}},enabled_payment_methods:['card']});
+    expect(JSON.parse(call[1].body as string)).toMatchObject({amount:599,currency:'USD',reference:paymentReference(id),processing_channel_id:checkoutEnv.CHECKOUT_COM_PROCESSING_CHANNEL_ID,billing:{address:{country:'US'}},enabled_payment_methods:['card']});
     const contract=adapter.flowContract(id,result);expect(contract.paymentSession).toBe(result);expect(contract.publicKey).toBe(checkoutEnv.CHECKOUT_COM_PUBLIC_KEY);
     expect(JSON.stringify(contract)).not.toContain(checkoutEnv.CHECKOUT_COM_SECRET_KEY);expect(JSON.stringify(contract)).not.toContain(checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET);
   });
   it('does not issue HTTP when disabled or required billing context is absent',async()=>{
     const transport=vi.fn();const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig({}),transport);
-    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:850,currency:'USD',billingCountry:'US'})).rejects.toMatchObject({code:'CHECKOUT_DISABLED'});
-    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:850,currency:'USD'})).rejects.toMatchObject({code:'INVALID_PAYMENT_SESSION'});
+    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:599,currency:'USD',billingCountry:'US'})).rejects.toMatchObject({code:'CHECKOUT_DISABLED'});
+    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:599,currency:'USD'})).rejects.toMatchObject({code:'INVALID_PAYMENT_SESSION'});
     expect(transport).not.toHaveBeenCalled();
   });
   it('rejects leaked server secrets and suppresses provider error details',async()=>{
     const transport=vi.fn(async()=>new Response(JSON.stringify({id:'ps_fixture1',payment_session_token:'token',secret_key:checkoutEnv.CHECKOUT_COM_SECRET_KEY}),{status:201}));
     const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),transport);
-    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:850,currency:'USD',billingCountry:'US'})).rejects.toMatchObject({message:'Unsafe payment session response'});
+    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:599,currency:'USD',billingCountry:'US'})).rejects.toMatchObject({message:'Unsafe payment session response'});
     transport.mockRejectedValue(new Error(checkoutEnv.CHECKOUT_COM_SECRET_KEY));
     await expect(adapter.getPayment('pay_fixture1')).rejects.toMatchObject({message:'Checkout.com request needs reconciliation'});
   });
   it('202 recovery requests remain pending and do not claim confirmed refunds',async()=>{
     const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),vi.fn(async()=>new Response('{}',{status:202})));
-    const input={transactionId:'11111111-1111-4111-8111-111111111111',paymentId:'pay_fixture1',amountMinor:850};
+    const input={transactionId:'11111111-1111-4111-8111-111111111111',paymentId:'pay_fixture1',amountMinor:599};
     expect(await adapter.void(input)).toBe('VOID_PENDING');expect(await adapter.refund(input)).toBe('REFUND_PENDING');expect(await adapter.capture(input)).toBe('PENDING');
   });
 });

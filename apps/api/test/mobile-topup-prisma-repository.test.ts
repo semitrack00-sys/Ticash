@@ -68,7 +68,7 @@ describe('payment foundation persistence', () => {
     status:'PENDING',paymentStatus:'AUTHORIZED',paymentAuthorizationId:'old-authorization',
     countryCode:'JM',recipientPhone:'+18765551234',operatorId:77,operatorName:'Fixture operator',productId:'product',productName:'Fixture product',
     kind:'AIRTIME',providerAmount:new Prisma.Decimal(5),providerCurrency:'USD',deliveredValue:null,deliveredCurrency:'JMD',
-    feeUsd:new Prisma.Decimal(3.5),totalChargeUsd:new Prisma.Decimal(8.5),providerStatus:null,failureCode:null,testMode:true,
+    feeUsd:new Prisma.Decimal(0.99),totalChargeUsd:new Prisma.Decimal(5.99),providerStatus:null,failureCode:null,testMode:true,
     createdAt:timestamp,updatedAt:timestamp,deliveredAt:null,failedAt:null,refundedAt:null,
     paymentMethod:null,paymentProvider:null,paymentSessionId:null,paymentProviderTransactionId:null,
     paymentStartedAt:null,fulfillmentStartedAt:null,recoveryStartedAt:null,paymentRecoveryCode:null };
@@ -87,7 +87,7 @@ describe('payment foundation persistence', () => {
       mobileTopUpTransaction: { findUnique: vi.fn(async () => null) },
       $transaction: async (fn: (tx: unknown) => unknown) => fn({ mobileTopUpQuote: { updateMany: vi.fn(async () => ({ count: 1 })) }, mobileTopUpTransaction: { create: transactionCreate } }),
     } as never);
-    const quote = await repository.createQuote({ ...identity, userId: 'customer', countryCode: 'JM', recipientPhone: recipientRow.phone, operatorName: 'Fixture', productName: 'Exact product', kind: 'AIRTIME', providerAmount: 5, providerCurrency: 'USD', deliveredCurrency: 'JMD', feeUsd: 3.5, totalChargeUsd: 8.5, expiresAt: timestamp.toISOString() });
+    const quote = await repository.createQuote({ ...identity, userId: 'customer', countryCode: 'JM', recipientPhone: recipientRow.phone, operatorName: 'Fixture', productName: 'Exact product', kind: 'AIRTIME', providerAmount: 5, providerCurrency: 'USD', deliveredCurrency: 'JMD', feeUsd: 0.99, totalChargeUsd: 5.99, expiresAt: timestamp.toISOString() });
     expect(quote).toMatchObject(identity);
     expect(quoteCreate).toHaveBeenCalledWith({ data: expect.objectContaining(identity) });
     const reserved = await repository.reserveTransaction({ ...quote, id: 'transaction', quoteId: quote.id, idempotencyKey: 'fixture-key', requestHash: 'hash', customIdentifier: 'fixture-reference', status: 'PENDING', paymentStatus: 'AUTHORIZED', testMode: true, updatedAt: timestamp.toISOString() });
@@ -99,7 +99,7 @@ describe('payment foundation persistence', () => {
   });
   it('reads legacy NULL metadata without relabeling existing payment records', async () => {
     const repository=new PrismaMobileTopUpRepository({mobileTopUpTransaction:{findUnique:vi.fn(async()=>row)}} as never);
-    expect(await repository.getTransactionById('transaction')).toMatchObject({paymentStatus:'AUTHORIZED',paymentAuthorizationId:'old-authorization',paymentProvider:undefined,paymentMethod:undefined,totalChargeUsd:8.5});
+    expect(await repository.getTransactionById('transaction')).toMatchObject({paymentStatus:'AUTHORIZED',paymentAuthorizationId:'old-authorization',paymentProvider:undefined,paymentMethod:undefined,totalChargeUsd:5.99});
   });
   it('claims fulfillment with one conditional database write and no application-only lock', async () => {
     const updateMany=vi.fn().mockResolvedValueOnce({count:1}).mockResolvedValueOnce({count:0});

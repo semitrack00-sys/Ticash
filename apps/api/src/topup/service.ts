@@ -13,6 +13,7 @@ import type {
 } from './types.js';
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
+import { approvedRechargeAmountsUsd, approvedRechargePrice, isApprovedRechargeAmountMinorUnits } from './recharge-fee-grid.js';
 import { assertVerifiedCheckoutEvent, type VerifiedCheckoutEvent } from './checkout-webhook.js';
 import type { CheckoutSandboxPaymentProvider } from './checkout-provider.js';
 import {
@@ -36,8 +37,6 @@ type AuditRecorder = (
 
 const countryCatalogCacheTtlMs = 60_000;
 
-function cents(value: number): number { return Math.round((value + Number.EPSILON) * 100) / 100; }
-
 function planName(operator: MobileTopUpOperator, amount: number): string | undefined {
   const keys = [String(amount), amount.toFixed(2), amount.toFixed(1)];
   for (const key of keys) {
@@ -52,41 +51,31 @@ export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUp
   if (provider !== 'RELOADLY') return [];
   const destinationCurrency = operator.destinationCurrencyCode.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(destinationCurrency)) return [];
-  if (operator.denominationType === 'RANGE') {
-    if (!operator.minAmount || !operator.maxAmount || operator.senderCurrencyCode !== 'USD') return [];
-    return [{
-      id: `reloadly:${operator.countryCode}:${operator.id}:airtime:range`,
-      provider,
-      countryCode: operator.countryCode,
-      operatorId: operator.id,
-      kind: 'AIRTIME',
-      name: `${operator.name} airtime`,
-      price: operator.minAmount,
-      priceCurrency: operator.senderCurrencyCode,
-      deliveredCurrency: destinationCurrency,
-      amountType: 'RANGE',
-      minimumAmount: operator.minAmount,
-      maximumAmount: operator.maxAmount,
-    }];
-  }
   if (operator.senderCurrencyCode !== 'USD') return [];
-  return operator.fixedAmounts.map((amount, index) => {
+  const approvedAmounts = operator.denominationType === 'RANGE'
+    ? approvedRechargeAmountsUsd.filter((amount) => {
+      const amountMinorUnits = usdMinorUnits(amount);
+      return (!Number.isFinite(operator.minAmount) || amount >= operator.minAmount!) && (!Number.isFinite(operator.maxAmount) || amount <= operator.maxAmount!) && isApprovedRechargeAmountMinorUnits(amountMinorUnits);
+    })
+    : operator.fixedAmounts.filter((amount) => isApprovedRechargeAmountMinorUnits(usdMinorUnits(amount)));
+  return approvedAmounts.flatMap((amount, index) => {
     const plan = planName(operator, amount);
     const kind = plan || operator.bundle ? 'DATA' : 'AIRTIME';
+    const amountMinorUnits = usdMinorUnits(amount);
     const deliveredValue = operator.localFixedAmounts[index] ?? Number.NaN;
-    return {
+    return [{
       id: `reloadly:${operator.countryCode}:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
       provider,
       countryCode: operator.countryCode,
       operatorId: operator.id,
       kind,
       name: plan ?? `${operator.name} ${amount.toFixed(2)} ${operator.senderCurrencyCode}`,
-      price: cents(amount),
+      price: amountMinorUnits / 100,
       priceCurrency: operator.senderCurrencyCode,
       deliveredValue: Number.isFinite(deliveredValue) && deliveredValue > 0 ? deliveredValue : undefined,
       deliveredCurrency: destinationCurrency,
       amountType: 'FIXED',
-    } satisfies MobileTopUpProduct;
+    } satisfies MobileTopUpProduct];
   });
 }
 
@@ -261,13 +250,14 @@ export class MobileTopUpService {
     if (operator.id !== operatorId || (operator.provider && operator.provider !== owner)) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Recharge operator identity did not match', 502);
     }
-    const products = await this.provider.listProducts?.(normalizedCountry, operatorId) ?? productsFromOperator(operator);
-    if (!Array.isArray(products) || products.some(product => !product || typeof product.id !== 'string' || product.operatorId !== operatorId || product.countryCode !== normalizedCountry ||
+    const rawProducts = await this.provider.listProducts?.(normalizedCountry, operatorId) ?? productsFromOperator(operator);
+    if (!Array.isArray(rawProducts) || rawProducts.some(product => !product || typeof product.id !== 'string' || product.operatorId !== operatorId || product.countryCode !== normalizedCountry ||
         (product.provider && product.provider !== owner) || !product.id.startsWith(`${owner.toLowerCase()}:${normalizedCountry}:${operatorId}:`) ||
         product.priceCurrency !== 'USD' || !Number.isFinite(product.price) || product.price <= 0 ||
         (owner !== 'RELOADLY' && !product.providerProductId))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
     }
+    const products = rawProducts.filter((product) => product.amountType === 'FIXED' && isApprovedRechargeAmountMinorUnits(usdMinorUnits(product.price)));
     return { operator: { ...operator, provider: owner }, products };
   }
 
@@ -333,14 +323,10 @@ export class MobileTopUpService {
     if (!product) {
       throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
     }
-    let amount = product.price;
-    if (product.amountType === 'RANGE') {
-      if (!Number.isFinite(input.amount) || input.amount! < product.minimumAmount! || input.amount! > product.maximumAmount!) {
-        throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount is outside the provider-supported range', 400);
-      }
-      amount = cents(input.amount!);
+    if (product.amountType !== 'FIXED') {
+      throw new MobileTopUpError('UNSUPPORTED_TOPUP_DENOMINATION', 'Select a supported recharge denomination', 400);
     }
-    const fee = cents(Number(this.config.feeUsd));
+    const pricing = approvedRechargePrice(product.price);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
       userId,
@@ -353,12 +339,12 @@ export class MobileTopUpService {
       productId: product.id,
       productName: product.name,
       kind: product.kind,
-      providerAmount: amount,
+      providerAmount: pricing.amountMinorUnits / 100,
       providerCurrency: product.priceCurrency,
       deliveredValue: product.deliveredValue,
       deliveredCurrency: product.deliveredCurrency,
-      feeUsd: fee,
-      totalChargeUsd: cents(amount + fee),
+      feeUsd: pricing.feeMinorUnits / 100,
+      totalChargeUsd: pricing.totalMinorUnits / 100,
       expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
     });
     await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {

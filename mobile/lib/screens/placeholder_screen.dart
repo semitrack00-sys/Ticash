@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import '../theme/app_text_styles.dart';
 
 /// Shared layout for sections that are not yet fully implemented
@@ -23,6 +22,6 @@ class PlaceholderScreen extends StatelessWidget {
           Text(description, style: AppTextStyles.bodySecondary),
         ],
       ),
-    ).animate().fadeIn(duration: 250.ms);
+    );
   }
 }

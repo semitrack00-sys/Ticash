@@ -35,7 +35,6 @@ process only. Never put Reloadly credentials in Flutter or source control.
 MOBILE_TOPUP_ENABLED=true
 MOBILE_TOPUP_PAYMENT_MODE=mock
 MOBILE_TOPUP_BILLING_CURRENCY=USD
-MOBILE_TOPUP_FEE_USD=3.50
 RELOADLY_ENVIRONMENT=sandbox
 RELOADLY_CLIENT_ID=your-sandbox-client-id
 RELOADLY_CLIENT_SECRET=your-sandbox-client-secret
@@ -48,9 +47,9 @@ LIVE_MONEY_ENABLED=false
 ```
 
 The API uses Reloadly's server-side client-credentials token flow. Available
-countries, active operators, fixed/range denominations, and data-plan names
-are read from Reloadly at runtime. TiCash does not hard-code universal
-coverage, live pricing, exchange rates, or remittance corridor changes.
+countries, active operators, and fixed denominations are read from Reloadly at
+runtime. TiCash does not hard-code universal coverage, live pricing, exchange
+rates, or remittance corridor changes.
 
 After reviewing the schema change in a local Sandbox database, apply the
 reviewed migration instead of `prisma db push` for production-like environments.
@@ -87,7 +86,7 @@ Country responses add `callingCode`, for example `{code:'HT', name:'Haiti', call
 
 Valid two-letter provider destinations without supported calling-code metadata are omitted from the public catalog. For example, Reloadly's legacy `AN` (Netherlands Antilles) is excluded while `HT` remains available with `+509`. No prefix is invented, and `AN` is never mapped to CW, SX, BQ, NL, or another ISO destination. A warning contains only the skipped validated country codes, without provider names, credentials, tokens, or phone numbers. Successful filtered catalogs retain the existing cache and sorting behavior. Malformed provider data still fails with a controlled `502 INVALID_PROVIDER_RESPONSE`; it is not silently skipped. If a nonempty provider catalog has no supported destinations, the endpoint returns `502 UNSUPPORTED_CALLING_CODE` without caching a healthy empty result. A genuinely empty provider catalog retains the existing empty-list behavior.
 
-The test/development example sets `MOBILE_TOPUP_FEE_USD=3.50`. The config loader's existing fallback remains unchanged; configure the fee explicitly on the test backend. A provider amount of `5.00` then yields `feeUsd:3.50` and `totalChargeUsd:8.50`. Quotes and purchases remain backend-authoritative; client-supplied fee/total fields are rejected. No browser fee calculation is needed.
+Approved customer-facing recharge pricing is fixed in the backend and does not use a flat `MOBILE_TOPUP_FEE_USD` override. The approved grid is `$5.00 → $0.99`, `$10.00 → $1.05`, `$20.00 → $1.49`, `$30.00 → $1.79`, `$50.00 → $2.49`, `$75.00 → $3.49`, and `$100.00 → $4.49`. Quotes and purchases remain backend-authoritative; client-supplied fee/total fields are rejected. No browser fee calculation is needed.
 
 The website upgrade depends on the new country field and guest endpoint. Review the backend migration/API before rolling out the website upgrade; older mobile clients can ignore the additive field. No rollout is performed by this implementation.
 
@@ -120,7 +119,7 @@ The active recharge payment provider remains **MOCK**. Keep `MOBILE_TOPUP_PAYMEN
 
 `GET /api/mobile-topups/payment-methods` uses the existing recharge authentication and funding-restriction middleware. It represents CARD, APPLE_PAY, GOOGLE_PAY and BANK_ACCOUNT separately from providers MOCK, CHECKOUT_COM and DWOLLA. Only CARD/MOCK ("Test card — Sandbox") is available when recharge is enabled. Apple Pay and Google Pay are unconfigured. Bank recharge is unavailable to everyone; guests additionally receive `GUEST_SCOPE_RESTRICTED`. Guest authentication, expiry, permanent-account funding/KYC/remittance restrictions, and `TRUST_PROXY_HOPS` behavior are unchanged.
 
-`POST /api/mobile-topups/payment-sessions` requires an `Idempotency-Key` and a strict body `{quoteId, recipientId?}`. It rejects payment methods/providers, price/fee/currency/status overrides, PAN/CVV/expiry and bank fields. No card form is needed. The service retrieves the owner's valid quote, checks any saved recipient, and atomically consumes/reserves it. The existing unique quote and user/key constraints plus conditional database updates prevent concurrent independent attempts. The response contains MOCK/SANDBOX, `transactionId`, `paymentSession.id`, `amountMinor`, `currency:USD`, and `paymentStatus`. The $5.00 + $3.50 quote becomes exactly 850 USD minor units; there is no client fee calculation.
+`POST /api/mobile-topups/payment-sessions` requires an `Idempotency-Key` and a strict body `{quoteId, recipientId?}`. It rejects payment methods/providers, price/fee/currency/status overrides, PAN/CVV/expiry and bank fields. No card form is needed. The service retrieves the owner's valid quote, checks any saved recipient, and atomically consumes/reserves it. The existing unique quote and user/key constraints plus conditional database updates prevent concurrent independent attempts. The response contains MOCK/SANDBOX, `transactionId`, `paymentSession.id`, `amountMinor`, `currency:USD`, and `paymentStatus`. The $5.00 + $0.99 quote becomes exactly 599 USD minor units; there is no client fee calculation.
 
 Session creation does not send airtime or authorize a payment. Confirm with the existing `POST /transactions`, the same quote/recipient and the **same key**. This authorizes once through the working mock adapter, persists the authorization/provider identifiers, and calls the shared `fulfillPaidRecharge`. Older clients can continue to call `/transactions` directly. Retries return the same logical attempt, including after the already-reserved quote expires. A different key cannot reuse a consumed quote; the same key with changed quote/recipient is a 409. After a definite failed payment, a customer must request a fresh quote for a new attempt. An unknown outcome requires reconciliation before a new attempt.
 
@@ -232,7 +231,7 @@ COMPLETED maps to DELIVERED, CREATED to PENDING, CONFIRMED/SUBMITTED to PROCESSI
 REJECTED/DECLINED/CANCELLED to FAILED, REVERSED to REFUNDED. Its raw status message
 is stored separately. Unknown/malformed status responses fail safely without
 claiming success. Guest scope, payment authorization, quote ownership, fees and
-production gates are unchanged. The Jamaica $5 + $3.50 = $8.50 regression remains
+production gates are unchanged. The Jamaica $5 + $0.99 = $5.99 regression remains
 covered with fixtures.
 
 ### Coverage and status
@@ -314,7 +313,7 @@ bill lookup, regional restriction or extra instructions, and a valid provider-re
 UatNumber. Unsupported or ambiguous pricing/requirements are omitted; no SKU,
 denomination or FX value is invented. Exact SKU is persisted as providerProductId.
 Revalidation checks the exact operator/SKU/source amount before submission, without
-substitution. A $5 fixture plus the unchanged $3.50 fee yields $8.50.
+substitution. A $5 fixture plus the approved $0.99 fee yields $5.99.
 
 **The transfer guard accepts only the exact UatNumber returned for that SKU.** Ding
 states those numbers do not debit balance even for live credentials; ordinary

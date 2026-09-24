@@ -55,21 +55,24 @@ class AppNavigation extends ConsumerWidget {
             ),
             const SizedBox(height: 24),
             for (final item in _navItems)
-              ListTile(
-                leading: Icon(
-                  item.icon,
-                  color: current == item.section ? AppColors.secondary : AppColors.textSecondary,
-                ),
-                title: Text(
-                  item.label,
-                  style: TextStyle(
+              Material(
+                color: current == item.section ? AppColors.surface : Colors.transparent,
+                child: ListTile(
+                  leading: Icon(
+                    item.icon,
                     color: current == item.section ? AppColors.secondary : AppColors.textSecondary,
-                    fontWeight: current == item.section ? FontWeight.w600 : FontWeight.normal,
                   ),
+                  title: Text(
+                    item.label,
+                    style: TextStyle(
+                      color: current == item.section ? AppColors.secondary : AppColors.textSecondary,
+                      fontWeight: current == item.section ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                  selected: current == item.section,
+                  selectedTileColor: AppColors.surface,
+                  onTap: () => ref.read(currentSectionProvider.notifier).state = item.section,
                 ),
-                selected: current == item.section,
-                selectedTileColor: AppColors.surface,
-                onTap: () => ref.read(currentSectionProvider.notifier).state = item.section,
               ),
           ],
         ),

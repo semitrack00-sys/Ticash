@@ -45,7 +45,7 @@ function transport() {
   });
   return { fetcher, records, sends: () => sendCount };
 }
-const topupConfig: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId: 'fixture', clientSecret: 'fixture', authUrl: 'https://auth.reloadly.com/oauth/token', airtimeBaseUrl: 'https://topups-sandbox.reloadly.com', billingCurrency: 'USD', feeUsd: '3.50', quoteTtlSeconds: 300, paymentMode: 'mock', productionEnabled: false, approvedForLiveUse: false };
+const topupConfig: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId: 'fixture', clientSecret: 'fixture', authUrl: 'https://auth.reloadly.com/oauth/token', airtimeBaseUrl: 'https://topups-sandbox.reloadly.com', billingCurrency: 'USD', quoteTtlSeconds: 300, paymentMode: 'mock', productionEnabled: false, approvedForLiveUse: false };
 beforeEach(() => { resetStore(); vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Real network forbidden'); })); });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -218,7 +218,7 @@ describe('Ding router integration', () => {
   it('locks Ding quote/provider/SKU, preserves the $8.50 total and prevents duplicate recharge', async () => {
     const t = transport(); const s = service(t);
     const quote = await s.service.createQuote('fixture-user', { countryCode: 'JM', phone: input.recipientPhone, operatorId: globalId, productId: input.productId! });
-    expect(quote).toMatchObject({ provider: 'DING', providerProductId: rawProduct.SkuCode, providerAmount: 5, feeUsd: 3.5, totalChargeUsd: 8.5 });
+    expect(quote).toMatchObject({ provider: 'DING', providerProductId: rawProduct.SkuCode, providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
     const result = await s.service.purchase('fixture-user', { quoteId: quote.id }, 'fixture-idempotency');
     await s.service.purchase('fixture-user', { quoteId: quote.id }, 'fixture-idempotency');
     expect(result).toMatchObject({ provider: 'DING', providerProductId: rawProduct.SkuCode, status: 'DELIVERED' }); expect(result.providerTransactionId).toMatch(/^DING:tc-/);

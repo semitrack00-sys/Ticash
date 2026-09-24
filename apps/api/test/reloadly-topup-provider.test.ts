@@ -10,7 +10,6 @@ const config: MobileTopUpConfig = {
   authUrl: 'https://auth.reloadly.com/oauth/token',
   airtimeBaseUrl: 'https://topups-sandbox.reloadly.com',
   billingCurrency: 'USD',
-  feeUsd: '0.00',
   quoteTtlSeconds: 300,
   paymentMode: 'mock',
   productionEnabled: false,
@@ -54,6 +53,25 @@ describe('Reloadly Sandbox top-up provider', () => {
     });
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/JM`);
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer ' + 'token');
+  });
+
+  it('preserves RANGE denomination bounds from Reloadly operators', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json([{ operatorId: 12, name: 'Sandbox Jamaica Range', status: true,
+        country: { isoName: 'JM' }, denominationType: 'RANGE', senderCurrencyCode: 'USD',
+        destinationCurrencyCode: 'JMD', minAmount: 5, maxAmount: 60 }]));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.listOperators('JM')).resolves.toEqual([
+      expect.objectContaining({
+        id: 12,
+        countryCode: 'JM',
+        denominationType: 'RANGE',
+        minAmount: 5,
+        maxAmount: 60,
+      }),
+    ]);
   });
 
   it('lists provider-backed supported countries', async () => {

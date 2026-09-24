@@ -132,19 +132,15 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
       const mockAllowed =
         record.paymentProvider === 'MOCK' &&
         ['PENDING', 'SESSION_CREATED'].includes(record.paymentStatus);
-      const checkoutAllowed =
-        record.paymentProvider === 'CHECKOUT_COM' &&
-        record.paymentStatus === 'PENDING';
       const stripeAllowed =
         record.paymentProvider === 'STRIPE' &&
         record.paymentStatus === 'PENDING';
-      if (!mockAllowed && !checkoutAllowed && !stripeAllowed) return false;
+      if (!mockAllowed && !stripeAllowed) return false;
     }
     if (operation === 'fulfillment') {
       const mockAllowed = record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
-      const checkoutAllowed = record.paymentProvider === 'CHECKOUT_COM' && record.paymentStatus === 'CAPTURED';
       const stripeAllowed = record.paymentProvider === 'STRIPE' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
-      if (record.providerTransactionId || record.status !== 'PENDING' || !paid(record) || (!mockAllowed && !checkoutAllowed && !stripeAllowed)) return false;
+      if (record.providerTransactionId || record.status !== 'PENDING' || !paid(record) || (!mockAllowed && !stripeAllowed)) return false;
     }
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
     transactions.set(id, { ...record, [field]: when, updatedAt: now() });
@@ -309,11 +305,12 @@ function transactionFromDb(record: {
   deliveredCurrency: string; feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; providerStatus: string | null;
   failureCode: string | null; testMode: boolean; createdAt: Date; updatedAt: Date; deliveredAt: Date | null;
   failedAt: Date | null; refundedAt: Date | null;
-  paymentMethod?: MobileTopUpPaymentMethod | null; paymentProvider?: MobileTopUpPaymentProviderName | null;
+  paymentMethod?: MobileTopUpPaymentMethod | null; paymentProvider?: MobileTopUpPaymentProviderName | string | null;
   paymentSessionId?: string | null; paymentProviderTransactionId?: string | null;
   paymentStartedAt?: Date | null; fulfillmentStartedAt?: Date | null; recoveryStartedAt?: Date | null;
   paymentRecoveryCode?: string | null;
 }): MobileTopUpTransactionRecord {
+  const paymentProvider = record.paymentProvider ?? undefined;
   return {
     id: record.id,
     provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
@@ -330,7 +327,7 @@ function transactionFromDb(record: {
     paymentStatus: record.paymentStatus,
     paymentAuthorizationId: record.paymentAuthorizationId ?? undefined,
     paymentMethod: record.paymentMethod ?? undefined,
-    paymentProvider: record.paymentProvider ?? undefined,
+    paymentProvider: paymentProvider as MobileTopUpPaymentProviderName | undefined,
     paymentSessionId: record.paymentSessionId ?? undefined,
     paymentProviderTransactionId: record.paymentProviderTransactionId ?? undefined,
     paymentStartedAt: record.paymentStartedAt?.toISOString(),
@@ -374,13 +371,12 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     if (operation === 'payment') Object.assign(where, {
       OR: [
         { paymentProvider: 'MOCK', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } },
-        { paymentProvider: 'CHECKOUT_COM', paymentStatus: 'PENDING' },
+        { paymentProvider: 'STRIPE', paymentStatus: 'PENDING' },
       ],
     });
     if (operation === 'fulfillment') Object.assign(where, {
       providerTransactionId: null, status: 'PENDING', OR: [
         { paymentProvider: 'MOCK', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
-        { paymentProvider: 'CHECKOUT_COM', paymentStatus: 'CAPTURED' },
         { paymentProvider: 'STRIPE', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
       ],
     });
@@ -401,14 +397,14 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
     const record = await this.prisma.mobileTopUpPaymentEvent.upsert({
-      where: { provider_eventId: { provider: 'CHECKOUT_COM', eventId } },
-      create: { provider: 'CHECKOUT_COM', eventId, payloadHash, transactionId }, update: {},
+      where: { provider_eventId: { provider: 'STRIPE', eventId } },
+      create: { provider: 'STRIPE', eventId, payloadHash, transactionId }, update: {},
     });
     assertSameEvent(record, payloadHash, transactionId);
     return !record.processedAt;
   }
   async completePaymentEvent(eventId: string) {
-    await this.prisma.mobileTopUpPaymentEvent.update({ where: { provider_eventId: { provider: 'CHECKOUT_COM', eventId } }, data: { processedAt: new Date() } });
+    await this.prisma.mobileTopUpPaymentEvent.update({ where: { provider_eventId: { provider: 'STRIPE', eventId } }, data: { processedAt: new Date() } });
   }
 
   async listRecipients(userId: string) {
@@ -586,8 +582,8 @@ function operationField(operation: 'payment' | 'fulfillment' | 'recovery') {
   return ({ payment: 'paymentStartedAt', fulfillment: 'fulfillmentStartedAt', recovery: 'recoveryStartedAt' } as const)[operation];
 }
 function paid(record: MobileTopUpTransactionRecord) {
-  return record.paymentProvider === 'CHECKOUT_COM' ? record.paymentStatus === 'CAPTURED'
-    : record.paymentProvider === 'STRIPE' ? ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)
+  return record.paymentProvider === 'STRIPE'
+    ? ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)
     : record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
 }
 function assertSameEvent(record: { payloadHash: string; transactionId: string }, hash: string, transactionId: string) {

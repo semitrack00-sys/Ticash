@@ -28,7 +28,7 @@ export function loadMobileTopUpConfig(env: NodeJS.ProcessEnv = process.env): Mob
   }
   const quoteTtlSeconds = z.coerce.number().int().min(30).max(900)
     .parse(env.MOBILE_TOPUP_QUOTE_TTL_SECONDS ?? '300');
-  const paymentMode = z.enum(['mock', 'checkout_sandbox', 'stripe_sandbox'])
+  const paymentMode = z.enum(['mock', 'stripe_sandbox'])
     .parse((env.MOBILE_TOPUP_PAYMENT_MODE ?? 'mock').toLowerCase());
   const config: MobileTopUpConfig = {
     enabled,

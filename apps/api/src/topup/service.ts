@@ -14,8 +14,6 @@ import type {
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
 import { approvedRechargeAmountsUsd, approvedRechargePrice, isApprovedRechargeAmountMinorUnits } from './recharge-fee-grid.js';
-import { assertVerifiedCheckoutEvent, type VerifiedCheckoutEvent } from './checkout-webhook.js';
-import type { CheckoutSandboxPaymentProvider } from './checkout-provider.js';
 import type { StripeSandboxPaymentProvider } from './stripe-provider.js';
 import { assertVerifiedStripeEvent, type VerifiedStripeEvent } from './stripe-webhook.js';
 import {
@@ -92,17 +90,31 @@ function mapProviderStatus(value: string): MobileTopUpStatus {
 
 export class MobileTopUpService {
   private countriesCache?: { expiresAt: number; value: MobileTopUpDestination[]; key: string };
+  private readonly config: MobileTopUpConfig;
+  private readonly provider: MobileTopUpProvider;
+  private readonly paymentProvider: MobileTopUpPaymentProvider;
+  private readonly repository: MobileTopUpRepository;
+  private readonly audit: AuditRecorder;
+  private readonly clock: () => Date;
+  private readonly stripeProvider?: StripeSandboxPaymentProvider;
 
   constructor(
-    private readonly config: MobileTopUpConfig,
-    private readonly provider: MobileTopUpProvider,
-    private readonly paymentProvider: MobileTopUpPaymentProvider,
-    private readonly repository: MobileTopUpRepository,
-    private readonly audit: AuditRecorder,
-    private readonly clock: () => Date = () => new Date(),
-    private readonly checkoutProvider?: CheckoutSandboxPaymentProvider,
-    private readonly stripeProvider?: StripeSandboxPaymentProvider,
-  ) {}
+    config: MobileTopUpConfig,
+    provider: MobileTopUpProvider,
+    paymentProvider: MobileTopUpPaymentProvider,
+    repository: MobileTopUpRepository,
+    audit: AuditRecorder,
+    clock: () => Date = () => new Date(),
+    stripeProvider?: StripeSandboxPaymentProvider,
+  ) {
+    this.config = config;
+    this.provider = provider;
+    this.paymentProvider = paymentProvider;
+    this.repository = repository;
+    this.audit = audit;
+    this.clock = clock;
+    this.stripeProvider = stripeProvider;
+  }
 
   availability() {
     const providers = this.config.enabled ? this.provider.providerNames ?? [this.provider.name ?? 'RELOADLY'] : [];
@@ -113,11 +125,9 @@ export class MobileTopUpService {
       provider: providers.length === 1 ? providers[0] : providers.length ? 'MULTI_PROVIDER' : null,
       providerMode: providers.length > 1 ? 'MULTI_PROVIDER' : providers.length ? 'SINGLE_PROVIDER' : 'DISABLED',
       providers,
-      paymentMode: this.config.paymentMode === 'checkout_sandbox'
-        ? 'CHECKOUT_COM_SANDBOX'
-        : this.config.paymentMode === 'stripe_sandbox'
-          ? 'STRIPE_SANDBOX'
-          : 'MOCK',
+      paymentMode: this.config.paymentMode === 'stripe_sandbox'
+        ? 'STRIPE_SANDBOX'
+        : 'MOCK',
       testMode: true,
       supportedGeographicScope: 'Configured sandbox provider catalog countries only',
       supportedCountriesPath: '/api/mobile-topups/countries',
@@ -315,13 +325,47 @@ export class MobileTopUpService {
     countryCode: string;
     phone: string;
     operatorId: number;
-    productId: string;
+    productId?: string;
     amount?: number;
   }): Promise<MobileTopUpQuoteRecord> {
     this.assertEnabled();
     const countryCode = normalizeTopUpCountryCode(input.countryCode);
     const phone = normalizeTopUpPhone(input.phone, countryCode);
     const { operator, products } = await this.products(countryCode, input.operatorId);
+
+    if (input.amount !== undefined) {
+      const amount = Number(input.amount);
+      const pricing = approvedRechargePrice(amount);
+      const customProductId = input.productId && /^custom:/.test(input.productId) ? input.productId : `custom:${(pricing.amountMinorUnits / 100).toFixed(2)}`;
+      const createdAt = this.clock();
+      const quote = await this.repository.createQuote({
+        userId,
+        countryCode,
+        recipientPhone: phone,
+        operatorId: operator.id,
+        operatorName: operator.name,
+        provider: operator.provider ?? decodeOperatorId(operator.id).provider,
+        providerProductId: undefined,
+        productId: customProductId,
+        productName: `Custom recharge ${((pricing.amountMinorUnits) / 100).toFixed(2)}`,
+        kind: 'AIRTIME',
+        providerAmount: pricing.amountMinorUnits / 100,
+        providerCurrency: 'USD',
+        deliveredValue: undefined,
+        deliveredCurrency: 'USD',
+        feeUsd: pricing.feeMinorUnits / 100,
+        totalChargeUsd: pricing.totalMinorUnits / 100,
+        expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
+      });
+      await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {
+        countryCode: quote.countryCode,
+        operatorId: operator.id,
+        productId: quote.productId,
+        testMode: true,
+      });
+      return quote;
+    }
+
     const product = products.find(
       (item) => item.id === input.productId && normalizeTopUpCountryCode(item.countryCode) === countryCode,
     );
@@ -408,11 +452,9 @@ export class MobileTopUpService {
       status: 'PENDING',
       paymentStatus: 'PENDING',
       paymentMethod: 'CARD',
-      paymentProvider: this.config.paymentMode === 'checkout_sandbox'
-        ? 'CHECKOUT_COM'
-        : this.config.paymentMode === 'stripe_sandbox'
-          ? 'STRIPE'
-          : 'MOCK',
+      paymentProvider: this.config.paymentMode === 'stripe_sandbox'
+        ? 'STRIPE'
+        : 'MOCK',
       paymentSessionId: this.config.paymentMode === 'mock'
         ? 'mock-session:' + transactionId
         : undefined,
@@ -431,22 +473,20 @@ export class MobileTopUpService {
   }
 
   paymentMethods(guest = false) {
-    const checkout = this.config.paymentMode === 'checkout_sandbox';
     const stripe = this.config.paymentMode === 'stripe_sandbox';
-    const checkoutReady = checkout && Boolean(this.checkoutProvider);
     const stripeReady = stripe && Boolean(this.stripeProvider);
     const cardEnabled = this.config.enabled &&
-      ((!checkout && !stripe) || ((checkout ? checkoutReady : stripe ? stripeReady : true) && !guest));
+      ((!stripe) || (stripeReady && !guest));
 
     const cardReason = !this.config.enabled
       ? 'RECHARGE_DISABLED'
-      : guest && (checkout || stripe)
+      : guest && stripe
         ? 'GUEST_BILLING_PROFILE_REQUIRED'
-        : (checkout || stripe) && !(checkout ? checkoutReady : stripeReady)
+        : stripe && !stripeReady
           ? 'PROVIDER_NOT_CONFIGURED'
           : undefined;
 
-    const providerName = checkout ? 'CHECKOUT_COM' : stripe ? 'STRIPE' : 'MOCK';
+    const providerName = stripe ? 'STRIPE' : 'MOCK';
 
     return { environment: 'SANDBOX', methods: [
       {
@@ -454,7 +494,7 @@ export class MobileTopUpService {
         enabled: cardEnabled,
         provider: providerName,
         testMode: true,
-        label: checkout ? 'Test card - Checkout.com Sandbox' : stripe ? 'Test card - Stripe Sandbox' : 'Test card — Sandbox',
+        label: stripe ? 'Test card - Stripe Sandbox' : 'Test card — Sandbox',
         ...(cardReason ? { reason: cardReason } : {}),
       },
       { type: 'APPLE_PAY', enabled: false, provider: providerName, reason: 'PROVIDER_NOT_CONFIGURED' },
@@ -575,121 +615,11 @@ export class MobileTopUpService {
       };
     }
 
-    if (
-      reserved.paymentProvider !== 'CHECKOUT_COM' ||
-      this.config.paymentMode !== 'checkout_sandbox' ||
-      !this.checkoutProvider
-    ) {
-      throw new MobileTopUpError(
-        'PAYMENT_PROVIDER_DISABLED',
-        'Checkout.com Sandbox is not enabled',
-        503,
-      );
-    }
-
-    const country = billingCountry?.trim().toUpperCase();
-    if (!country || !/^[A-Z]{2}$/.test(country)) {
-      throw new MobileTopUpError(
-        'BILLING_COUNTRY_REQUIRED',
-        'A verified billing country is required for Checkout.com Sandbox',
-        409,
-      );
-    }
-
-    /*
-     * Flow requires the unmodified Payment Session response.
-     * Do not silently create a second provider session on retry.
-     */
-    if (reserved.paymentSessionId) {
-      throw new MobileTopUpError(
-        'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
-        'This Checkout.com payment session was already created; do not create another attempt',
-        409,
-      );
-    }
-
-    if (!await this.repository.claimOperation(
-      reserved.id,
-      'payment',
-      this.clock().toISOString(),
-    )) {
-      const current = await this.repository.getTransaction(userId, reserved.id);
-      if (current?.paymentSessionId) {
-        throw new MobileTopUpError(
-          'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
-          'This Checkout.com payment session was already created; do not create another attempt',
-          409,
-        );
-      }
-
-      throw new MobileTopUpError(
-        'PAYMENT_SESSION_IN_PROGRESS',
-        'Checkout.com payment session creation is already in progress',
-        409,
-      );
-    }
-
-    let paymentSession: Record<string, unknown>;
-    try {
-      paymentSession = await this.checkoutProvider.createPaymentSession({
-        transactionId: reserved.id,
-        amountMinor: usdMinorUnits(reserved.totalChargeUsd),
-        currency: 'USD',
-        billingCountry: country,
-      });
-    } catch (error) {
-      await this.repository.updateTransaction(reserved.id, {
-        paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN',
-      });
-      await this.audit(
-        userId,
-        'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED',
-        'MobileTopUpTransaction',
-        reserved.id,
-        { provider: 'CHECKOUT_COM', stage: 'PAYMENT_SESSION' },
-      );
-
-      if (error instanceof MobileTopUpError) throw error;
-
-      throw new MobileTopUpError(
-        'PAYMENT_SESSION_CREATION_UNKNOWN',
-        'Checkout.com payment session creation requires reconciliation',
-        502,
-      );
-    }
-
-    const sessionId = typeof paymentSession.id === 'string'
-      ? paymentSession.id
-      : '';
-
-    if (!/^ps_[A-Za-z0-9]+$/.test(sessionId)) {
-      throw new MobileTopUpError(
-        'INVALID_PAYMENT_SESSION',
-        'Checkout.com returned an invalid payment session',
-        502,
-      );
-    }
-
-    await this.repository.updateTransaction(reserved.id, {
-      paymentSessionId: sessionId,
-      paymentStatus: 'SESSION_CREATED',
-    });
-
-    await this.audit(
-      userId,
-      'MOBILE_TOPUP_PAYMENT_SESSION_CREATED',
-      'MobileTopUpTransaction',
-      reserved.id,
-      { provider: 'CHECKOUT_COM', testMode: true },
+    throw new MobileTopUpError(
+      'PAYMENT_PROVIDER_DISABLED',
+      'Stripe Sandbox is not enabled',
+      503,
     );
-
-    return {
-      ...this.checkoutProvider.flowContract(reserved.id, paymentSession),
-      testMode: true,
-      amountMinor: usdMinorUnits(reserved.totalChargeUsd),
-      currency: 'USD',
-      paymentStatus: 'SESSION_CREATED',
-    };
   }
 
   async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
@@ -768,11 +698,9 @@ export class MobileTopUpService {
     // No implicit fallback from a hosted provider to a mock refund.
     const recovery = record.paymentProvider === 'MOCK'
       ? this.paymentProvider
-      : record.paymentProvider === 'CHECKOUT_COM'
-        ? this.checkoutProvider
-        : record.paymentProvider === 'STRIPE'
-          ? this.stripeProvider
-          : undefined;
+      : record.paymentProvider === 'STRIPE'
+        ? this.stripeProvider
+        : undefined;
     const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
     try {
       const status = paymentId && (refund
@@ -789,84 +717,42 @@ export class MobileTopUpService {
     return (await this.repository.getTransactionById(id))!;
   }
 
-  async acceptVerifiedPaymentEvent(event: VerifiedCheckoutEvent | VerifiedStripeEvent) {
+  async acceptVerifiedPaymentEvent(event: VerifiedStripeEvent) {
     this.assertEnabled();
-    const stripeEvent = typeof event.type === 'string' && event.type.startsWith('payment_intent.');
-    if (stripeEvent) {
-      assertVerifiedStripeEvent(event as VerifiedStripeEvent);
-    } else {
-      assertVerifiedCheckoutEvent(event as VerifiedCheckoutEvent);
-    }
+    assertVerifiedStripeEvent(event);
 
     const record = await this.repository.getTransactionById(event.transactionId);
-    const hostedProvider = record?.paymentProvider === 'STRIPE' || record?.paymentProvider === 'CHECKOUT_COM';
+    const hostedProvider = record?.paymentProvider === 'STRIPE';
     if (!record || !hostedProvider || !record.paymentSessionId) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
     const paymentIdMismatch = record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId;
-    const ignoreNonSuccessStripeFollowUp = stripeEvent && event.type !== 'payment_intent.succeeded' && ['SESSION_CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'FAILED'].includes(record.paymentStatus);
+    const ignoreNonSuccessStripeFollowUp = event.type !== 'payment_intent.succeeded' && ['SESSION_CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'FAILED'].includes(record.paymentStatus);
     if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' ||
         (paymentIdMismatch && !ignoreNonSuccessStripeFollowUp)) {
       throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event did not match the reserved recharge', 409);
     }
     if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id)) return;
 
-    if (stripeEvent) {
-      const transitionMap = {
-        'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
-        'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-        'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-        'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
-        'payment_intent.requires_action': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
-        'payment_intent.incomplete': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
-        'payment_intent.partially_funded': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
-      } as const;
-      const transition = transitionMap[event.type as keyof typeof transitionMap];
-      if (!transition) return;
-      const changed = await this.repository.transitionPayment(record.id, [...transition.from], {
-        paymentStatus: transition.to,
-        paymentProviderTransactionId: event.paymentId,
-        ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
-      });
-      if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
-      if (transition.to === 'AUTHORIZED') await this.fulfillPaidRecharge(record.id);
-      await this.repository.completePaymentEvent(event.eventId);
-      return;
-    }
-
-    const checkoutEvent = event as VerifiedCheckoutEvent;
-    const transitions = {
-      payment_approved: { from: ['PENDING', 'SESSION_CREATED'], to: 'AUTHORIZED' },
-      payment_captured: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'CAPTURED' },
-      payment_declined: { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      // Delivery order is not guaranteed. A verified full refund/void must also
-      // stop fulfillment if it arrives before the approval/capture notification.
-      payment_voided: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'VOID_PENDING', 'FAILED'], to: 'VOIDED' },
-      payment_refunded: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'REFUND_PENDING', 'FAILED'], to: 'REFUNDED' },
+    const transitionMap = {
+      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
+      'payment_intent.requires_action': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
+      'payment_intent.incomplete': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
+      'payment_intent.partially_funded': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
     } as const;
-    const transition = transitions[checkoutEvent.type];
+    const transition = transitionMap[event.type];
+    if (!transition) return;
     const changed = await this.repository.transitionPayment(record.id, [...transition.from], {
-      paymentStatus: transition.to, paymentProviderTransactionId: checkoutEvent.paymentId,
+      paymentStatus: transition.to,
+      paymentProviderTransactionId: event.paymentId,
       ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
-      ...(['VOIDED', 'REFUNDED'].includes(transition.to) ? { paymentRecoveryCode: 'RECOVERY_CONFIRMED' } : {}),
     });
-    if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: 'CHECKOUT_COM' });
-    if (changed && ['VOIDED', 'REFUNDED'].includes(transition.to)) {
-      const current = (await this.repository.getTransactionById(record.id))!;
-      if (current.fulfillmentStartedAt && !['FAILED', 'REFUNDED'].includes(current.status)) {
-        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'PAYMENT_REVERSAL_AFTER_FULFILLMENT' });
-        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
-      }
-    }
-    if (!changed && checkoutEvent.type === 'payment_captured') {
-      const current = (await this.repository.getTransactionById(record.id))!;
-      if (['FAILED', 'VOIDED', 'VOID_PENDING'].includes(current.paymentStatus)) {
-        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'CAPTURE_AFTER_TERMINAL_STATE' });
-        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
-      }
-    }
-    if (checkoutEvent.type === 'payment_captured') await this.fulfillPaidRecharge(record.id);
-    await this.repository.completePaymentEvent(checkoutEvent.eventId);
+    if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
+    if (transition.to === 'AUTHORIZED') await this.fulfillPaidRecharge(record.id);
+    await this.repository.completePaymentEvent(event.eventId);
   }
 
   private async applyProviderResult(id: string, result: ProviderTopUpResult) {

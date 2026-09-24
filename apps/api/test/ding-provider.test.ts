@@ -63,6 +63,21 @@ describe('Ding UAT configuration and identity', () => {
   });
 });
 describe('Ding OAuth and catalog', () => {
+  it.each([
+    { logo: 'https://cdn.example.test/ding-carrier.png', expected: 'https://cdn.example.test/ding-carrier.png' },
+    ...[undefined, null, 42, {}, '', 'broken', 'https:///carrier.png', 'https://', 'http://cdn.example.test/logo.png', '//cdn.example.test/logo.png', 'javascript:alert(1)', 'data:image/png;base64,AAAA', 'https://user:secret@cdn.example.test/logo.png', 'https://cdn.example.test/a b.png', 'https://cdn.example.test/%zz'].map(logo => ({ logo, expected: undefined })),
+  ])('maps optional Ding logos safely: $logo', async ({ logo, expected }) => {
+    const t = transport();
+    const f = vi.fn(async (url: string | URL | Request, init?: RequestInit) => String(url).includes('/GetProviders')
+      ? response(ok({ Items: [{ ...rawOperator, LogoUrl: logo }] })) : t.fetcher(url, init));
+    const provider = new DingUatProvider(config, f);
+    for (const mapped of [(await provider.listOperators('JM'))[0]!, await provider.getOperator(rawId), await provider.detectOperator('+18765551234', 'JM')]) {
+      expect(mapped.logoUrl).toBe(expected);
+      expect(mapped).toMatchObject({ id: rawId, countryCode: 'JM', provider: 'DING', name: rawOperator.Name });
+    }
+    expect(t.sends()).toBe(0);
+  });
+
   it('requests client_credentials once for concurrent calls, caches, and refreshes before expiry', async () => {
     let now = 0; const t = transport(); const provider = new DingUatProvider(config, t.fetcher, () => now);
     await Promise.all([provider.listCountries(), provider.listCountries(), provider.listCountries()]);

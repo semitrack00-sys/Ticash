@@ -7,6 +7,7 @@ import type {
   ProviderTopUpResult,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
+import { providerLogoUrl } from './logo-url.js';
 import { normalizeTopUpCountryCode } from './validation.js';
 
 type ReloadlyDocument = Record<string, unknown> & {
@@ -76,6 +77,7 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
   return {
     id,
     provider: 'RELOADLY',
+    logoUrl: Array.isArray(raw.logoUrls) ? raw.logoUrls.map(providerLogoUrl).find(url => url !== undefined) : undefined,
     name: String(raw.name ?? `Operator ${id}`).slice(0, 160),
     countryCode,
     status: raw.status !== false,

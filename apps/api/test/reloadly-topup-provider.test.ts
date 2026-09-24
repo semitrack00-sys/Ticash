@@ -22,6 +22,22 @@ function json(value: unknown, status = 200) {
 }
 
 describe('Reloadly Sandbox top-up provider', () => {
+  it.each([
+    { logos: ['https://cdn.example.test/carrier.png?size=36'], expected: 'https://cdn.example.test/carrier.png?size=36' },
+    { logos: ['http://cdn.example.test/insecure.png', null, 'broken', 'https://cdn.example.test/carrier.png'], expected: 'https://cdn.example.test/carrier.png' },
+    ...[undefined, null, [], 'https://cdn.example.test/carrier.png', [null, 42], [''], ['not a URL'], ['https:///carrier.png'], ['https://'], ['http://cdn.example.test/logo.png'], ['//cdn.example.test/logo.png'], ['data:image/png;base64,AAAA'], ['javascript:alert(1)'], ['https://user:secret@cdn.example.test/logo.png'], ['https://cdn.example.test/a b.png'], ['https://cdn.example.test/%zz']].map(logos => ({ logos, expected: undefined })),
+  ])('maps optional Reloadly logos safely: $logos', async ({ logos, expected }) => {
+    const raw = { operatorId: 12, name: 'Carrier fixture', country: { isoName: 'JM' }, logoUrls: logos };
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async url => String(url) === config.authUrl
+      ? json({ access_token: 'fixture-token', expires_in: 3600 })
+      : json(String(url).endsWith('/operators/countries/JM') ? [raw] : raw));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+    for (const mapped of [(await provider.listOperators('JM'))[0]!, await provider.detectOperator('+18765551234', 'JM'), await provider.getOperator(12)]) {
+      expect(mapped.logoUrl).toBe(expected);
+      expect(mapped).toMatchObject({ id: 12, name: raw.name, countryCode: 'JM', provider: 'RELOADLY' });
+    }
+  });
+
   it('uses server-side OAuth and provider-returned operator country data', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))

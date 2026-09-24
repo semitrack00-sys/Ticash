@@ -34,6 +34,21 @@ describe('global recharge identity', () => {
   it.each([0, -1, 1.2, NaN, Infinity, SLOT_SIZE])('rejects invalid raw operator ID %s', id => expect(() => encodeOperatorId('DTONE', id)).toThrow(MobileTopUpError));
 });
 describe('provider catalog routing', () => {
+  it.each(['RELOADLY', 'DING'] as const)('preserves %s carrier logos through global mapping and detection', async provider => {
+    const logoUrl = 'https://cdn.example.test/carrier.png';
+    const carrier = { ...op, provider, logoUrl };
+    const adapter = fixture(provider, ['JM']);
+    vi.mocked(adapter.listOperators).mockResolvedValue([carrier]);
+    vi.mocked(adapter.getOperator).mockResolvedValue(carrier);
+    vi.mocked(adapter.detectOperator).mockResolvedValue(carrier);
+    const router = new GlobalRechargeProviderRouter([[provider, adapter]]);
+    const id = encodeOperatorId(provider, op.id);
+    for (const mapped of [(await router.listOperators('JM'))[0]!, await router.getOperator(id), await router.detectOperator('+18765551234', 'JM')]) {
+      expect(mapped).toMatchObject({ id, provider, name: op.name, logoUrl });
+    }
+    expect(adapter.submitTopUp).not.toHaveBeenCalled();
+  });
+
   it('unions actual countries without duplicates and reports overlap and disabled providers', async () => {
     const router = new GlobalRechargeProviderRouter([['RELOADLY', fixture('RELOADLY', ['HT', 'JM', 'MX', 'MX'])], ['DTONE', fixture('DTONE', ['MX', 'GH', 'NG'])]]);
     expect((await router.listCountries()).map(c => c.code)).toEqual(['GH', 'HT', 'JM', 'MX', 'NG']);

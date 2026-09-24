@@ -2,11 +2,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ticash/services/mobile_top_up_service.dart';
 
-class _FakeDio extends Dio {
+class _FakeDio implements Dio {
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('Unexpected Dio operation: ${invocation.memberName}');
   _FakeDio({
     this.onGet,
     this.onPost,
-  }) : super();
+  });
 
   final Future<Response<dynamic>> Function(
     String path,
@@ -114,7 +117,7 @@ void main() {
             return Response<dynamic>(
               data: {
                 'operators': [
-                  {'id': 77, 'name': 'Digicel Jamaica', 'bundle': false},
+                  {'id': 77, 'name': 'Digicel Jamaica', 'bundle': false, 'logoUrl': 'https://cdn.example.test/carrier.png'},
                 ],
               },
               requestOptions: RequestOptions(path: path),
@@ -127,6 +130,7 @@ void main() {
                   'id': 77,
                   'name': 'Digicel Jamaica',
                   'bundle': false,
+                  'logoUrl': 'https://cdn.example.test/carrier.png',
                 },
               },
               requestOptions: RequestOptions(path: path),
@@ -206,6 +210,8 @@ void main() {
 
     expect(operators.single.countryCode, 'JM');
     expect(detected.countryCode, 'JM');
+    expect(operators.single.logoUrl, 'https://cdn.example.test/carrier.png');
+    expect(detected.logoUrl, operators.single.logoUrl);
     expect(recipient.countryCode, 'JM');
     expect(quote.countryCode, 'JM');
     expect(getCalls, [

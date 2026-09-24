@@ -2,6 +2,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 
 void main() {
+  test('parses a provider HTTPS operator logo without changing identity', () {
+    final operator = MobileTopUpOperator.fromJson({
+      'id': 1400000255, 'name': 'Carrier fixture', 'countryCode': 'JM',
+      'logoUrl': 'https://cdn.example.test/carrier.png?size=36',
+    });
+    expect(operator.logoUrl, 'https://cdn.example.test/carrier.png?size=36');
+    expect(operator.id, 1400000255);
+    expect(operator.name, 'Carrier fixture');
+  });
+  test('accepts missing logo metadata', () {
+    expect(MobileTopUpOperator.fromJson({
+      'id': 255, 'name': 'Carrier fixture', 'countryCode': 'JM',
+    }).logoUrl, isNull);
+  });
+  for (final logo in [null, 42, <String, dynamic>{}, '', 'broken', 'https:///carrier.png',
+    'http://cdn.example.test/logo.png', '//cdn.example.test/logo.png', 'https://',
+    'data:image/png;base64,AAAA', 'javascript:alert(1)',
+    'https://user:secret@cdn.example.test/logo.png',
+    'https://cdn.example.test/a b.png', 'https://cdn.example.test/%zz']) {
+    test('ignores invalid operator logo: $logo', () {
+      expect(MobileTopUpOperator.fromJson({
+        'id': 255, 'name': 'Carrier fixture', 'countryCode': 'JM', 'logoUrl': logo,
+      }).logoUrl, isNull);
+    });
+  }
+
   test(
     'keeps the safety warning unless every live condition is authoritative',
     () {

@@ -1,6 +1,8 @@
 import { GlobalRechargeProviderRouter } from './topup/provider-router.js';
 import { DtOnePreproductionProvider } from './topup/dtone-provider.js';
 import { loadDtOneConfig } from './topup/dtone-config.js';
+import { loadDingConfig } from './topup/ding-config.js';
+import { DingUatProvider } from './topup/ding-provider.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
@@ -924,6 +926,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
   const checkoutConfig = loadCheckoutConfig();
   const dtOneConfig = loadDtOneConfig();
+  const dingConfig = loadDingConfig();
   // Inspect configuration itself, not the public status object's constant labels.
   const guestAuthError = () => {
     if (!guestProxyConfigured) {
@@ -943,6 +946,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const mobileTopUpProvider = options.mobileTopUpProvider ?? new GlobalRechargeProviderRouter(mobileTopUpConfig.enabled ? [
     ['RELOADLY', new ReloadlySandboxTopUpProvider(mobileTopUpConfig)],
     ...(dtOneConfig.enabled ? [['DTONE', new DtOnePreproductionProvider(dtOneConfig)] as ['DTONE', MobileTopUpProvider]] : []),
+    ...(dingConfig.enabled ? [['DING', new DingUatProvider(dingConfig)] as ['DING', MobileTopUpProvider]] : []),
   ] : []);
   const mobileTopUpPaymentProvider = options.mobileTopUpPaymentProvider ?? new MockMobileTopUpPaymentProvider();
   const mobileTopUpService = new MobileTopUpService(

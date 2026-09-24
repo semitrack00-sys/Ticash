@@ -120,9 +120,12 @@ export interface ProviderCoverage {
   environment: 'SANDBOX';
   uniqueCountries: number;
   providers: { provider: MobileTopUpProviderName; enabled: boolean; countries: number; reason?: string }[];
+  /** Sorted unique countries supported by at least two enabled, available providers. */
   overlapCountries: string[];
   reloadlyOnlyCountries: string[];
   dtoneOnlyCountries: string[];
+  dingOnlyCountries?: string[];
+  providerOverlaps?: Record<string, string[]>;
 }
 
 export interface MobileTopUpProvider {

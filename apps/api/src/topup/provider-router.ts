@@ -55,6 +55,7 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
     const all = new Set([...sets.values()].flatMap(set => [...set]));
     const reloadly = sets.get('RELOADLY') ?? new Set<string>();
     const dtone = sets.get('DTONE') ?? new Set<string>();
+    const ding = sets.get('DING') ?? new Set<string>();
     if (!all.size && results.some(result => result.countries?.size)) throw new MobileTopUpError('UNSUPPORTED_CALLING_CODE', 'No provider destinations have supported calling-code metadata', 502);
     return {
       environment: 'SANDBOX', uniqueCountries: all.size,
@@ -63,9 +64,15 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
         return { provider, enabled: this.providers.has(provider), countries: sets.get(provider)?.size ?? 0,
           ...(!result ? { reason: 'NOT_CONFIGURED' } : result.reason ? { reason: result.reason } : {}) };
       }),
-      overlapCountries: [...reloadly].filter(code => dtone.has(code)).sort(),
-      reloadlyOnlyCountries: [...reloadly].filter(code => !dtone.has(code)).sort(),
-      dtoneOnlyCountries: [...dtone].filter(code => !reloadly.has(code)).sort(),
+      overlapCountries: [...all].filter(code => [...sets.values()].filter(countries => countries.has(code)).length >= 2).sort(),
+      reloadlyOnlyCountries: [...reloadly].filter(code => !dtone.has(code) && !ding.has(code)).sort(),
+      dtoneOnlyCountries: [...dtone].filter(code => !reloadly.has(code) && !ding.has(code)).sort(),
+      dingOnlyCountries: [...ding].filter(code => !reloadly.has(code) && !dtone.has(code)).sort(),
+      providerOverlaps: {
+        RELOADLY_DTONE: [...reloadly].filter(code => dtone.has(code)).sort(),
+        RELOADLY_DING: [...reloadly].filter(code => ding.has(code)).sort(),
+        DTONE_DING: [...dtone].filter(code => ding.has(code)).sort(),
+      },
     };
   }
   async listOperators(country: string) {

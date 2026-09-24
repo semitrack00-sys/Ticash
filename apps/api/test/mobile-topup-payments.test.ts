@@ -1,4 +1,4 @@
-﻿import { createHmac } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import request from 'supertest';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

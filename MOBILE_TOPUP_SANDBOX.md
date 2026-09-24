@@ -160,8 +160,7 @@ Run `npm ci`, `npm run prisma:validate`, `npm run typecheck`, `npm run lint`, `n
 
 Reloadly remains the primary discovery provider and its numeric operator IDs and
 `reloadly:JM:255:airtime:5.00` product IDs remain unchanged. DT One is an optional
-secondary pre-production provider; DING is reserved in the identity scheme but
-has no configured adapter. Country discovery queries every enabled provider and
+secondary pre-production provider; DingConnect is an optional UAT-only third provider, also disabled by default. Country discovery queries every enabled provider and
 returns the sorted union of actual catalog entries. A failed/malformed provider
 catalog is excluded, with a sanitized reason in coverage, while healthy provider
 results remain available. If every provider fails, discovery returns a controlled
@@ -268,3 +267,119 @@ Official contracts used:
 - [Asynchronous transactions](https://developers.dtone.com/reference/posttransactionasync), [transaction status](https://developers.dtone.com/reference/gettransactionbyid).
 - [Mobile lookup](https://developers.dtone.com/reference/postlookupmobilenumber) and [lookup semantics](https://developers.dtone.com/docs/look-up-mobile-numbers).
 - [Pagination](https://developers.dtone.com/reference/pagination) and [ISO code conversion](https://github.com/michaelwittig/node-i18n-iso-countries).
+
+
+## DingConnect UAT provider
+
+Ding uses the same documented API host for UAT and live accounts. `DING_ENVIRONMENT=uat`
+is a local restriction, not proof of the credential's agent type. Use OAuth credentials
+issued to a Ding **Test Agent**. Configuration defaults to disabled and accepts only
+the reviewed URLs; missing enabled credentials or unsafe live/payment configuration
+fails startup. Credential placeholders in `.env.example` remain blank:
+
+```dotenv
+DING_ENABLED=false
+DING_ENVIRONMENT=uat
+DING_CLIENT_ID=
+DING_CLIENT_SECRET=
+DING_OAUTH_TOKEN_URL=https://idp.ding.com/connect/token
+DING_API_BASE_URL=https://api.dingconnect.com/api/V1
+```
+
+The existing router orders Reloadly, optional DT One, then optional Ding. No provider
+namespace or database migration changes are needed. Ding's string ProviderCode is
+converted losslessly to a positive raw integer (bijective base 63 over ASCII digits,
+uppercase and lowercase letters), then passed to the existing DING slot helper.
+Unrepresentable codes (including punctuation, overly long codes or overflow) are
+omitted, never hashed or reassigned. Historical Reloadly and DT One IDs are unchanged.
+
+OAuth client_credentials tokens stay in memory, expire according to expires_in, and
+refresh early. Concurrent callers share one token request. Rejected tokens are cleared
+without replaying a transfer. Errors expose only local sanitized messages; credentials,
+raw error documents, provider status descriptions and tokens are not logged.
+
+Discovery uses GetCountries, GetProviders, GetProviderStatus, GetProducts and
+GetAccountLookup. Provider status must explicitly permit processing. XG is excluded
+because it denotes global products, not a selectable country. Only exact, single
+account matches are used for detection; nearest/ambiguous matches require manual
+selection. Reference catalogs are unpaged under Ding's contract; unexpected pagination
+is rejected rather than silently truncated. Transfer lookup uses ListTransferRecords
+with DistributorRef, Take/Skip and ThereAreMoreItems. Duplicate/conflicting records
+fail closed.
+
+Initial product support is intentionally narrow: fixed equal Minimum/Maximum USD
+SendValue, matching ReceiveValue/currency, zero CustomerFee/DistributorFee, mobile
+Minutes/Data benefits, Instant processing, Immediate redemption, no settings,
+bill lookup, regional restriction or extra instructions, and a valid provider-returned
+UatNumber. Unsupported or ambiguous pricing/requirements are omitted; no SKU,
+denomination or FX value is invented. Exact SKU is persisted as providerProductId.
+Revalidation checks the exact operator/SKU/source amount before submission, without
+substitution. A $5 fixture plus the unchanged $3.50 fee yields $8.50.
+
+**The transfer guard accepts only the exact UatNumber returned for that SKU.** Ding
+states those numbers do not debit balance even for live credentials; ordinary
+recipient numbers are rejected. ValidateOnly is false only for this guarded UAT path;
+validation-only responses are never called successful delivery. Some Ding UAT numbers
+may fail TiCash's existing country/phone validation. That validation is not weakened;
+such products require provider clarification before end-to-end UAT use.
+
+DistributorRef is the stable `tc-` prefix plus 32 SHA-256 hex characters derived from
+TiCash's immutable custom identifier. The existing durable fulfillment claim remains
+the authority preventing duplicate effects across processes. A pre-submit lookup
+recognizes an existing matching record. No automatic SendTransfer retry occurs. On a
+lost response the adapter performs a lookup, then preserves PROCESSING/SUBMISSION_UNKNOWN
+with a durable `DING:tc-...` providerTransactionId if still unresolved. Status refresh
+queries that reference; operatorTransactionId stores Ding's actual TransferRef. A
+missing lookup result is not proof of failure or permission to resend. The adapter
+also suppresses repeated submissions in the same process after an attempted send.
+A process crash remains subject to the existing operator reconciliation workflow;
+recompute DistributorRef from the stored custom identifier if persistence was interrupted.
+Do not release a fulfillment claim or retry blindly. Ding's lookup retention is two
+months, so unresolved cases must be reconciled within that provider window.
+
+Complete/Completed maps to delivered, Submitted/Processing/Cancelling to processing,
+and Failed/Cancelled to failed. Raw status is kept separately. Definitive failure uses
+the existing payment recovery; uncertainty never claims success or refund. No deferred
+transfer callbacks, cancellation, real payment mode, or live activation is introduced.
+
+Coverage uses the actual Ding catalog with existing calling-code filtering.
+`overlapCountries` is the sorted, deduplicated list supported by at least two enabled,
+available providers, including Ding. This preserves the original two-provider result
+when Ding is disabled. `providerOverlaps.RELOADLY_DTONE` retains that exact pair
+intersection; RELOADLY_DING and DTONE_DING expose the other pairs. A country shared
+by all three appears once in overlapCountries and in each applicable pair. Disabled
+or failed providers contribute no countries. Exclusive country arrays exclude both
+other providers, with dingOnlyCountries added.
+Per-provider failure/disabled reasons remain sanitized. Counts describe catalog
+availability, not verified purchases or coverage of every country. Status lists Ding
+only when the recharge feature and valid Ding configuration are enabled.
+
+### First read-only UAT check (run separately when authorized)
+
+Obtain Test Agent OAuth credentials and store them only in your protected local
+environment/.env. The following commands make only an OAuth token request and catalog
+GETs; the dedicated script explicitly prohibits transfer, payment and database calls.
+It enables only its isolated adapter instance and does not edit .env or enable the API
+server's Ding configuration. It prints counts only, never credentials or full documents.
+Do not share terminal environment dumps or .env contents.
+
+```powershell
+Set-Location 'C:\Users\duken\Documents\Codex\2026-09-01\c\Ticash'
+npm run build --workspace @ticash/api
+node --env-file=.env tools/ding-uat-readonly.mjs
+# Optional: examine eligible products for the first active operator of an actual catalog country.
+$env:DING_UAT_COUNTRY='JM'
+node --env-file=.env tools/ding-uat-readonly.mjs
+Remove-Item Env:DING_UAT_COUNTRY
+```
+
+No account-authenticated UAT call was made during implementation. Remaining gates are
+Test Agent credential/account access confirmation, actual catalog eligibility, and
+separately authorized UAT acceptance tests. Test credentials have lower daily limits
+for some operations; the read-only script samples one operator rather than scanning
+all products. No schema migration, database mutation or deployment is required here.
+
+Official references: [OAuth, result envelopes and paging](https://www.dingconnect.com/Api/Description),
+[API methods and models](https://www.dingconnect.com/pt-BR/Api),
+[UAT credentials, numbers and reconciliation guidance](https://www.dingconnect.com/Api/Faq),
+and [Ding's SendTransfer contract](https://www.postman.com/dingconnect/dingconnect-public-workspace/request/262f54b/sendtransfer).

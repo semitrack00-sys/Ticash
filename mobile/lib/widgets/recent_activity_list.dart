@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/transaction_provider.dart';
 import '../theme/app_colors.dart';
@@ -44,10 +43,7 @@ class RecentActivityList extends ConsumerWidget {
             return Column(
               children: [
                 for (var i = 0; i < transactions.length; i++)
-                  TransactionItem(transaction: transactions[i])
-                      .animate()
-                      .fadeIn(delay: (i * 60).ms, duration: 250.ms)
-                      .slideX(begin: 0.03, end: 0),
+                  TransactionItem(transaction: transactions[i]),
               ],
             );
           },

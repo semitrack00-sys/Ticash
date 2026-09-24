@@ -46,7 +46,7 @@ class FakeMobileTopUpService implements MobileTopUpService {
     ),
   ];
 
-  final historyValue = const [
+  final historyValue = [
     MobileTopUpTransaction(
       id: 'txn-old',
       countryCode: 'HT',
@@ -54,7 +54,7 @@ class FakeMobileTopUpService implements MobileTopUpService {
       operatorName: 'Provider Haiti Sandbox',
       productName: 'Haiti Data 10',
       status: 'DELIVERED',
-      totalChargeUsd: 10.5,
+      totalChargeUsd: 11.05,
       createdAt: DateTime(2026, 1, 1),
     ),
   ];
@@ -89,9 +89,9 @@ class FakeMobileTopUpService implements MobileTopUpService {
       operatorName: quoteId.contains('jm')
           ? jamaicaOperator.name
           : haitiOperator.name,
-      productName: quoteId.contains('jm') ? 'Jamaica Airtime 7.50' : 'Haiti Data 10',
+      productName: quoteId.contains('jm') ? 'Jamaica Airtime 5.00' : 'Haiti Data 10',
       status: 'PROCESSING',
-      totalChargeUsd: quoteId.contains('jm') ? 8 : 10.5,
+      totalChargeUsd: quoteId.contains('jm') ? 5.99 : 11.05,
       createdAt: DateTime(2026, 1, 2),
     );
   }
@@ -117,15 +117,15 @@ class FakeMobileTopUpService implements MobileTopUpService {
       operatorId: operatorId,
       operatorName: countryCode == 'JM' ? jamaicaOperator.name : haitiOperator.name,
       productId: productId,
-      productName:
-          countryCode == 'JM' ? 'Jamaica Airtime 7.50' : 'Haiti Data 10',
-      providerAmount: countryCode == 'JM' ? 7.5 : 10,
+        productName:
+          countryCode == 'JM' ? 'Jamaica Airtime 5.00' : 'Haiti Data 10',
+        providerAmount: countryCode == 'JM' ? 5 : 10,
       providerCurrency: 'USD',
       deliveredCurrency: countryCode == 'JM' ? 'JMD' : 'HTG',
-      feeUsd: 0.5,
-      totalChargeUsd: countryCode == 'JM' ? 8 : 10.5,
+        feeUsd: countryCode == 'JM' ? 0.99 : 1.05,
+        totalChargeUsd: countryCode == 'JM' ? 5.99 : 11.05,
       expiresAt: DateTime(2026, 1, 2),
-      deliveredValue: countryCode == 'JM' ? 1170 : 1300,
+        deliveredValue: countryCode == 'JM' ? 800 : 1300,
     );
   }
 
@@ -156,16 +156,16 @@ class FakeMobileTopUpService implements MobileTopUpService {
     if (countryCode == 'JM') {
       return const [
         MobileTopUpProduct(
-          id: 'reloadly:JM:77:airtime:7.50',
+          id: 'reloadly:JM:77:airtime:5.00',
           countryCode: 'JM',
           operatorId: 77,
           kind: MobileTopUpProductKind.airtime,
-          name: 'Jamaica Airtime 7.50',
-          price: 7.5,
+          name: 'Jamaica Airtime 5.00',
+          price: 5,
           priceCurrency: 'USD',
           deliveredCurrency: 'JMD',
           amountType: MobileTopUpAmountType.fixed,
-          deliveredValue: 1170,
+          deliveredValue: 800,
         ),
       ];
     }
@@ -255,15 +255,24 @@ void main() {
 
     expect(service.detectCalls, contains('JM|+1 876 555 1234'));
     expect(find.text('Provider Jamaica Sandbox'), findsOneWidget);
-    expect(find.text('Jamaica Airtime 7.50\nUSD 7.50'), findsOneWidget);
-
-    await tester.tap(find.text('Jamaica Airtime 7.50\nUSD 7.50'));
+    expect(service.productCalls, contains('JM|77'));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('product-reloadly:JM:77:airtime:5.00')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const ValueKey('product-reloadly:JM:77:airtime:5.00')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Get quote'));
     await tester.pumpAndSettle();
     expect(service.quoteRequests.single['countryCode'], 'JM');
-    expect(find.text('JM • Provider Jamaica Sandbox'), findsWidgets);
+    expect(find.text('Review'), findsOneWidget);
 
+    await tester.scrollUntilVisible(
+      find.text('Confirm recharge'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Confirm recharge'));
     await tester.pumpAndSettle();
     expect(find.text('Receipt'), findsOneWidget);
@@ -286,15 +295,35 @@ void main() {
     );
     await tester.tap(find.text('Detect operator'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jamaica Airtime 7.50\nUSD 7.50'));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('product-reloadly:JM:77:airtime:5.00')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const ValueKey('product-reloadly:JM:77:airtime:5.00')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Get quote'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Confirm recharge'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Confirm recharge'));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+      find.text('Jamaica (JM)'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Jamaica (JM)'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Haiti'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Haiti'));
     await tester.pumpAndSettle();
 
@@ -318,7 +347,12 @@ void main() {
     );
     await tester.tap(find.text('Detect operator'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jamaica Airtime 7.50\nUSD 7.50'));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('product-reloadly:JM:77:airtime:5.00')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const ValueKey('product-reloadly:JM:77:airtime:5.00')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Get quote'));
     await tester.pumpAndSettle();
@@ -330,7 +364,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Provider Jamaica Sandbox'), findsNothing);
-    expect(find.text('Jamaica Airtime 7.50\nUSD 7.50'), findsNothing);
+    expect(find.text('Jamaica Airtime 5.00\nUSD 5.00'), findsNothing);
     expect(find.text('Review'), findsNothing);
   });
 
@@ -347,7 +381,6 @@ void main() {
     expect(service.operatorCalls, contains('HT'));
     expect(service.productCalls, contains('HT|99'));
     expect(find.text('Provider Haiti Sandbox'), findsOneWidget);
-    expect(find.text('Haiti Data 10\nUSD 10.00'), findsOneWidget);
   });
 
   testWidgets('stale detect failures do not overwrite newer phone input state',

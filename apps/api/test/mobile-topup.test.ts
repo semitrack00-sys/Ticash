@@ -20,7 +20,6 @@ const config: MobileTopUpConfig = {
   authUrl: 'https://auth.reloadly.com/oauth/token',
   airtimeBaseUrl: 'https://topups-sandbox.reloadly.com',
   billingCurrency: 'USD',
-  feeUsd: '0.50',
   quoteTtlSeconds: 300,
   paymentMode: 'mock',
   productionEnabled: false,
@@ -51,10 +50,21 @@ const jamaicaOperator: MobileTopUpOperator = {
   denominationType: 'FIXED',
   senderCurrencyCode: 'USD',
   destinationCurrencyCode: 'JMD',
-  fixedAmounts: [7.5],
-  localFixedAmounts: [1170],
+  fixedAmounts: [5],
+  localFixedAmounts: [800],
   fixedAmountsPlanNames: {},
   localFixedAmountsPlanNames: {},
+};
+
+const jamaicaRangeOperator: MobileTopUpOperator = {
+  ...jamaicaOperator,
+  id: 88,
+  name: 'Provider Jamaica Range Sandbox',
+  denominationType: 'RANGE',
+  fixedAmounts: [],
+  localFixedAmounts: [],
+  minAmount: 5,
+  maxAmount: 60,
 };
 
 const supportedCountries: MobileTopUpCountry[] = [
@@ -121,7 +131,7 @@ async function quote(
     countryCode: input.countryCode ?? 'JM',
     phone: input.phone ?? '+18765551234',
     operatorId: input.operatorId ?? 77,
-    productId: input.productId ?? 'reloadly:JM:77:airtime:7.50',
+    productId: input.productId ?? 'reloadly:JM:77:airtime:5.00',
     ...(input.amount === undefined ? {} : { amount: input.amount }),
   }).expect(201);
 }
@@ -201,7 +211,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
 
   it('creates unique guest customers with valid rotating tokens, catalog access and a mock purchase', async () => {
     const provider = new TestProvider();
-    const app = createApp({ mobileTopUpConfig: { ...config, feeUsd: '3.50' }, mobileTopUpProvider: provider });
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
     const guest = await request(app).post('/api/auth/guest').expect(201);
     const other = await request(app).post('/api/auth/guest').expect(201);
     expect(guest.body).toMatchObject({ guest: true, user: { role: 'CUSTOMER', kycStatus: 'NOT_STARTED' } });
@@ -214,10 +224,10 @@ describe('Worldwide mobile recharge sandbox API', () => {
     await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
     await request(app).get('/api/admin/session').set(headers).expect(403);
     const quoted = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
-    expect(quoted.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 3.5, totalChargeUsd: 8.5 });
+    expect(quoted.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
     const purchased = await request(app).post('/api/mobile-topups/transactions').set(headers)
       .set('Idempotency-Key', 'guest-purchase-test').send({ quoteId: quoted.body.quote.id }).expect(201);
-    expect(purchased.body.transaction).toMatchObject({ testMode: true, paymentStatus: 'AUTHORIZED', totalChargeUsd: 8.5 });
+    expect(purchased.body.transaction).toMatchObject({ testMode: true, paymentStatus: 'AUTHORIZED', totalChargeUsd: 5.99 });
     const refreshed = await request(app).post('/api/auth/refresh').send({ refreshToken: guest.body.refreshToken }).expect(200);
     expect(refreshed.body.refreshToken).not.toBe(guest.body.refreshToken);
     await request(app).get('/api/mobile-topups/countries').set('Authorization', `Bearer ${refreshed.body.accessToken}`).expect(200);
@@ -403,13 +413,13 @@ describe('Worldwide mobile recharge sandbox API', () => {
   });
 
   it('does not trust fee/total values supplied by the customer', async () => {
-    const app = createApp({ mobileTopUpConfig: { ...config, feeUsd: '3.50' }, mobileTopUpProvider: new TestProvider() });
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
     const headers = await auth(app, 'fee-tamper');
     await request(app).post('/api/mobile-topups/quotes').set(headers).send({
       countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00', feeUsd: 0, totalChargeUsd: 5,
     }).expect(400);
     const response = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
-    expect(response.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 3.5, totalChargeUsd: 8.5 });
+    expect(response.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
   });
 
   it('returns a controlled disabled response without provider credentials', async () => {
@@ -447,7 +457,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
       countryCode: 'JM',
       phone: '8765551234',
       operatorId: 77,
-      productId: 'reloadly:JM:77:airtime:7.50',
+      productId: 'reloadly:JM:77:airtime:5.00',
     }).expect(201);
     expect(jamaicaQuote.body.quote.recipientPhone).toBe('+18765551234');
 
@@ -470,12 +480,32 @@ describe('Worldwide mobile recharge sandbox API', () => {
     const products = await request(app).get('/api/mobile-topups/operators/77/products?country=JM').set(headers).expect(200);
     expect(products.body.products).toEqual([
       expect.objectContaining({
-        id: 'reloadly:JM:77:airtime:7.50',
+        id: 'reloadly:JM:77:airtime:5.00',
         countryCode: 'JM',
-        price: 7.5,
+        price: 5,
         deliveredCurrency: 'JMD',
       }),
     ]);
+  });
+
+  it('exposes only approved grid products for RANGE operators within provider bounds', async () => {
+    const provider = new TestProvider();
+    provider.operatorsByCountry.set('JM', [jamaicaRangeOperator]);
+    provider.operatorsById.set(jamaicaRangeOperator.id, jamaicaRangeOperator);
+    provider.detectedByCountry.set('JM', jamaicaRangeOperator);
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const headers = await auth(app, 'range');
+
+    const products = await request(app).get('/api/mobile-topups/operators/88/products?country=JM').set(headers).expect(200);
+    expect(products.body.products.map((product: { price: number }) => product.price)).toEqual([5, 10, 20, 30, 50]);
+    expect(products.body.products.map((product: { id: string }) => product.id)).not.toContain('reloadly:JM:88:airtime:15.00');
+
+    await request(app).post('/api/mobile-topups/quotes').set(headers).send({
+      countryCode: 'JM',
+      phone: '+18765551234',
+      operatorId: 88,
+      productId: 'reloadly:JM:88:airtime:15.00',
+    }).expect(400);
   });
 
   it('fails closed on provider country mismatches for detection and products', async () => {
@@ -526,10 +556,10 @@ describe('Worldwide mobile recharge sandbox API', () => {
     expect(quoted.body.quote).toMatchObject({
       countryCode: 'JM',
       recipientPhone: '+18765551234',
-      providerAmount: 7.5,
-      feeUsd: 0.5,
-      totalChargeUsd: 8,
-      deliveredValue: 1170,
+      providerAmount: 5,
+      feeUsd: 0.99,
+      totalChargeUsd: 5.99,
+      deliveredValue: 800,
       deliveredCurrency: 'JMD',
     });
 

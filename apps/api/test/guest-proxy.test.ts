@@ -6,7 +6,7 @@ import type { MobileTopUpConfig } from '../src/topup/types.js';
 const config: MobileTopUpConfig = {
   enabled: true, environment: 'sandbox', paymentMode: 'mock', productionEnabled: false, approvedForLiveUse: false,
   authUrl: 'https://auth.reloadly.com/oauth/token', airtimeBaseUrl: 'https://topups-sandbox.reloadly.com',
-  billingCurrency: 'USD', feeUsd: '3.50', quoteTtlSeconds: 300,
+  billingCurrency: 'USD', quoteTtlSeconds: 300,
 };
 
 describe('explicit proxy trust and guest rate limiting', () => {

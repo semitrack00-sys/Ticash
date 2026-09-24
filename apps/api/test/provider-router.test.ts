@@ -7,7 +7,7 @@ import { MobileTopUpService, productsFromOperator } from '../src/topup/service.j
 import { MemoryMobileTopUpRepository } from '../src/topup/repository.js';
 import { MockMobileTopUpPaymentProvider, MobileTopUpError, type MobileTopUpConfig, type MobileTopUpProvider, type MobileTopUpOperator, type MobileTopUpProviderName } from '../src/topup/types.js';
 
-const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId: 'fixture', clientSecret: 'fixture', authUrl: 'https://auth.reloadly.com/oauth/token', airtimeBaseUrl: 'https://topups-sandbox.reloadly.com', billingCurrency: 'USD', feeUsd: '3.50', quoteTtlSeconds: 300, paymentMode: 'mock', productionEnabled: false, approvedForLiveUse: false };
+const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId: 'fixture', clientSecret: 'fixture', authUrl: 'https://auth.reloadly.com/oauth/token', airtimeBaseUrl: 'https://topups-sandbox.reloadly.com', billingCurrency: 'USD', quoteTtlSeconds: 300, paymentMode: 'mock', productionEnabled: false, approvedForLiveUse: false };
 const op: MobileTopUpOperator = { id: 255, name: 'Flow Jamaica fixture', countryCode: 'JM', status: true, bundle: false, denominationType: 'FIXED', senderCurrencyCode: 'USD', destinationCurrencyCode: 'JMD', fixedAmounts: [5], localFixedAmounts: [800], fixedAmountsPlanNames: {}, localFixedAmountsPlanNames: {} };
 function fixture(provider: MobileTopUpProviderName, codes: string[]): MobileTopUpProvider {
   return { name: provider, listCountries: vi.fn(async () => codes.map(code => ({ code, name: code === 'JM' ? 'Jamaica' : `Country ${code}` }))),
@@ -110,7 +110,7 @@ describe('immutable quote and payment routing', () => {
     const recipient = await service.saveRecipient('user', { nickname: 'Fixture', countryCode: 'JM', phone: '+18765551234', operatorId });
     expect(recipient.provider).toBe(provider);
     const quote = await service.createQuote('user', { countryCode: 'JM', phone: '+18765551234', operatorId, productId: products[0]!.id });
-    expect(quote).toMatchObject({ provider, providerAmount: 5, feeUsd: 3.5, totalChargeUsd: 8.5 });
+    expect(quote).toMatchObject({ provider, providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
     if (provider === 'DTONE') expect(quote.providerProductId).toBe('56876');
     else expect(quote.productId).toBe('reloadly:JM:255:airtime:5.00');
     const result = await service.purchase('user', { quoteId: quote.id, recipientId: recipient.id }, 'idempotency-123');

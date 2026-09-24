@@ -40,7 +40,6 @@ export interface MobileTopUpConfig {
   senderPhoneCountry?: string;
   senderPhoneNumber?: string;
   billingCurrency: 'USD';
-  feeUsd: string;
   quoteTtlSeconds: number;
   paymentMode: 'mock' | 'checkout_sandbox';
   productionEnabled: false;

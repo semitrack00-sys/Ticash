@@ -16,7 +16,7 @@ import { createApp } from '../src/app.js';
 const config: MobileTopUpConfig = {
   enabled: true, environment: 'sandbox', paymentMode: 'mock', productionEnabled: false, approvedForLiveUse: false,
   authUrl: 'https://auth.reloadly.com/oauth/token', airtimeBaseUrl: 'https://topups-sandbox.reloadly.com',
-  billingCurrency: 'USD', feeUsd: '3.50', quoteTtlSeconds: 300,
+  billingCurrency: 'USD', quoteTtlSeconds: 300,
 };
 
 describe('database-backed guest and permanent accounts', () => {

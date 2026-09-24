@@ -135,9 +135,17 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
       const checkoutAllowed =
         record.paymentProvider === 'CHECKOUT_COM' &&
         record.paymentStatus === 'PENDING';
-      if (!mockAllowed && !checkoutAllowed) return false;
+      const stripeAllowed =
+        record.paymentProvider === 'STRIPE' &&
+        record.paymentStatus === 'PENDING';
+      if (!mockAllowed && !checkoutAllowed && !stripeAllowed) return false;
     }
-    if (operation === 'fulfillment' && (record.providerTransactionId || record.status !== 'PENDING' || !paid(record))) return false;
+    if (operation === 'fulfillment') {
+      const mockAllowed = record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
+      const checkoutAllowed = record.paymentProvider === 'CHECKOUT_COM' && record.paymentStatus === 'CAPTURED';
+      const stripeAllowed = record.paymentProvider === 'STRIPE' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
+      if (record.providerTransactionId || record.status !== 'PENDING' || !paid(record) || (!mockAllowed && !checkoutAllowed && !stripeAllowed)) return false;
+    }
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
     transactions.set(id, { ...record, [field]: when, updatedAt: now() });
     return true;
@@ -373,6 +381,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       providerTransactionId: null, status: 'PENDING', OR: [
         { paymentProvider: 'MOCK', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
         { paymentProvider: 'CHECKOUT_COM', paymentStatus: 'CAPTURED' },
+        { paymentProvider: 'STRIPE', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
       ],
     });
     if (operation === 'recovery') where.paymentStatus = { in: ['AUTHORIZED', 'CAPTURED'] };
@@ -578,6 +587,7 @@ function operationField(operation: 'payment' | 'fulfillment' | 'recovery') {
 }
 function paid(record: MobileTopUpTransactionRecord) {
   return record.paymentProvider === 'CHECKOUT_COM' ? record.paymentStatus === 'CAPTURED'
+    : record.paymentProvider === 'STRIPE' ? ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)
     : record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
 }
 function assertSameEvent(record: { payloadHash: string; transactionId: string }, hash: string, transactionId: string) {
@@ -586,9 +596,9 @@ function assertSameEvent(record: { payloadHash: string; transactionId: string },
   }
 }
 function transactionUpdateData(input: TransactionUpdate): Prisma.MobileTopUpTransactionUpdateManyMutationInput {
-  return { ...input,
-    deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : undefined,
-    failedAt: input.failedAt ? new Date(input.failedAt) : undefined,
-    refundedAt: input.refundedAt ? new Date(input.refundedAt) : undefined,
-  };
+  const data = { ...input } as Record<string, unknown>;
+  if (data.deliveredAt) data.deliveredAt = new Date(String(data.deliveredAt));
+  if (data.failedAt) data.failedAt = new Date(String(data.failedAt));
+  if (data.refundedAt) data.refundedAt = new Date(String(data.refundedAt));
+  return data as Prisma.MobileTopUpTransactionUpdateManyMutationInput;
 }

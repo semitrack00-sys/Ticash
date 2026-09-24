@@ -61,6 +61,9 @@ import { MobileTopUpService } from './topup/service.js';
 import { loadCheckoutConfig } from './topup/checkout-config.js';
 import { CheckoutSandboxPaymentProvider } from './topup/checkout-provider.js';
 import { createCheckoutWebhookHandler } from './topup/checkout-webhook.js';
+import { loadStripeConfig } from './topup/stripe-config.js';
+import { StripeSandboxPaymentProvider } from './topup/stripe-provider.js';
+import { createStripeWebhookHandler } from './topup/stripe-webhook.js';
 import {
   MockMobileTopUpPaymentProvider,
   MobileTopUpError,
@@ -637,7 +640,9 @@ export interface CreateAppOptions {
   mobileTopUpProvider?: MobileTopUpProvider;
   mobileTopUpPaymentProvider?: MobileTopUpPaymentProvider;
   mobileTopUpCheckoutProvider?: CheckoutSandboxPaymentProvider;
+  mobileTopUpStripeProvider?: StripeSandboxPaymentProvider;
   checkoutConfig?: ReturnType<typeof loadCheckoutConfig>;
+  stripeConfig?: ReturnType<typeof loadStripeConfig>;
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
   passwordResetEmailService?: PasswordResetEmailService;
@@ -928,6 +933,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
   const checkoutConfig = options.checkoutConfig ?? loadCheckoutConfig();
+  const stripeConfig = options.stripeConfig ?? loadStripeConfig();
   const dtOneConfig = loadDtOneConfig();
   const dingConfig = loadDingConfig();
   // Inspect configuration itself, not the public status object's constant labels.
@@ -960,12 +966,27 @@ export function createApp(options: CreateAppOptions = {}) {
       ? new CheckoutSandboxPaymentProvider(checkoutConfig)
       : undefined);
 
+  const mobileTopUpStripeProvider =
+    options.mobileTopUpStripeProvider ??
+    (stripeConfig.enabled
+      ? new StripeSandboxPaymentProvider(stripeConfig)
+      : undefined);
+
   if (
     mobileTopUpConfig.paymentMode === 'checkout_sandbox' &&
     !mobileTopUpCheckoutProvider
   ) {
     throw new Error(
       'MOBILE_TOPUP_PAYMENT_MODE=checkout_sandbox requires complete Checkout.com Sandbox configuration',
+    );
+  }
+
+  if (
+    mobileTopUpConfig.paymentMode === 'stripe_sandbox' &&
+    !mobileTopUpStripeProvider
+  ) {
+    throw new Error(
+      'MOBILE_TOPUP_PAYMENT_MODE=stripe_sandbox requires complete Stripe Sandbox configuration',
     );
   }
 
@@ -977,6 +998,7 @@ export function createApp(options: CreateAppOptions = {}) {
     recordAudit,
     options.mobileTopUpClock,
     mobileTopUpCheckoutProvider,
+    mobileTopUpStripeProvider,
   );
   const effectiveQuotePricing = async () => {
     let active = await activeAdminConfiguration();
@@ -1010,6 +1032,8 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(helmet());
   app.post('/api/webhooks/checkout', express.raw({ type: 'application/json', limit: '128kb' }),
     createCheckoutWebhookHandler(checkoutConfig, mobileTopUpService));
+  app.post('/api/webhooks/stripe', express.raw({ type: 'application/json', limit: '128kb' }),
+    createStripeWebhookHandler(stripeConfig, mobileTopUpService));
   app.post(
     '/api/webhooks/dwolla',
     express.raw({ type: 'application/json', limit: '256kb' }),

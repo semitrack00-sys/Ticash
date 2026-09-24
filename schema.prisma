@@ -171,6 +171,7 @@ enum MobileTopUpPaymentMethod {
 enum MobileTopUpPaymentProviderName {
   MOCK
   CHECKOUT_COM
+  STRIPE
   DWOLLA
 }
 

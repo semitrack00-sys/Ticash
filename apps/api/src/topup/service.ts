@@ -334,7 +334,18 @@ export class MobileTopUpService {
     const { operator, products } = await this.products(countryCode, input.operatorId);
 
     if (input.amount !== undefined) {
+      if (operator.denominationType !== 'RANGE') {
+        throw new MobileTopUpError('UNSUPPORTED_TOPUP_DENOMINATION', 'Select a supported recharge denomination', 400);
+      }
       const amount = Number(input.amount);
+      const minAmount = Number.isFinite(operator.minAmount) ? operator.minAmount! : undefined;
+      const maxAmount = Number.isFinite(operator.maxAmount) ? operator.maxAmount! : undefined;
+      if (minAmount !== undefined && amount < minAmount) {
+        throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be within the displayed range', 400);
+      }
+      if (maxAmount !== undefined && amount > maxAmount) {
+        throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be within the displayed range', 400);
+      }
       const pricing = approvedRechargePrice(amount);
       const customProductId = input.productId && /^custom:/.test(input.productId) ? input.productId : `custom:${(pricing.amountMinorUnits / 100).toFixed(2)}`;
       const createdAt = this.clock();

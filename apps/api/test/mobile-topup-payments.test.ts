@@ -25,10 +25,11 @@ const operator = { id:77,name:'Fixture operator',countryCode:'JM',status:true,bu
   senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',fixedAmounts:[5,10,20,30,50,75,100],localFixedAmounts:[800,1300,2400,3500,5700,8200,10800],fixedAmountsPlanNames:{},localFixedAmountsPlanNames:{} };
 const quoteInput = { countryCode:'JM',phone:'+18765551234',operatorId:77,productId:'reloadly:JM:77:airtime:5.00' };
 const quoteInputFor = (amount: number) => ({ countryCode:'JM', phone:'+18765551234', operatorId:77, productId:`reloadly:JM:77:airtime:${amount.toFixed(2)}` });
-function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymentProvider()) {
+const rangeOperator = { ...operator, denominationType: 'RANGE' as const, fixedAmounts: [], localFixedAmounts: [], minAmount: 5, maxAmount: 100 };
+function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymentProvider(), overrideOperator = operator) {
   const submit = vi.fn(async () => ({transactionId:'reloadly-fixture',status:'PROCESSING',requestedAmount:5,requestedAmountCurrencyCode:'USD'}));
-  const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[operator],
-    getOperator:async()=>operator,detectOperator:async()=>operator,submitTopUp:submit,
+  const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[overrideOperator],
+    getOperator:async()=>overrideOperator,detectOperator:async()=>overrideOperator,submitTopUp:submit,
     getTopUpStatus:async()=>({transactionId:'reloadly-fixture',status:'SUCCESSFUL',requestedAmount:5,requestedAmountCurrencyCode:'USD'}) };
   const repository = new MemoryMobileTopUpRepository();const audit=vi.fn(async()=>{});
   const service=new MobileTopUpService(config,provider,payment,repository,audit);
@@ -66,8 +67,8 @@ describe('sandbox payment foundation',()=>{
     [75, 3.49],
     [100, 4.49],
   ])('calculates the authoritative backend fee for custom USD amount $%s as $%s', async (amount, fee) => {
-    const f = fixture();
-    const quote = await f.service.createQuote('customer', { ...quoteInput, amount });
+    const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
+    const quote = await f.service.createQuote('customer', { ...quoteInput, operatorId: rangeOperator.id, amount });
     expect(quote).toMatchObject({ providerAmount: amount, feeUsd: fee, totalChargeUsd: Number((amount + fee).toFixed(2)), providerCurrency: 'USD' });
     const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, `custom-session-${amount}`);
     expect(session.amountMinor).toBe(Math.round((amount + fee) * 100));
@@ -85,8 +86,8 @@ describe('sandbox payment foundation',()=>{
     await expect(f.service.createQuote('customer', { ...quoteInput, amount })).rejects.toMatchObject({ statusCode: 400 });
   });
   it('preserves the authoritative Stripe total for custom amounts', async () => {
-    const f = fixture();
-    const quote = await f.service.createQuote('customer', { ...quoteInput, amount: 40 });
+    const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
+    const quote = await f.service.createQuote('customer', { ...quoteInput, operatorId: rangeOperator.id, amount: 40 });
     expect(quote).toMatchObject({ providerAmount: 40, feeUsd: 2.14, totalChargeUsd: 42.14 });
     const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'custom-stripe-total');
     expect(session.amountMinor).toBe(4214);

@@ -508,6 +508,39 @@ describe('Worldwide mobile recharge sandbox API', () => {
     }).expect(400);
   });
 
+  it('accepts custom amounts only on RANGE operators and within provider bounds', async () => {
+    const fixedApp = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
+    const fixedHeaders = await auth(fixedApp, 'fixed-custom');
+    await request(fixedApp).post('/api/mobile-topups/quotes').set(fixedHeaders).send({
+      countryCode: 'JM',
+      phone: '+18765551234',
+      operatorId: 77,
+      productId: 'reloadly:JM:77:airtime:5.00',
+      amount: 25,
+    }).expect(400);
+
+    const provider = new TestProvider();
+    provider.operatorsByCountry.set('JM', [jamaicaRangeOperator]);
+    provider.operatorsById.set(jamaicaRangeOperator.id, jamaicaRangeOperator);
+    provider.detectedByCountry.set('JM', jamaicaRangeOperator);
+    const rangeApp = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const rangeHeaders = await auth(rangeApp, 'range-custom');
+    const custom = await request(rangeApp).post('/api/mobile-topups/quotes').set(rangeHeaders).send({
+      countryCode: 'JM',
+      phone: '+18765551234',
+      operatorId: 88,
+      amount: 25,
+    }).expect(201);
+    expect(custom.body.quote).toMatchObject({ providerAmount: 25, feeUsd: 1.64, totalChargeUsd: 26.64, productId: 'custom:25.00' });
+
+    await request(rangeApp).post('/api/mobile-topups/quotes').set(rangeHeaders).send({
+      countryCode: 'JM',
+      phone: '+18765551234',
+      operatorId: 88,
+      amount: 65,
+    }).expect(400);
+  });
+
   it('fails closed on provider country mismatches for detection and products', async () => {
     const provider = new TestProvider();
     provider.detectedByCountry.set('HT', jamaicaOperator);

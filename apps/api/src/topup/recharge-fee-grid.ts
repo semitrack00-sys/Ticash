@@ -3,9 +3,9 @@ import { MobileTopUpError } from './types.js';
 
 const approvedFeeGrid = new Map<number, number>([
   [usdMinorUnits(5), usdMinorUnits(0.99)],
-  [usdMinorUnits(10), usdMinorUnits(1.05)],
+  [usdMinorUnits(10), usdMinorUnits(1.25)],
   [usdMinorUnits(20), usdMinorUnits(1.49)],
-  [usdMinorUnits(30), usdMinorUnits(1.79)],
+  [usdMinorUnits(30), usdMinorUnits(1.99)],
   [usdMinorUnits(50), usdMinorUnits(2.49)],
   [usdMinorUnits(75), usdMinorUnits(3.49)],
   [usdMinorUnits(100), usdMinorUnits(4.49)],
@@ -56,23 +56,16 @@ export function approvedRechargePrice(amountUsd: number) {
     };
   }
 
-  const anchors = [...approvedFeeGrid.entries()].sort((left, right) => left[0] - right[0]);
-  const lowerAnchor = [...anchors].reverse().find(([minorUnits]) => minorUnits < amountMinorUnits);
-  const upperAnchor = anchors.find(([minorUnits]) => minorUnits > amountMinorUnits);
-  if (!lowerAnchor || !upperAnchor) {
+  const tiers = [...approvedFeeGrid.entries()].sort((left, right) => left[0] - right[0]);
+  const lowerTier = [...tiers].reverse().find(([tierAmountMinorUnits]) => amountMinorUnits >= tierAmountMinorUnits);
+  if (!lowerTier) {
     throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be between $5.00 and $100.00 USD', 400);
   }
 
-  const [lowerAmountMinorUnits, lowerFeeMinorUnits] = lowerAnchor;
-  const [upperAmountMinorUnits, upperFeeMinorUnits] = upperAnchor;
-  const deltaAmountMinorUnits = amountMinorUnits - lowerAmountMinorUnits;
-  const amountSpanMinorUnits = upperAmountMinorUnits - lowerAmountMinorUnits;
-  const feeDeltaMinorUnits = upperFeeMinorUnits - lowerFeeMinorUnits;
-  const interpolatedFeeMinorUnits = lowerFeeMinorUnits + Math.round((deltaAmountMinorUnits * feeDeltaMinorUnits) / amountSpanMinorUnits);
-
+  const [, feeMinorUnits] = lowerTier;
   return {
     amountMinorUnits,
-    feeMinorUnits: interpolatedFeeMinorUnits,
-    totalMinorUnits: amountMinorUnits + interpolatedFeeMinorUnits,
+    feeMinorUnits,
+    totalMinorUnits: amountMinorUnits + feeMinorUnits,
   };
 }

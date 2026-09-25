@@ -531,7 +531,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
       operatorId: 88,
       amount: 25,
     }).expect(201);
-    expect(custom.body.quote).toMatchObject({ providerAmount: 25, feeUsd: 1.64, totalChargeUsd: 26.64, productId: 'custom:25.00' });
+    expect(custom.body.quote).toMatchObject({ providerAmount: 25, feeUsd: 1.49, totalChargeUsd: 26.49, productId: 'custom:25.00' });
 
     await request(rangeApp).post('/api/mobile-topups/quotes').set(rangeHeaders).send({
       countryCode: 'JM',

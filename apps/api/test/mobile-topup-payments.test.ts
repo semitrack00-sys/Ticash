@@ -14,9 +14,9 @@ const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clien
   quoteTtlSeconds:300, paymentMode:'mock', productionEnabled:false, approvedForLiveUse:false };
 const approvedRechargeGrid = [
   [5, 0.99, 5.99],
-  [10, 1.05, 11.05],
+  [10, 1.25, 11.25],
   [20, 1.49, 21.49],
-  [30, 1.79, 31.79],
+  [30, 1.99, 31.99],
   [50, 2.49, 52.49],
   [75, 3.49, 78.49],
   [100, 4.49, 104.49],
@@ -58,13 +58,18 @@ describe('sandbox payment foundation',()=>{
   });
   it.each([
     [5, 0.99],
-    [10, 1.05],
+    [7, 0.99],
+    [10, 1.25],
+    [14, 1.25],
+    [19, 1.25],
     [20, 1.49],
-    [30, 1.79],
-    [35, 1.97],
-    [40, 2.14],
+    [23, 1.49],
+    [30, 1.99],
+    [35, 1.99],
+    [40, 1.99],
     [50, 2.49],
     [75, 3.49],
+    [95, 3.49],
     [100, 4.49],
   ])('calculates the authoritative backend fee for custom USD amount $%s as $%s', async (amount, fee) => {
     const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
@@ -88,9 +93,9 @@ describe('sandbox payment foundation',()=>{
   it('preserves the authoritative Stripe total for custom amounts', async () => {
     const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
     const quote = await f.service.createQuote('customer', { ...quoteInput, operatorId: rangeOperator.id, amount: 40 });
-    expect(quote).toMatchObject({ providerAmount: 40, feeUsd: 2.14, totalChargeUsd: 42.14 });
+    expect(quote).toMatchObject({ providerAmount: 40, feeUsd: 1.99, totalChargeUsd: 41.99 });
     const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'custom-stripe-total');
-    expect(session.amountMinor).toBe(4214);
+    expect(session.amountMinor).toBe(4199);
   });
   it('survives concurrent session and purchase retries across service instances',async()=>{
     const f=fixture();const second=new MobileTopUpService(config,f.provider,new MockMobileTopUpPaymentProvider(),f.repository,f.audit);

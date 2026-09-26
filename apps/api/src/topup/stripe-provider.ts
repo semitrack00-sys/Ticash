@@ -9,18 +9,37 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
     this.config = Object.freeze({ ...config });
   }
 
+  private encodeForm(body: Record<string, unknown>) {
+    const params = new URLSearchParams();
+    const append = (key: string, value: unknown) => {
+      if (value === undefined || value === null) return;
+      if (Array.isArray(value)) {
+        for (const entry of value) append(`${key}[]`, entry);
+        return;
+      }
+      if (typeof value === 'object') {
+        for (const [nestedKey, nestedValue] of Object.entries(value)) append(`${key}[${nestedKey}]`, nestedValue);
+        return;
+      }
+      params.append(key, typeof value === 'boolean' ? String(value) : `${value}`);
+    };
+    for (const [key, value] of Object.entries(body)) append(key, value);
+    return params.toString();
+  }
+
   private async request(path: string, method = 'GET', body?: Record<string, unknown>, idempotencyKey?: string) {
     if (!this.config.enabled) throw new MobileTopUpError('STRIPE_DISABLED', 'Stripe is disabled', 503);
     try {
+      const encodedBody = body ? this.encodeForm(body) : undefined;
       const response = await this.transport(`https://api.stripe.com${path}`, {
         method,
         signal: AbortSignal.timeout(15_000),
         headers: {
           Authorization: `Bearer ${this.config.secretKey!}`,
-          'Content-Type': 'application/json',
+          ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
           ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
         },
-        ...(body ? { body: JSON.stringify(body) } : {}),
+        ...(body ? { body: encodedBody } : {}),
       });
       if (!response.ok) throw new Error('Provider rejected request');
       return { status: response.status, data: await response.json() as Record<string, unknown> };
@@ -42,7 +61,6 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
         billingCountry: input.billingCountry,
       },
       automatic_payment_methods: { enabled: true },
-      ...(this.config.successUrl ? { return_url: this.config.successUrl } : {}),
     });
     this.assertSafeSession(data);
     return data;

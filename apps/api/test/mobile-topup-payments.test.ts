@@ -207,7 +207,24 @@ describe('Stripe sandbox flow',()=>{
     STRIPE_FAILURE_URL: 'https://website.example/failure',
   } as const;
 
-  function stripeFixture() {
+  function stripeResponse(body: Record<string, unknown>) {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  function transportRequest(transport: ReturnType<typeof vi.fn>, index = 0) {
+    const [url, init] = transport.mock.calls[index] as [string, RequestInit];
+    return {
+      url,
+      init,
+      headers: init.headers as Record<string, string>,
+      body: typeof init.body === 'string' ? init.body : '',
+    };
+  }
+
+  function stripeFixture(transport = vi.fn(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))) {
     const submit = vi.fn(async () => ({
       transactionId: 'reloadly-fixture',
       status: 'PROCESSING',
@@ -236,13 +253,13 @@ describe('Stripe sandbox flow',()=>{
       new MemoryMobileTopUpRepository(),
       vi.fn(async () => {}),
       undefined,
-      new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), vi.fn(async () => new Response(JSON.stringify({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }), { status: 200 }))),
+      new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport),
     );
 
-    return { service, provider, submit };
+    return { service, provider, submit, transport };
   }
 
-  it('creates a Stripe payment intent from the authoritative server-side quote and blocks browser tampering', async () => {
+  it('creates a Stripe payment intent with form-encoded Stripe REST parameters and blocks browser tampering', async () => {
     const f = stripeFixture();
     const quote = await f.service.createQuote('customer', quoteInput);
 
@@ -257,6 +274,61 @@ describe('Stripe sandbox flow',()=>{
     expect(session.paymentSession).toMatchObject({ id: 'pi_fixture_123', client_secret: expect.any(String) });
     expect(session.paymentSession).not.toHaveProperty('secret');
     expect(f.submit).not.toHaveBeenCalled();
+
+    expect(f.transport).toHaveBeenCalledTimes(1);
+    const request = transportRequest(f.transport);
+    expect(request.url).toBe('https://api.stripe.com/v1/payment_intents');
+    expect(request.init.method).toBe('POST');
+    expect(request.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(request.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(request.body).toContain('amount=599');
+    expect(request.body).toContain('currency=usd');
+    expect(new URLSearchParams(request.body).get('description')).toBe(`TiCash recharge ${session.transactionId}`);
+    expect(new URLSearchParams(request.body).get('metadata[transactionId]')).toBe(session.transactionId);
+    expect(request.body).toContain('metadata%5BbillingCountry%5D=US');
+    expect(request.body).toContain('automatic_payment_methods%5Benabled%5D=true');
+    expect(request.body).not.toContain('return_url');
+    expect(request.body).not.toContain(encodeURIComponent(stripeEnv.STRIPE_SECRET_KEY));
+    expect(request.body).not.toContain(encodeURIComponent(stripeEnv.STRIPE_WEBHOOK_SECRET));
+    expect(JSON.stringify(session)).not.toContain(stripeEnv.STRIPE_SECRET_KEY);
+    expect(JSON.stringify(session)).not.toContain(stripeEnv.STRIPE_WEBHOOK_SECRET);
+    expect(JSON.stringify(session)).not.toContain(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+  });
+
+  it('form-encodes capture, cancel and refund Stripe requests with header-only authorization', async () => {
+    const transport = vi
+      .fn(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'requires_capture' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'canceled' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 're_fixture_123', status: 'pending' }));
+    const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
+
+    await provider.createPaymentSession({ transactionId: 'tx-capture-1', amountMinor: 599, currency: 'USD', billingCountry: 'US' });
+    await provider.capture({ paymentId: 'pi_fixture_123', transactionId: 'tx-capture-1', amountMinor: 599 });
+    await provider.void({ paymentId: 'pi_fixture_123', transactionId: 'tx-capture-1' });
+    await provider.refund({ paymentId: 'pi_fixture_123', transactionId: 'tx-refund-1', amountMinor: 599 });
+
+    const capture = transportRequest(transport, 1);
+    expect(capture.url).toBe('https://api.stripe.com/v1/payment_intents/pi_fixture_123/capture');
+    expect(capture.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(capture.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(capture.body).toBe('amount_to_capture=599');
+    expect(capture.body).not.toContain('{');
+
+    const cancel = transportRequest(transport, 2);
+    expect(cancel.url).toBe('https://api.stripe.com/v1/payment_intents/pi_fixture_123/cancel');
+    expect(cancel.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(cancel.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(cancel.body).toBe('');
+
+    const refund = transportRequest(transport, 3);
+    expect(refund.url).toBe('https://api.stripe.com/v1/refunds');
+    expect(refund.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(refund.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(refund.body).toContain('payment_intent=pi_fixture_123');
+    expect(refund.body).toContain('amount=599');
+    expect(refund.body).not.toContain('{');
   });
 
   it('requires a verified Stripe signature and rejects invalid payloads before fulfillment', async () => {

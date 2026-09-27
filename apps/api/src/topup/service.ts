@@ -12,7 +12,7 @@ import type {
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
 import { approvedRechargePrice } from './recharge-fee-grid.js';
-import { reloadlyProducts, normalizeProduct, assertSameProduct } from './product-catalog.js';
+import { reloadlyProducts, normalizeProduct, assertSameProduct, assertProductAmount } from './product-catalog.js';
 import type { StripeSandboxPaymentProvider } from './stripe-provider.js';
 import { assertVerifiedStripeEvent, type VerifiedStripeEvent } from './stripe-webhook.js';
 import {
@@ -304,13 +304,14 @@ export class MobileTopUpService {
     }
     let amount = product.price;
     if (product.amountType === 'RANGE') {
-      if (product.classification !== 'AIRTIME' || input.amount === undefined || input.amount < product.minimumAmount! || input.amount > product.maximumAmount!) {
+      if (operator.denominationType !== 'RANGE' || product.classification !== 'AIRTIME' || input.amount === undefined) {
         throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Enter an amount within the provider range', 400);
       }
       amount = input.amount;
     } else if (input.amount !== undefined) {
       throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
+    assertProductAmount(product, amount);
     const pricing = approvedRechargePrice(amount);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
@@ -353,6 +354,7 @@ export class MobileTopUpService {
     // Legacy records lack a benefits snapshot; never fulfill unreviewed legacy data plans.
     if (!quote.productSnapshot && current.classification !== 'AIRTIME') throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'This plan requires a new quote', 400);
     if (quote.productSnapshot) assertSameProduct(quote.productSnapshot, current);
+    assertProductAmount(current, quote.providerAmount);
   }
 
   private requestHash(userId: string, quoteId: string, recipientId?: string) {

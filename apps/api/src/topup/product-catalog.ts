@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { MobileTopUpError, type MobileTopUpProduct, type MobileTopUpOperator } from './types.js';
+import { normalizeRechargeAmountMinorUnits } from './recharge-fee-grid.js';
 const cents = z.number().finite().positive().refine(n => Math.abs(n * 100 - Math.round(n * 100)) < 1e-7);
 const text = z.string().trim().min(1).max(1000);
 const schema = z.object({
@@ -10,6 +11,7 @@ const schema = z.object({
   kind: z.enum(['AIRTIME', 'DATA']), name: text, description: text.optional(), price: cents, priceCurrency: z.literal('USD'),
   deliveredValue: z.number().finite().nonnegative().optional(), deliveredCurrency: z.string().regex(/^(?:[A-Z]{3})?$/),
   amountType: z.enum(['FIXED', 'RANGE']), minimumAmount: cents.optional(), maximumAmount: cents.optional(),
+  amountIncrement: cents.optional(), amountPrecision: z.number().int().min(0).max(2).optional(),
   benefits: z.array(z.object({ type: z.enum(['DATA', 'MINUTES', 'SMS']), amount: z.number().finite().refine(n => n >= 0 || n === -1), unit: z.string().regex(/^[A-Z_]{1,24}$/) })).max(20).optional(),
   validity: z.object({ quantity: z.number().int().refine(n => n > 0 || n === -1), unit: z.enum(['HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR']), semantics: z.enum(['SERVICE', 'REDEMPTION']) }).optional(),
   redemptionPeriodIso: z.string().regex(/^P(?=.+)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=.+)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/).optional(),
@@ -27,6 +29,21 @@ export function normalizeProduct(value: MobileTopUpProduct): MobileTopUpProduct 
 export function assertSameProduct(expected: MobileTopUpProduct, current: MobileTopUpProduct) {
   if (normalizeProduct(expected).catalogVersion !== normalizeProduct(current).catalogVersion) {
     throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'The product changed. Request and review a new quote', 400);
+  }
+}
+// Validate normalized provider metadata, never client-supplied amount rules.
+export function assertProductAmount(product: MobileTopUpProduct, amount: number) {
+  const minor = normalizeRechargeAmountMinorUnits(amount);
+  if (product.amountType === 'FIXED') {
+    if (amount !== product.price) throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
+    return;
+  }
+  const minimum = product.minimumAmount!;
+  const increment = product.amountIncrement === undefined ? undefined : Math.round(product.amountIncrement * 100);
+  const precisionUnit = 10 ** (2 - (product.amountPrecision ?? 2));
+  if (product.classification !== 'AIRTIME' || amount < minimum || amount > product.maximumAmount! ||
+      minor % precisionUnit !== 0 || (increment !== undefined && (minor - Math.round(minimum * 100)) % increment !== 0)) {
+    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Enter an amount within the provider range, increment and precision', 400);
   }
 }
 export function reloadlyProducts(operator: MobileTopUpOperator): MobileTopUpProduct[] {

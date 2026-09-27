@@ -98,6 +98,9 @@ export interface MobileTopUpProduct {
   amountType: 'FIXED' | 'RANGE';
   minimumAmount?: number;
   maximumAmount?: number;
+  /** Optional provider catalog constraints; increments are relative to minimumAmount. */
+  amountIncrement?: number;
+  amountPrecision?: number;
 }
 
 export interface ProviderTopUpRequest {

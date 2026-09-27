@@ -1,3 +1,4 @@
+import 'flupflap_admin_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -27,6 +28,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     (Icons.swap_horiz, 'Transfers'),
     (Icons.hub_outlined, 'Providers'),
     (Icons.policy_outlined, 'Controls'),
+    (Icons.phone_android, 'FlupFlap'),
   ];
 
   @override
@@ -128,6 +130,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
   }
 
   Widget _page(AdminWorkspace data) => switch (_section) {
+    5 => FlupFlapAdminPage(session: data.session),
     0 => _OverviewPage(
       data: data,
       onRefresh: () => ref.invalidate(adminWorkspaceProvider),

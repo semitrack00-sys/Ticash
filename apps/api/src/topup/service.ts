@@ -4,16 +4,15 @@ import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'lib
 import type {
   MobileTopUpConfig,
   MobileTopUpDestination,
-  MobileTopUpOperator,
   MobileTopUpPaymentProvider,
-  MobileTopUpProduct,
   MobileTopUpProvider,
   MobileTopUpStatus,
   ProviderTopUpResult,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
-import { approvedRechargeAmountsUsd, approvedRechargePrice, isApprovedRechargeAmountMinorUnits } from './recharge-fee-grid.js';
+import { approvedRechargePrice } from './recharge-fee-grid.js';
+import { reloadlyProducts, normalizeProduct, assertSameProduct } from './product-catalog.js';
 import type { StripeSandboxPaymentProvider } from './stripe-provider.js';
 import { assertVerifiedStripeEvent, type VerifiedStripeEvent } from './stripe-webhook.js';
 import {
@@ -37,47 +36,7 @@ type AuditRecorder = (
 
 const countryCatalogCacheTtlMs = 60_000;
 
-function planName(operator: MobileTopUpOperator, amount: number): string | undefined {
-  const keys = [String(amount), amount.toFixed(2), amount.toFixed(1)];
-  for (const key of keys) {
-    const value = operator.fixedAmountsPlanNames[key] ?? operator.localFixedAmountsPlanNames[key];
-    if (value) return value;
-  }
-  return undefined;
-}
-
-export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUpProduct[] {
-  const provider = operator.provider ?? decodeOperatorId(operator.id).provider;
-  if (provider !== 'RELOADLY') return [];
-  const destinationCurrency = operator.destinationCurrencyCode.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(destinationCurrency)) return [];
-  if (operator.senderCurrencyCode !== 'USD') return [];
-  const approvedAmounts = operator.denominationType === 'RANGE'
-    ? approvedRechargeAmountsUsd.filter((amount) => {
-      const amountMinorUnits = usdMinorUnits(amount);
-      return (!Number.isFinite(operator.minAmount) || amount >= operator.minAmount!) && (!Number.isFinite(operator.maxAmount) || amount <= operator.maxAmount!) && isApprovedRechargeAmountMinorUnits(amountMinorUnits);
-    })
-    : operator.fixedAmounts.filter((amount) => isApprovedRechargeAmountMinorUnits(usdMinorUnits(amount)));
-  return approvedAmounts.flatMap((amount, index) => {
-    const plan = planName(operator, amount);
-    const kind = plan || operator.bundle ? 'DATA' : 'AIRTIME';
-    const amountMinorUnits = usdMinorUnits(amount);
-    const deliveredValue = operator.localFixedAmounts[index] ?? Number.NaN;
-    return [{
-      id: `reloadly:${operator.countryCode}:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
-      provider,
-      countryCode: operator.countryCode,
-      operatorId: operator.id,
-      kind,
-      name: plan ?? `${operator.name} ${amount.toFixed(2)} ${operator.senderCurrencyCode}`,
-      price: amountMinorUnits / 100,
-      priceCurrency: operator.senderCurrencyCode,
-      deliveredValue: Number.isFinite(deliveredValue) && deliveredValue > 0 ? deliveredValue : undefined,
-      deliveredCurrency: destinationCurrency,
-      amountType: 'FIXED',
-    } satisfies MobileTopUpProduct];
-  });
-}
+export const productsFromOperator = reloadlyProducts;
 
 function mapProviderStatus(value: string): MobileTopUpStatus {
   const status = value.toUpperCase();
@@ -247,7 +206,7 @@ export class MobileTopUpService {
     return operator;
   }
 
-  async products(countryCode: string, operatorId: number) {
+  async products(countryCode: string, operatorId: number, classification?: 'AIRTIME' | 'DATA' | 'BUNDLE') {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operator = await this.provider.getOperator(operatorId);
@@ -272,7 +231,9 @@ export class MobileTopUpService {
         (owner !== 'RELOADLY' && !product.providerProductId))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
     }
-    const products = rawProducts.filter((product) => product.amountType === 'FIXED' && isApprovedRechargeAmountMinorUnits(usdMinorUnits(product.price)));
+    const products = rawProducts.map(product => normalizeProduct({ ...product, provider: owner }))
+      .filter(product => product.price >= 5 && product.price <= 100 && (!classification || product.classification === classification));
+    if (new Set(products.map(p => p.id)).size !== products.length) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Duplicate provider product identity', 502);
     return { operator: { ...operator, provider: owner }, products };
   }
 
@@ -327,55 +288,30 @@ export class MobileTopUpService {
     operatorId: number;
     productId?: string;
     amount?: number;
+    catalogVersion?: string;
   }): Promise<MobileTopUpQuoteRecord> {
     this.assertEnabled();
     const countryCode = normalizeTopUpCountryCode(input.countryCode);
     const phone = normalizeTopUpPhone(input.phone, countryCode);
     const { operator, products } = await this.products(countryCode, input.operatorId);
 
-    if (input.amount !== undefined) {
-      const amount = Number(input.amount);
-      const pricing = approvedRechargePrice(amount);
-      const customProductId = input.productId && /^custom:/.test(input.productId) ? input.productId : `custom:${(pricing.amountMinorUnits / 100).toFixed(2)}`;
-      const createdAt = this.clock();
-      const quote = await this.repository.createQuote({
-        userId,
-        countryCode,
-        recipientPhone: phone,
-        operatorId: operator.id,
-        operatorName: operator.name,
-        provider: operator.provider ?? decodeOperatorId(operator.id).provider,
-        providerProductId: undefined,
-        productId: customProductId,
-        productName: `Custom recharge ${((pricing.amountMinorUnits) / 100).toFixed(2)}`,
-        kind: 'AIRTIME',
-        providerAmount: pricing.amountMinorUnits / 100,
-        providerCurrency: 'USD',
-        deliveredValue: undefined,
-        deliveredCurrency: 'USD',
-        feeUsd: pricing.feeMinorUnits / 100,
-        totalChargeUsd: pricing.totalMinorUnits / 100,
-        expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
-      });
-      await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {
-        countryCode: quote.countryCode,
-        operatorId: operator.id,
-        productId: quote.productId,
-        testMode: true,
-      });
-      return quote;
+    const product = input.productId ? products.find(item => item.id === input.productId)
+      : products.find(item => item.amountType === 'RANGE' && item.classification === 'AIRTIME');
+    if (!product) throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
+    if ((input.catalogVersion !== undefined && input.catalogVersion !== product.catalogVersion) ||
+        (product.classification !== 'AIRTIME' && !input.catalogVersion)) {
+      throw new MobileTopUpError('TOPUP_CATALOG_CHANGED', 'Reload the catalog and review the current product', 409);
     }
-
-    const product = products.find(
-      (item) => item.id === input.productId && normalizeTopUpCountryCode(item.countryCode) === countryCode,
-    );
-    if (!product) {
-      throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
+    let amount = product.price;
+    if (product.amountType === 'RANGE') {
+      if (product.classification !== 'AIRTIME' || input.amount === undefined || input.amount < product.minimumAmount! || input.amount > product.maximumAmount!) {
+        throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Enter an amount within the provider range', 400);
+      }
+      amount = input.amount;
+    } else if (input.amount !== undefined) {
+      throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
-    if (product.amountType !== 'FIXED') {
-      throw new MobileTopUpError('UNSUPPORTED_TOPUP_DENOMINATION', 'Select a supported recharge denomination', 400);
-    }
-    const pricing = approvedRechargePrice(product.price);
+    const pricing = approvedRechargePrice(amount);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
       userId,
@@ -385,6 +321,7 @@ export class MobileTopUpService {
       operatorName: operator.name,
       provider: operator.provider ?? decodeOperatorId(operator.id).provider,
       providerProductId: product.providerProductId,
+      productSnapshot: product,
       productId: product.id,
       productName: product.name,
       kind: product.kind,
@@ -403,6 +340,19 @@ export class MobileTopUpService {
       testMode: true,
     });
     return quote;
+  }
+
+  private async revalidateQuoteProduct(quote: MobileTopUpQuoteRecord | MobileTopUpTransactionRecord) {
+    const { products } = await this.products(quote.countryCode, quote.operatorId);
+    const current = products.find(p => p.id === quote.productId);
+    if (!current || current.provider !== quote.provider || current.providerProductId !== quote.providerProductId ||
+        current.kind !== quote.kind || current.priceCurrency !== quote.providerCurrency ||
+        (current.amountType === 'FIXED' ? current.price !== quote.providerAmount : quote.providerAmount < current.minimumAmount! || quote.providerAmount > current.maximumAmount!)) {
+      throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'The quoted product is no longer available on the same terms', 400);
+    }
+    // Legacy records lack a benefits snapshot; never fulfill unreviewed legacy data plans.
+    if (!quote.productSnapshot && current.classification !== 'AIRTIME') throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'This plan requires a new quote', 400);
+    if (quote.productSnapshot) assertSameProduct(quote.productSnapshot, current);
   }
 
   private requestHash(userId: string, quoteId: string, recipientId?: string) {
@@ -427,6 +377,7 @@ export class MobileTopUpService {
     if (quote.consumedAt || new Date(quote.expiresAt) <= timestamp) {
       throw new MobileTopUpError(quote.consumedAt ? 'TOPUP_QUOTE_ALREADY_USED' : 'TOPUP_QUOTE_EXPIRED', 'Recharge quote is no longer valid', 409);
     }
+    await this.revalidateQuoteProduct(quote);
     let savedRecipient: SavedTopUpRecipientRecord | undefined;
     if (input.recipientId) {
       savedRecipient = (await this.repository.listRecipients(userId)).find((item) => item.id === input.recipientId);
@@ -656,9 +607,10 @@ export class MobileTopUpService {
     await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_STARTED', 'MobileTopUpTransaction', id, { testMode: true });
     let providerResult: ProviderTopUpResult;
     try {
+      await this.revalidateQuoteProduct(transaction);
       providerResult = await this.provider.submitTopUp({ operatorId: transaction.operatorId, amount: transaction.providerAmount,
         provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, productId: transaction.productId,
-        providerProductId: transaction.providerProductId, providerCurrency: transaction.providerCurrency,
+        providerProductId: transaction.providerProductId, providerCurrency: transaction.providerCurrency, productSnapshot: transaction.productSnapshot,
         recipientPhone: transaction.recipientPhone, recipientCountryCode: transaction.countryCode, customIdentifier: transaction.customIdentifier });
     } catch (error) {
       const rejected = error instanceof MobileTopUpError && error.statusCode === 400;

@@ -1,3 +1,4 @@
+import { reloadlyProducts, assertSameProduct } from './product-catalog.js';
 import type {
   MobileTopUpConfig,
   MobileTopUpCountry,
@@ -82,6 +83,8 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
     countryCode,
     status: raw.status !== false,
     bundle: raw.bundle === true,
+    data: raw.data === true,
+    combo: raw.combo === true,
     denominationType,
     senderCurrencyCode: String(raw.senderCurrencyCode ?? '').toUpperCase(),
     destinationCurrencyCode: String(raw.destinationCurrencyCode ?? '').toUpperCase(),
@@ -243,7 +246,18 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     return mapOperator(await this.request(`operators/${operatorId}`));
   }
 
+  async listProducts(country: string, id: number) {
+    const operator = await this.getOperator(id);
+    if (operator.id !== id || operator.countryCode !== country || !operator.status) throw new MobileTopUpError('TOPUP_OPERATOR_COUNTRY_MISMATCH', 'Operator is unavailable for this destination', 400);
+    return reloadlyProducts(operator);
+  }
+
   async submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult> {
+    if (input.productSnapshot) {
+      const current = (await this.listProducts(input.recipientCountryCode, input.operatorId)).find(p => p.id === input.productId);
+      if (!current) throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'Product is no longer available', 400);
+      assertSameProduct(input.productSnapshot, current);
+    }
     const senderPhone = this.config.senderPhoneCountry && this.config.senderPhoneNumber
       ? {
           countryCode: normalizeTopUpCountryCode(this.config.senderPhoneCountry),

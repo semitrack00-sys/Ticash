@@ -1,17 +1,27 @@
-enum MobileTopUpKind { airtime, data }
+enum MobileTopUpKind { airtime, data, bundle }
+
+MobileTopUpKind _kind(dynamic value) => switch (value) {
+  'AIRTIME' => MobileTopUpKind.airtime,
+  'DATA' => MobileTopUpKind.data,
+  'BUNDLE' => MobileTopUpKind.bundle,
+  _ => throw const FormatException('Unsupported recharge product kind'),
+};
 
 enum MobileTopUpStatus { pending, processing, delivered, failed, refunded }
 
 String? _explicitCountryCode(Map<String, dynamic> json) {
-  final countryCode =
-      ((json['countryCode'] ?? json['code']) as String?)?.trim();
+  final countryCode = ((json['countryCode'] ?? json['code']) as String?)
+      ?.trim();
   if (countryCode != null && countryCode.isNotEmpty) {
     return countryCode.toUpperCase();
   }
   return null;
 }
 
-String? _countryCodeFromProductId(Map<String, dynamic> json, String productKey) {
+String? _countryCodeFromProductId(
+  Map<String, dynamic> json,
+  String productKey,
+) {
   final productId = (json[productKey] as String?)?.trim();
   if (productId == null || productId.isEmpty) return null;
   final parts = productId.split(':');
@@ -123,7 +133,9 @@ class MobileTopUpOperator {
       return null;
     }
     final uri = Uri.tryParse(value);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host.isEmpty ||
         uri.userInfo.isNotEmpty) {
       return null;
     }
@@ -181,9 +193,7 @@ class MobileTopUpProduct {
       MobileTopUpProduct(
         id: json['id'] as String,
         operatorId: (json['operatorId'] as num).toInt(),
-        kind: (json['kind'] as String?) == 'DATA'
-            ? MobileTopUpKind.data
-            : MobileTopUpKind.airtime,
+        kind: _kind(json['kind']),
         name: json['name'] as String,
         price: (json['price'] as num).toDouble(),
         priceCurrency: json['priceCurrency'] as String,
@@ -275,9 +285,7 @@ class MobileTopUpQuote {
         operatorName: json['operatorName'] as String,
         productId: json['productId'] as String,
         productName: json['productName'] as String,
-        kind: json['kind'] == 'DATA'
-            ? MobileTopUpKind.data
-            : MobileTopUpKind.airtime,
+        kind: _kind(json['kind']),
         providerAmount: (json['providerAmount'] as num).toDouble(),
         providerCurrency: json['providerCurrency'] as String,
         deliveredValue: (json['deliveredValue'] as num?)?.toDouble(),
@@ -337,9 +345,7 @@ class MobileTopUpTransaction {
         ),
         operatorName: json['operatorName'] as String,
         productName: json['productName'] as String,
-        kind: json['kind'] == 'DATA'
-            ? MobileTopUpKind.data
-            : MobileTopUpKind.airtime,
+        kind: _kind(json['kind']),
         providerAmount: (json['providerAmount'] as num).toDouble(),
         providerCurrency: json['providerCurrency'] as String,
         deliveredValue: (json['deliveredValue'] as num?)?.toDouble(),

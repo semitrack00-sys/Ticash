@@ -1,0 +1,106 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
+
+def keystorePropertiesFile = rootProject.file('key.properties')
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+def requiredReleaseSigningProperties = ['keyAlias', 'keyPassword', 'storeFile', 'storePassword']
+def releaseSigningConfigured = keystorePropertiesFile.exists() &&
+        requiredReleaseSigningProperties.every { propertyName ->
+            keystoreProperties[propertyName]?.toString()?.trim()
+        }
+
+if (releaseSigningConfigured) {
+    def configuredStoreFile = file(keystoreProperties['storeFile'])
+    releaseSigningConfigured = configuredStoreFile.exists() && configuredStoreFile.isFile()
+}
+
+gradle.taskGraph.whenReady { taskGraph ->
+    def releaseBuildRequested = taskGraph.allTasks.any { task ->
+        def taskName = task.name.toLowerCase()
+        taskName.contains('release') &&
+                (taskName.startsWith('assemble') || taskName.startsWith('bundle') ||
+                        taskName.startsWith('package') || taskName.startsWith('sign'))
+    }
+
+    if (releaseBuildRequested && !releaseSigningConfigured) {
+        throw new GradleException(
+                'Release signing is not configured. Provide android/key.properties with '
+                        + 'keyAlias, keyPassword, storeFile, and storePassword, and ensure the keystore exists.'
+        )
+    }
+}
+
+android {
+    namespace "com.ticash.flupflap"
+    compileSdk = 36
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    defaultConfig {
+        applicationId "com.ticash.flupflap"
+        minSdkVersion = flutter.minSdkVersion
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningConfigured) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation 'androidx.multidex:multidex:2.0.1'
+}

@@ -10,7 +10,8 @@ import '../../providers/mobile_top_up_provider.dart';
 import '../../widgets/mobile_operator_logo.dart';
 
 class MobileTopUpScreen extends ConsumerStatefulWidget {
-  const MobileTopUpScreen({super.key});
+  const MobileTopUpScreen({super.key, this.initialHistory = false});
+  final bool initialHistory;
   @override
   ConsumerState<MobileTopUpScreen> createState() => _MobileTopUpScreenState();
 }
@@ -36,6 +37,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   @override
   void initState() {
     super.initState();
+    _history = widget.initialHistory;
     _countriesSubscription = ref.listenManual(
       mobileTopUpCountriesProvider,
       (_, next) {
@@ -283,7 +285,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                               id: quote.operatorId,
                               name: quote.operatorName,
                               countryCode: quote.countryCode,
-                              bundle: quote.kind == MobileTopUpKind.data,
+                              bundle: quote.kind != MobileTopUpKind.airtime,
                             );
                             _product = null;
                             _receipt = null;
@@ -519,7 +521,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                 subtitle: Text(
                   item.kind == MobileTopUpKind.data
                       ? 'Internet / data plan'
-                      : 'Prepaid airtime',
+                      : item.kind == MobileTopUpKind.bundle ? 'Combo plan' : 'Prepaid airtime',
                 ),
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,

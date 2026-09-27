@@ -1,3 +1,7 @@
+import { createFlupFlapAdmin } from './flupflap/admin.js';
+import { createFlupFlapIdentity, loadFlupFlapConfig, type FlupFlapConfig } from './flupflap/auth.js';
+import { FlupFlapIdentityRepository } from './flupflap/repository.js';
+import { flupFlapCustomerId } from './flupflap/owner.js';
 import { GlobalRechargeProviderRouter } from './topup/provider-router.js';
 import { DtOnePreproductionProvider } from './topup/dtone-provider.js';
 import { loadDtOneConfig } from './topup/dtone-config.js';
@@ -120,7 +124,7 @@ type PasswordResetSession = {
   createdAt: string;
 };
 type AuditRecord = {
-  id: string; userId?: string; action: string; entity: string;
+  id: string; userId?: string; flupFlapCustomerId?: string; action: string; entity: string;
   entityId?: string; metadata?: Record<string, unknown>; createdAt: string;
 };
 type MemoryCompliance = { status: ComplianceStatus; reasons: string[]; reviewedAt?: string };
@@ -468,12 +472,14 @@ async function recordAudit(
   metadata?: Record<string, unknown>,
 ) {
   const safeMetadata = redactAuditMetadata(metadata);
+  const flupActor = userId ? flupFlapCustomerId(userId) : undefined;
+  const actor = flupActor ? { flupFlapCustomerId: flupActor } : { userId };
   if (databaseEnabled) {
-    await prisma.auditLog.create({ data: { userId, action, entity, entityId, metadata: safeMetadata as Prisma.InputJsonValue | undefined } });
+    await prisma.auditLog.create({ data: { ...actor, action, entity, entityId, metadata: safeMetadata as Prisma.InputJsonValue | undefined } });
     return;
   }
   auditRecords.unshift({
-    id: randomUUID(), userId, action, entity, entityId,
+    id: randomUUID(), ...actor, action, entity, entityId,
     metadata: safeMetadata,
     createdAt: new Date().toISOString(),
   });
@@ -641,6 +647,8 @@ export interface CreateAppOptions {
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
   passwordResetEmailService?: PasswordResetEmailService;
+  flupFlapConfig?: FlupFlapConfig;
+  flupFlapRepository?: FlupFlapIdentityRepository;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -1126,6 +1134,29 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use('/api/kyc', createKycRouter({
     authenticate,
     service: kycService,
+  }));
+
+  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
+  const flupFlap = createFlupFlapIdentity({
+    config: options.flupFlapConfig ?? loadFlupFlapConfig(), repository: flupFlapRepository,
+    guestError: guestAuthError, emailService: passwordResetEmailService, audit: recordAudit,
+    sandboxAllowed: () => mobileTopUpConfig.environment === 'sandbox' &&
+      mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
+      securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false,
+  });
+  app.use('/api/admin/flupflap', createFlupFlapAdmin({
+    authenticate, permission, identities:flupFlapRepository, recharge:mobileTopUpRepository,
+    service:mobileTopUpService, audit:recordAudit,
+    auditRows:async()=>databaseEnabled ? prisma.auditLog.findMany({
+      where:{OR:[{flupFlapCustomerId:{not:null}},{action:{startsWith:'FLUPFLAP_'}}]},
+      select:{id:true,action:true,entity:true,entityId:true,createdAt:true},orderBy:{createdAt:'desc'},take:100,
+    }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
+  }));
+  app.use('/api/flupflap/auth', flupFlap.router);
+  app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
+    authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,
+    service: mobileTopUpService, isGuest: flupFlap.isGuest, billingCountryForUser: flupFlap.billingCountryForUser,
+    supportedCountriesPath: '/api/flupflap/mobile-topups/countries',
   }));
 
   app.use('/api/mobile-topups', createMobileTopUpRouter({

@@ -1,71 +1,34 @@
-import { usdMinorUnits } from './payment-utils.js';
 import { MobileTopUpError } from './types.js';
 
+// Lower tier boundaries and fees in integer cents, not provider denominations.
 const approvedFeeGrid = new Map<number, number>([
-  [usdMinorUnits(5), usdMinorUnits(0.99)],
-  [usdMinorUnits(10), usdMinorUnits(1.25)],
-  [usdMinorUnits(20), usdMinorUnits(1.49)],
-  [usdMinorUnits(30), usdMinorUnits(1.99)],
-  [usdMinorUnits(50), usdMinorUnits(2.49)],
-  [usdMinorUnits(75), usdMinorUnits(3.49)],
-  [usdMinorUnits(100), usdMinorUnits(4.49)],
+  [500, 99], [1000, 125], [2000, 149], [3000, 199],
+  [5000, 249], [7500, 349], [10000, 449],
 ]);
 
-const minCustomRechargeMinorUnits = usdMinorUnits(5);
-const maxCustomRechargeMinorUnits = usdMinorUnits(100);
-
-export const approvedRechargeAmountsUsd = [...approvedFeeGrid.keys()].map((value) => value / 100);
-
-export function isApprovedRechargeAmountMinorUnits(amountMinorUnits: number): boolean {
-  return approvedFeeGrid.has(amountMinorUnits);
+// Legacy anchor helpers remain available, but must not filter provider catalogs.
+export const approvedRechargeAmountsUsd = [...approvedFeeGrid.keys()].map(value => value / 100);
+export function isApprovedRechargeAmountMinorUnits(cents: number): boolean {
+  return approvedFeeGrid.has(cents);
 }
 
 export function normalizeRechargeAmountMinorUnits(amountUsd: number): number {
-  if (!Number.isFinite(amountUsd)) {
-    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be a finite USD value', 400);
+  const cents = Math.round(amountUsd * 100);
+  if (!Number.isFinite(amountUsd) || Math.abs(amountUsd * 100 - cents) > 1e-7 || cents < 500 || cents > 10000) {
+    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be between $5.00 and $100.00 USD, rounded to cents', 400);
   }
-  const amountMinorUnits = Math.round(amountUsd * 100);
-  if (Math.abs(amountUsd * 100 - amountMinorUnits) > 1e-7) {
-    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be rounded to cents', 400);
-  }
-  if (amountMinorUnits < minCustomRechargeMinorUnits || amountMinorUnits > maxCustomRechargeMinorUnits || amountMinorUnits <= 0) {
-    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be between $5.00 and $100.00 USD', 400);
-  }
-  return amountMinorUnits;
+  return cents;
 }
 
-export function lookupRechargeFeeMinorUnits(amountMinorUnits: number): number {
-  if (!Number.isSafeInteger(amountMinorUnits) || amountMinorUnits <= 0) {
-    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be a positive USD minor-unit amount', 400);
+export function lookupRechargeFeeMinorUnits(cents: number): number {
+  if (!Number.isSafeInteger(cents) || cents < 500 || cents > 10000) {
+    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount is outside the supported fee policy', 400);
   }
-  const feeMinorUnits = approvedFeeGrid.get(amountMinorUnits);
-  if (feeMinorUnits == null) {
-    throw new MobileTopUpError('UNSUPPORTED_TOPUP_DENOMINATION', 'Select a supported recharge denomination', 400);
-  }
-  return feeMinorUnits;
+  return [...approvedFeeGrid].reverse().find(([minimum]) => cents >= minimum)![1];
 }
 
 export function approvedRechargePrice(amountUsd: number) {
   const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd);
-  const exactFeeMinorUnits = approvedFeeGrid.get(amountMinorUnits);
-  if (exactFeeMinorUnits != null) {
-    return {
-      amountMinorUnits,
-      feeMinorUnits: exactFeeMinorUnits,
-      totalMinorUnits: amountMinorUnits + exactFeeMinorUnits,
-    };
-  }
-
-  const tiers = [...approvedFeeGrid.entries()].sort((left, right) => left[0] - right[0]);
-  const lowerTier = [...tiers].reverse().find(([tierAmountMinorUnits]) => amountMinorUnits >= tierAmountMinorUnits);
-  if (!lowerTier) {
-    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be between $5.00 and $100.00 USD', 400);
-  }
-
-  const [, feeMinorUnits] = lowerTier;
-  return {
-    amountMinorUnits,
-    feeMinorUnits,
-    totalMinorUnits: amountMinorUnits + feeMinorUnits,
-  };
+  const feeMinorUnits = lookupRechargeFeeMinorUnits(amountMinorUnits);
+  return { amountMinorUnits, feeMinorUnits, totalMinorUnits: amountMinorUnits + feeMinorUnits };
 }

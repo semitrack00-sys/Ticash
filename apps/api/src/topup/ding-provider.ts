@@ -1,3 +1,4 @@
+import { assertSameProduct } from './product-catalog.js';
 import { createHash } from 'node:crypto';
 import { providerLogoUrl } from './logo-url.js';
 import { DING_API_URL, DING_TOKEN_URL, type DingConfig } from './ding-config.js';
@@ -58,8 +59,11 @@ export function mapDingProduct(value: unknown, op: MobileTopUpOperator): MobileT
   const sku = text(raw.SkuCode, 140); const name = text(raw.DefaultDisplayText);
   const id = `ding:${op.countryCode}:${encodeOperatorId('DING', op.id)}:product:${encodeURIComponent(sku)}`;
   if (id.length > 240) return undefined;
-  const classification = raw.Benefits.includes('Data') ? raw.Benefits.includes('Minutes') ? 'BUNDLE' : 'DATA' : 'AIRTIME';
+  const benefits = raw.Benefits.filter(b => b !== 'Mobile');
+  const classification = new Set(benefits).size > 1 ? 'BUNDLE' : benefits.includes('Data') ? 'DATA' : 'AIRTIME';
+  if (raw.ValidityPeriodIso != null && (typeof raw.ValidityPeriodIso !== 'string' || !/^P(?=.+)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=.+)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/.test(raw.ValidityPeriodIso))) return invalid();
   return { id, provider: 'DING', providerProductId: sku,
+    ...(raw.ValidityPeriodIso ? { redemptionPeriodIso: raw.ValidityPeriodIso as string } : {}),
     operatorId: op.id, countryCode: op.countryCode, name, classification, kind: classification === 'AIRTIME' ? 'AIRTIME' : 'DATA',
     amountType: 'FIXED', price: min.SendValue as number, priceCurrency: 'USD', deliveredValue: min.ReceiveValue as number, deliveredCurrency: min.ReceiveCurrencyIso as string };
 }
@@ -232,6 +236,7 @@ export class DingUatProvider implements MobileTopUpProvider {
     const matches = (await this.products(input.recipientCountryCode, input.operatorId, input.providerProductId)).filter(value => value.raw.SkuCode === input.providerProductId);
     const match = matches.length === 1 ? matches[0] : undefined;
     if (!match?.product || match.product.id !== input.productId || match.product.price !== input.amount || match.product.priceCurrency !== input.providerCurrency) throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'The quoted Ding product is no longer available on the same terms', 400);
+    if (input.productSnapshot) assertSameProduct(input.productSnapshot, { ...match.product, operatorId: input.productSnapshot.operatorId });
     // Ding shares UAT/live hosts. Enforce the provider's exact non-billable UAT number even if credentials were misconfigured.
     if (account(match.raw.UatNumber) !== account(input.recipientPhone)) throw new MobileTopUpError('DING_UAT_NUMBER_REQUIRED', 'Only the exact product UAT number is allowed', 400);
     this.attempted.add(reference);

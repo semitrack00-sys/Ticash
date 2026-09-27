@@ -1,8 +1,10 @@
+import { ownerData, ownerWhere, ownerFromDb, recipientOwnerKey, transactionOwnerKey } from '../flupflap/owner.js';
 import { decodeOperatorId } from './provider-identity.js';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
   MobileTopUpKind,
+  MobileTopUpProduct,
   MobileTopUpProviderName,
   MobileTopUpPaymentStatus,
   MobileTopUpPaymentMethod,
@@ -27,6 +29,7 @@ export interface SavedTopUpRecipientRecord {
 }
 
 export interface MobileTopUpQuoteRecord {
+  productSnapshot?: MobileTopUpProduct;
   provider?: MobileTopUpProviderName;
   providerProductId?: string;
   id: string;
@@ -92,6 +95,7 @@ export interface MobileTopUpRepository {
   completePaymentEvent(eventId: string): Promise<void>;
   getTransactionByIdempotency(userId: string, key: string): Promise<MobileTopUpTransactionRecord | undefined>;
   getTransaction(userId: string, id: string): Promise<MobileTopUpTransactionRecord | undefined>;
+  listFlupFlapTransactions(offset: number): Promise<MobileTopUpTransactionRecord[]>;
   listTransactions(userId: string): Promise<MobileTopUpTransactionRecord[]>;
   updateTransaction(id: string, input: TransactionUpdate): Promise<MobileTopUpTransactionRecord>;
   postDeliveredLedger(record: MobileTopUpTransactionRecord): Promise<void>;
@@ -237,6 +241,10 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     return [...transactions.values()].find((item) => item.userId === userId && item.idempotencyKey === key);
   }
 
+  async listFlupFlapTransactions(offset: number) {
+    return [...transactions.values()].filter(item => item.userId.startsWith('flupflap:'))
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(offset,offset+100);
+  }
   async listTransactions(userId: string) {
     return [...transactions.values()]
       .filter((item) => item.userId === userId)
@@ -265,8 +273,9 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 }
 
 function quoteFromDb(record: {
+  productSnapshot?: Prisma.JsonValue | null;
   provider?: MobileTopUpProviderName; providerProductId?: string | null;
-  id: string; userId: string; countryCode: string; recipientPhone: string; operatorId: number; operatorName: string;
+  id: string; userId: string | null; flupFlapCustomerId?: string | null; countryCode: string; recipientPhone: string; operatorId: number; operatorName: string;
   productId: string; productName: string; kind: MobileTopUpKind; providerAmount: Prisma.Decimal;
   providerCurrency: string; deliveredValue: Prisma.Decimal | null; deliveredCurrency: string;
   feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; expiresAt: Date; consumedAt: Date | null; createdAt: Date;
@@ -275,7 +284,8 @@ function quoteFromDb(record: {
     id: record.id,
     provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
     providerProductId: record.providerProductId ?? undefined,
-    userId: record.userId,
+    productSnapshot: record.productSnapshot ? record.productSnapshot as unknown as MobileTopUpProduct : undefined,
+    userId: ownerFromDb(record),
     countryCode: record.countryCode,
     recipientPhone: record.recipientPhone,
     operatorId: record.operatorId,
@@ -296,8 +306,9 @@ function quoteFromDb(record: {
 }
 
 function transactionFromDb(record: {
+  productSnapshot?: Prisma.JsonValue | null;
   provider?: MobileTopUpProviderName; providerProductId?: string | null;
-  id: string; userId: string; recipientId: string | null; quoteId: string; providerTransactionId: string | null;
+  id: string; userId: string | null; flupFlapCustomerId?: string | null; recipientId: string | null; quoteId: string; providerTransactionId: string | null;
   operatorTransactionId: string | null; customIdentifier: string; idempotencyKey: string; requestHash: string;
   status: MobileTopUpStatus; paymentStatus: MobileTopUpPaymentStatus; paymentAuthorizationId: string | null;
   countryCode: string; recipientPhone: string; operatorId: number; operatorName: string; productId: string; productName: string;
@@ -315,7 +326,8 @@ function transactionFromDb(record: {
     id: record.id,
     provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
     providerProductId: record.providerProductId ?? undefined,
-    userId: record.userId,
+    productSnapshot: record.productSnapshot ? record.productSnapshot as unknown as MobileTopUpProduct : undefined,
+    userId: ownerFromDb(record),
     quoteId: record.quoteId,
     recipientId: record.recipientId ?? undefined,
     providerTransactionId: record.providerTransactionId ?? undefined,
@@ -408,9 +420,10 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async listRecipients(userId: string) {
-    const records = await this.prisma.mobileTopUpRecipient.findMany({ where: { userId }, orderBy: { updatedAt: 'desc' } });
+    const records = await this.prisma.mobileTopUpRecipient.findMany({ where: ownerWhere(userId), orderBy: { updatedAt: 'desc' } });
     return records.map((item) => ({
       ...item,
+      userId: ownerFromDb(item),
       countryCode: item.countryCode,
       provider: item.provider ?? undefined,
       operatorId: item.operatorId ?? undefined,
@@ -424,12 +437,13 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async saveRecipient(input: Omit<SavedTopUpRecipientRecord, 'id' | 'createdAt' | 'updatedAt'>) {
     const record = await this.prisma.mobileTopUpRecipient.upsert({
-      where: { userId_phone_countryCode: { userId: input.userId, phone: input.phone, countryCode: input.countryCode } },
-      update: input,
-      create: input,
+      where: recipientOwnerKey(input.userId, input.phone, input.countryCode),
+      update: { ...input, ...ownerData(input.userId) },
+      create: { ...input, ...ownerData(input.userId) },
     });
     return {
       ...record,
+      userId: ownerFromDb(record),
       countryCode: record.countryCode,
       provider: record.provider ?? undefined,
       operatorId: record.operatorId ?? undefined,
@@ -442,12 +456,14 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async updateRecipientLastUsed(userId: string, id: string, productId: string, productName: string) {
-    await this.prisma.mobileTopUpRecipient.updateMany({ where: { id, userId }, data: { lastProductId: productId, lastProductName: productName } });
+    await this.prisma.mobileTopUpRecipient.updateMany({ where: { id, ...ownerWhere(userId) }, data: { lastProductId: productId, lastProductName: productName } });
   }
 
   async createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>) {
     const record = await this.prisma.mobileTopUpQuote.create({ data: {
       ...input,
+      ...ownerData(input.userId),
+      productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
       provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
       testMode: true,
       expiresAt: new Date(input.expiresAt),
@@ -457,31 +473,33 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async getQuote(userId: string, id: string) {
-    const record = await this.prisma.mobileTopUpQuote.findFirst({ where: { id, userId } });
+    const record = await this.prisma.mobileTopUpQuote.findFirst({ where: { id, ...ownerWhere(userId) } });
     return record ? quoteFromDb(record) : undefined;
   }
 
   async markQuoteConsumed(userId: string, id: string, when: string) {
     const result = await this.prisma.mobileTopUpQuote.updateMany({
-      where: { id, userId, consumedAt: null }, data: { consumedAt: new Date(when) },
+      where: { id, ...ownerWhere(userId), consumedAt: null }, data: { consumedAt: new Date(when) },
     });
     if (result.count === 0) throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote was already submitted', 409);
   }
 
   async reserveTransaction(input: MobileTopUpTransactionRecord) {
     const existing = await this.prisma.mobileTopUpTransaction.findUnique({
-      where: { userId_idempotencyKey: { userId: input.userId, idempotencyKey: input.idempotencyKey } },
+      where: transactionOwnerKey(input.userId, input.idempotencyKey),
     });
     if (existing) return { record: transactionFromDb(existing), created: false };
     try {
       const record = await this.prisma.$transaction(async (tx) => {
         const claimed = await tx.mobileTopUpQuote.updateMany({
-          where: { id: input.quoteId, userId: input.userId, consumedAt: null, expiresAt: { gt: new Date(input.createdAt) } },
+          where: { id: input.quoteId, ...ownerWhere(input.userId), consumedAt: null, expiresAt: { gt: new Date(input.createdAt) } },
           data: { consumedAt: new Date(input.createdAt) },
         });
         if (claimed.count !== 1) throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote is no longer available', 409);
         return tx.mobileTopUpTransaction.create({ data: {
           ...input,
+      ...ownerData(input.userId),
+          productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
           provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
           testMode: true,
           paymentStartedAt: input.paymentStartedAt ? new Date(input.paymentStartedAt) : null,
@@ -500,8 +518,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     } catch (error) {
       if ((error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') ||
           (error instanceof MobileTopUpError && error.code === 'TOPUP_QUOTE_ALREADY_USED')) {
-        const replay = await this.prisma.mobileTopUpTransaction.findUnique({ where: { userId_idempotencyKey: { userId: input.userId, idempotencyKey: input.idempotencyKey } } });
-        if (replay?.userId === input.userId && replay.idempotencyKey === input.idempotencyKey) {
+        const replay = await this.prisma.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
+        if (replay && ownerFromDb(replay) === input.userId && replay.idempotencyKey === input.idempotencyKey) {
           return { record: transactionFromDb(replay), created: false };
         }
         throw new MobileTopUpError('TOPUP_QUOTE_ALREADY_USED', 'Recharge quote was already submitted', 409);
@@ -511,19 +529,22 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async getTransaction(userId: string, id: string) {
-    const record = await this.prisma.mobileTopUpTransaction.findFirst({ where: { id, userId } });
+    const record = await this.prisma.mobileTopUpTransaction.findFirst({ where: { id, ...ownerWhere(userId) } });
     return record ? transactionFromDb(record) : undefined;
   }
 
   async getTransactionByIdempotency(userId: string, key: string) {
     const record = await this.prisma.mobileTopUpTransaction.findUnique({
-      where: { userId_idempotencyKey: { userId, idempotencyKey: key } },
+      where: transactionOwnerKey(userId, key),
     });
     return record ? transactionFromDb(record) : undefined;
   }
 
+  async listFlupFlapTransactions(offset: number) {
+    return (await this.prisma.mobileTopUpTransaction.findMany({where:{flupFlapCustomerId:{not:null}},orderBy:{createdAt:'desc'},skip:offset,take:100})).map(transactionFromDb);
+  }
   async listTransactions(userId: string) {
-    const records = await this.prisma.mobileTopUpTransaction.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    const records = await this.prisma.mobileTopUpTransaction.findMany({ where: ownerWhere(userId), orderBy: { createdAt: 'desc' } });
     return records.map(transactionFromDb);
   }
 

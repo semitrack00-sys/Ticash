@@ -4,6 +4,7 @@ export interface PasswordResetEmailService {
     to: string;
     resetUrl: string;
     expiresAt: Date;
+    brand?: 'TiCash' | 'FlupFlap';
   }): Promise<void>;
 }
 
@@ -33,6 +34,7 @@ class ResendPasswordResetEmailService implements PasswordResetEmailService {
     to: string;
     resetUrl: string;
     expiresAt: Date;
+    brand?: 'TiCash' | 'FlupFlap';
   }): Promise<void> {
     const escapedResetUrl = input.resetUrl
       .replaceAll('&', '&amp;')
@@ -49,15 +51,15 @@ class ResendPasswordResetEmailService implements PasswordResetEmailService {
       body: JSON.stringify({
         from: this.from,
         to: input.to,
-        subject: 'Reset your TiCash password',
+        subject: `Reset your ${input.brand ?? 'TiCash'} password`,
         text: [
-          'We received a request to reset your TiCash password.',
+          `We received a request to reset your ${input.brand ?? 'TiCash'} password.`,
           `Use this link within 30 minutes: ${input.resetUrl}`,
           `This link expires at ${input.expiresAt.toISOString()}.`,
           'If you did not request this change, you can ignore this email.',
         ].join('\n\n'),
         html: [
-          '<p>We received a request to reset your TiCash password.</p>',
+          `<p>We received a request to reset your ${input.brand ?? 'TiCash'} password.</p>`,
           `<p><a href="${escapedResetUrl}">Reset your password</a></p>`,
           `<p>This link expires at ${input.expiresAt.toISOString()}.</p>`,
           '<p>If you did not request this change, you can ignore this email.</p>',

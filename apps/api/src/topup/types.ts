@@ -1,5 +1,6 @@
 export type MobileTopUpProviderName = 'RELOADLY' | 'DTONE' | 'DING';
 export type MobileTopUpEnvironment = 'sandbox';
+export type ProductClassification = 'AIRTIME' | 'DATA' | 'BUNDLE';
 export type MobileTopUpKind = 'AIRTIME' | 'DATA';
 export type MobileTopUpStatus = 'PENDING' | 'PROCESSING' | 'DELIVERED' | 'FAILED' | 'REFUNDED';
 export type MobileTopUpPaymentStatus = 'PENDING' | 'SESSION_CREATED' | 'AUTHORIZED' | 'CAPTURED' | 'FAILED' | 'VOID_PENDING' | 'VOIDED' | 'REFUND_PENDING' | 'REFUNDED';
@@ -63,6 +64,8 @@ export interface MobileTopUpOperator {
   countryCode: string;
   status: boolean;
   bundle: boolean;
+  data?: boolean;
+  combo?: boolean;
   denominationType: 'FIXED' | 'RANGE';
   senderCurrencyCode: string;
   destinationCurrencyCode: string;
@@ -77,7 +80,12 @@ export interface MobileTopUpOperator {
 export interface MobileTopUpProduct {
   provider?: MobileTopUpProviderName;
   providerProductId?: string;
-  classification?: 'AIRTIME' | 'DATA' | 'BUNDLE';
+  classification?: ProductClassification;
+  catalogVersion?: string;
+  description?: string;
+  benefits?: { type: 'DATA' | 'MINUTES' | 'SMS'; amount: number; unit: string }[];
+  validity?: { quantity: number; unit: string; semantics: 'SERVICE' | 'REDEMPTION' };
+  redemptionPeriodIso?: string;
   id: string;
   countryCode: string;
   operatorId: number;
@@ -90,9 +98,13 @@ export interface MobileTopUpProduct {
   amountType: 'FIXED' | 'RANGE';
   minimumAmount?: number;
   maximumAmount?: number;
+  /** Optional provider catalog constraints; increments are relative to minimumAmount. */
+  amountIncrement?: number;
+  amountPrecision?: number;
 }
 
 export interface ProviderTopUpRequest {
+  productSnapshot?: MobileTopUpProduct;
   provider?: MobileTopUpProviderName;
   productId?: string;
   providerProductId?: string;

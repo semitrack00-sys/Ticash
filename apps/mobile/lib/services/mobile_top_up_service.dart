@@ -4,9 +4,9 @@ import '../models/mobile_top_up.dart';
 import 'api_client.dart';
 
 class MobileTopUpService {
-  MobileTopUpService({Dio? dio}) : _dio = dio ?? ApiClient.instance.dio;
+  MobileTopUpService({Dio? dio, String basePath = '/mobile-topups'}) : _base = basePath, _dio = dio ?? ApiClient.instance.dio;
   final Dio _dio;
-  static const _base = '/mobile-topups';
+  final String _base;
 
   String _countryCode(String value) {
     final normalized = value.trim().toUpperCase();

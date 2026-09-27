@@ -533,7 +533,7 @@ model LedgerEntry {
 model MobileTopUpRecipient {
   provider        MobileTopUpProviderName?
   id              String                   @id @default(uuid())
-  userId          String
+  userId          String?
   nickname        String
   phone           String
   countryCode     String                   @default("HT")
@@ -543,17 +543,22 @@ model MobileTopUpRecipient {
   lastProductName String?
   createdAt       DateTime                 @default(now())
   updatedAt       DateTime                 @updatedAt
-  user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User? @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions    MobileTopUpTransaction[]
 
   @@unique([userId, phone, countryCode])
   @@index([userId, updatedAt])
+  flupFlapCustomerId String?
+  flupFlapCustomer FlupFlapCustomer? @relation(fields: [flupFlapCustomerId], references: [id], onDelete: Restrict)
+  @@index([flupFlapCustomerId, createdAt])
+  @@unique([flupFlapCustomerId, phone, countryCode])
 }
 
 model MobileTopUpQuote {
+  productSnapshot       Json?
   providerProductId     String?
   id                    String                   @id @default(uuid())
-  userId                String
+  userId                String?
   provider              MobileTopUpProviderName @default(RELOADLY)
   testMode              Boolean                  @default(true)
   countryCode           String                   @default("HT")
@@ -572,17 +577,21 @@ model MobileTopUpQuote {
   expiresAt             DateTime
   consumedAt            DateTime?
   createdAt             DateTime                 @default(now())
-  user                  User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user                  User? @relation(fields: [userId], references: [id], onDelete: Restrict)
   transaction           MobileTopUpTransaction?
 
   @@index([userId, createdAt])
   @@index([expiresAt, consumedAt])
+  flupFlapCustomerId String?
+  flupFlapCustomer FlupFlapCustomer? @relation(fields: [flupFlapCustomerId], references: [id], onDelete: Restrict)
+  @@index([flupFlapCustomerId, createdAt])
 }
 
 model MobileTopUpTransaction {
+  productSnapshot       Json?
   providerProductId     String?
   id                    String                    @id @default(uuid())
-  userId                String
+  userId                String?
   recipientId           String?
   quoteId               String                    @unique
   provider              MobileTopUpProviderName  @default(RELOADLY)
@@ -624,7 +633,7 @@ model MobileTopUpTransaction {
   deliveredAt           DateTime?
   failedAt              DateTime?
   refundedAt            DateTime?
-  user                  User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user                  User? @relation(fields: [userId], references: [id], onDelete: Restrict)
   recipient             MobileTopUpRecipient?     @relation(fields: [recipientId], references: [id], onDelete: SetNull)
   quote                 MobileTopUpQuote           @relation(fields: [quoteId], references: [id], onDelete: Restrict)
 
@@ -635,6 +644,10 @@ model MobileTopUpTransaction {
   @@index([paymentStatus, updatedAt])
   @@index([userId, createdAt])
   @@index([status, updatedAt])
+  flupFlapCustomerId String?
+  flupFlapCustomer FlupFlapCustomer? @relation(fields: [flupFlapCustomerId], references: [id], onDelete: Restrict)
+  @@index([flupFlapCustomerId, createdAt])
+  @@unique([flupFlapCustomerId, idempotencyKey])
 }
 
 // No raw webhook payloads, card data or payment session tokens are stored.
@@ -731,6 +744,9 @@ model AuditLog {
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
+  flupFlapCustomerId String?
+  flupFlapCustomer FlupFlapCustomer? @relation(fields: [flupFlapCustomerId], references: [id], onDelete: SetNull)
+  @@index([flupFlapCustomerId, createdAt])
 }
 
 model ReconciliationRun {
@@ -770,4 +786,49 @@ model IdempotencyKey {
   responseBody Json?
   expiresAt    DateTime
   createdAt    DateTime @default(now())
+}
+
+// SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
+model FlupFlapCustomer {
+  authVersion Int @default(0)
+  id String @id @default(uuid())
+  email String? @unique
+  passwordHash String?
+  emailVerifiedAt DateTime?
+  phone String? @unique
+  phoneVerifiedAt DateTime?
+  status String @default("ACTIVE")
+  rechargeRestricted Boolean @default(false)
+  countryCode String?
+  guestExpiresAt DateTime?
+  failedLoginAttempts Int @default(0)
+  loginLockedUntil DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastLoginAt DateTime?
+  sessions FlupFlapSession[]
+  passwordResetTokens FlupFlapPasswordResetToken[]
+  recipients MobileTopUpRecipient[]
+  quotes MobileTopUpQuote[]
+  transactions MobileTopUpTransaction[]
+  auditLogs AuditLog[]
+}
+model FlupFlapSession {
+  authVersion Int @default(0)
+  id String @id @default(uuid())
+  customerId String
+  refreshHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  @@index([customerId])
+}
+model FlupFlapPasswordResetToken {
+  id String @id @default(uuid())
+  customerId String
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  @@index([customerId])
 }

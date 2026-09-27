@@ -1,3 +1,4 @@
+import { assertSameProduct } from './product-catalog.js';
 import { createHash } from 'node:crypto';
 import isoCountries from 'i18n-iso-countries';
 import { DTONE_PREPROD_URL, type DtOneConfig } from './dtone-config.js';
@@ -35,6 +36,26 @@ function supportsRequiredFields(raw: Doc) {
   const credit = raw.required_credit_party_identifier_fields;
   return credit === null || (Array.isArray(credit) && credit.some(group => Array.isArray(group) && group.length === 1 && group[0] === 'mobile_number'));
 }
+function productMetadata(raw: Doc): Pick<MobileTopUpProduct, 'description' | 'benefits' | 'validity'> {
+  const result: Pick<MobileTopUpProduct, 'description' | 'benefits' | 'validity'> = {};
+  if (raw.description != null) result.description = name(raw.description);
+  if (raw.benefits != null) {
+    if (!Array.isArray(raw.benefits)) return invalid();
+    result.benefits = raw.benefits.flatMap(value => {
+      const b = doc(value); const type = b.type === 'TALKTIME' ? 'MINUTES' : b.type;
+      if (!['DATA', 'MINUTES', 'SMS'].includes(String(type))) return [];
+      const amount = doc(b.amount).total_excluding_tax;
+      if (typeof amount !== 'number' || !Number.isFinite(amount) || (amount < 0 && amount !== -1) || typeof b.unit !== 'string' || !/^[A-Z_]{1,24}$/.test(b.unit)) return invalid();
+      return [{ type: type as 'DATA' | 'MINUTES' | 'SMS', amount, unit: b.unit }];
+    });
+  }
+  if (raw.validity != null) {
+    const v = doc(raw.validity);
+    if (typeof v.quantity !== 'number' || !Number.isInteger(v.quantity) || (v.quantity <= 0 && v.quantity !== -1) || !['HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR'].includes(String(v.unit))) return invalid();
+    result.validity = { quantity: v.quantity, unit: String(v.unit), semantics: 'SERVICE' };
+  }
+  return result;
+}
 export function mapDtOneProduct(value: unknown, country: string, operatorId: number): MobileTopUpProduct | undefined {
   const raw = doc(value);
   const service = doc(raw.service);
@@ -56,7 +77,7 @@ export function mapDtOneProduct(value: unknown, country: string, operatorId: num
   const classification = Number(doc(service.subservice).id) === 11 ? 'AIRTIME' : Number(doc(service.subservice).id) === 12 ? 'BUNDLE' : 'DATA';
   return { id: `dtone:${country}:${encodeOperatorId('DTONE', operatorId)}:product:${id}`,
     provider: 'DTONE', providerProductId: String(id), countryCode: country, operatorId,
-    kind: classification === 'AIRTIME' ? 'AIRTIME' : 'DATA', classification, name: name(raw.name),
+    kind: classification === 'AIRTIME' ? 'AIRTIME' : 'DATA', classification, name: name(raw.name), ...productMetadata(raw),
     price: source.amount, priceCurrency: 'USD', amountType: 'FIXED', deliveredValue,
     deliveredCurrency: currencyDestination ? String(destination.unit) : '' };
 }
@@ -157,6 +178,7 @@ export class DtOnePreproductionProvider implements MobileTopUpProvider {
         product.price !== input.amount || product.priceCurrency !== input.providerCurrency) {
       throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'The quoted product is no longer available on the same terms', 400);
     }
+    if (input.productSnapshot) assertSameProduct(input.productSnapshot, { ...product, operatorId: input.productSnapshot.operatorId });
     // Deterministic 40-character reference; the existing Reloadly identifier is unchanged.
     const externalId = createHash('sha256').update(input.customIdentifier).digest('hex').slice(0, 40);
     const result = doc((await this.request('async/transactions', { external_id: externalId,

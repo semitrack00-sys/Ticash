@@ -223,7 +223,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
     await request(app).get('/api/mobile-topups/status').set(headers).expect(200);
     await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
     await request(app).get('/api/admin/session').set(headers).expect(403);
-    const quoted = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
+    const quoted = await quote(app, headers);
     expect(quoted.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
     const purchased = await request(app).post('/api/mobile-topups/transactions').set(headers)
       .set('Idempotency-Key', 'guest-purchase-test').send({ quoteId: quoted.body.quote.id }).expect(201);
@@ -418,7 +418,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
     await request(app).post('/api/mobile-topups/quotes').set(headers).send({
       countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00', feeUsd: 0, totalChargeUsd: 5,
     }).expect(400);
-    const response = await quote(app, headers, { countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00' });
+    const response = await quote(app, headers);
     expect(response.body.quote).toMatchObject({ providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
   });
 
@@ -488,7 +488,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
     ]);
   });
 
-  it('exposes only approved grid products for RANGE operators within provider bounds', async () => {
+  it('exposes a RANGE catalog product and enforces provider amount bounds', async () => {
     const provider = new TestProvider();
     provider.operatorsByCountry.set('JM', [jamaicaRangeOperator]);
     provider.operatorsById.set(jamaicaRangeOperator.id, jamaicaRangeOperator);
@@ -497,14 +497,28 @@ describe('Worldwide mobile recharge sandbox API', () => {
     const headers = await auth(app, 'range');
 
     const products = await request(app).get('/api/mobile-topups/operators/88/products?country=JM').set(headers).expect(200);
-    expect(products.body.products.map((product: { price: number }) => product.price)).toEqual([5, 10, 20, 30, 50]);
-    expect(products.body.products.map((product: { id: string }) => product.id)).not.toContain('reloadly:JM:88:airtime:15.00');
+    expect(products.body.products).toHaveLength(1);
+    expect(products.body.products[0]).toMatchObject({
+      id: 'reloadly:JM:88:airtime:range',
+      amountType: 'RANGE',
+      minimumAmount: 5,
+      maximumAmount: 60,
+    });
 
     await request(app).post('/api/mobile-topups/quotes').set(headers).send({
       countryCode: 'JM',
       phone: '+18765551234',
       operatorId: 88,
-      productId: 'reloadly:JM:88:airtime:15.00',
+      productId: 'reloadly:JM:88:airtime:range',
+      amount: 15,
+    }).expect(201);
+
+    await request(app).post('/api/mobile-topups/quotes').set(headers).send({
+      countryCode: 'JM',
+      phone: '+18765551234',
+      operatorId: 88,
+      productId: 'reloadly:JM:88:airtime:range',
+      amount: 61,
     }).expect(400);
   });
 
@@ -531,7 +545,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
       operatorId: 88,
       amount: 25,
     }).expect(201);
-    expect(custom.body.quote).toMatchObject({ providerAmount: 25, feeUsd: 1.49, totalChargeUsd: 26.49, productId: 'custom:25.00' });
+    expect(custom.body.quote).toMatchObject({ providerAmount: 25, feeUsd: 1.49, totalChargeUsd: 26.49, productId: 'reloadly:JM:88:airtime:range' });
 
     await request(rangeApp).post('/api/mobile-topups/quotes').set(rangeHeaders).send({
       countryCode: 'JM',

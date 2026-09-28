@@ -10,6 +10,13 @@ export interface StripeConfig {
   failureUrl?: string;
 }
 
+const approvedReturnOrigins = new Set([
+  'https://ticash-app.com',
+  'https://www.ticash-app.com',
+  'https://flupflap.com',
+  'https://www.flupflap.com',
+]);
+
 interface StripeStartupDiagnostics {
   secretKeyPresent: boolean;
   secretKeyTestPrefix: boolean;
@@ -37,6 +44,13 @@ function stripeStartupDiagnostics(config: StripeConfig): StripeStartupDiagnostic
 function stripeValidationError(message: string, config: StripeConfig): Error {
   const diagnostics = stripeStartupDiagnostics(config);
   return new Error(`${message} diagnostics=${JSON.stringify(diagnostics)}`);
+}
+
+function validateAllowedReturnUrl(value: string, config: StripeConfig) {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search || !approvedReturnOrigins.has(url.origin)) {
+    throw stripeValidationError('Stripe redirects must target approved TiCash or FlupFlap HTTPS origins without credentials or query strings', config);
+  }
 }
 
 export function loadStripeConfig(env: NodeJS.ProcessEnv = process.env): StripeConfig {
@@ -72,9 +86,6 @@ export function validateStripeConfig(config: StripeConfig, { strict = true }: { 
     throw stripeValidationError('Stripe requires complete test credentials, webhook secret and redirect URLs', config);
   }
   for (const value of (config.enabled ? [config.successUrl, config.failureUrl].filter(Boolean) : [])) {
-    const url = new URL(value!);
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) {
-      throw stripeValidationError('Stripe redirects require server-configured HTTPS URLs without credentials or query strings', config);
-    }
+    validateAllowedReturnUrl(value!, config);
   }
 }

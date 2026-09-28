@@ -7,8 +7,8 @@ const completeStripeEnv = {
   STRIPE_SECRET_KEY: 'sk_test_fixture_secret',
   STRIPE_PUBLIC_KEY: 'pk_test_fixture_public',
   STRIPE_WEBHOOK_SECRET: 'whsec_fixture_signing_key',
-  STRIPE_SUCCESS_URL: 'https://website.example/success',
-  STRIPE_FAILURE_URL: 'https://website.example/failure',
+  STRIPE_SUCCESS_URL: 'https://ticash-app.com/success',
+  STRIPE_FAILURE_URL: 'https://flupflap.com/failure',
 } as const;
 
 describe('stripe config loading', () => {
@@ -67,7 +67,7 @@ describe('stripe config loading', () => {
       loadStripeConfig({
         ...completeStripeEnv,
         MOBILE_TOPUP_PAYMENT_MODE: 'stripe_sandbox',
-        STRIPE_SUCCESS_URL: 'https://website.example/success?token=bad',
+        STRIPE_SUCCESS_URL: 'https://ticash-app.com/success?token=bad',
       });
       throw new Error('Expected redirect URL validation to fail');
     } catch (error) {

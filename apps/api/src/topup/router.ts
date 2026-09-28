@@ -1,4 +1,5 @@
 import express, { type Request, type RequestHandler, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { MobileTopUpService } from './service.js';
 import { MobileTopUpError } from './types.js';
@@ -42,6 +43,18 @@ const guestPaymentSessionSchema = purchaseSchema.extend({
   billingCountry: z.string().regex(/^[A-Za-z]{2}$/).transform(value => value.toUpperCase()).optional(),
 });
 
+const checkoutResumeSchema = z.object({
+  resumeToken: z.string().regex(/^[A-Za-z0-9_-]{43,512}$/),
+}).strict();
+
+const checkoutResumeLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { code: 'RATE_LIMITED', error: 'Too many checkout resume requests' },
+});
+
 export function createMobileTopUpRouter(options: {
   authenticate: RequestHandler;
   requireFundingAllowed: RequestHandler;
@@ -52,6 +65,11 @@ export function createMobileTopUpRouter(options: {
 }) {
   const router = express.Router();
   const protectedRoute = [options.authenticate, options.requireFundingAllowed];
+
+  router.post('/checkout-resume', checkoutResumeLimit, asyncRoute(async (req, res) => {
+    const { resumeToken } = checkoutResumeSchema.parse(req.body);
+    res.json({ transaction: await options.service.resumeCheckout(resumeToken) });
+  }));
 
   router.get('/payment-methods', ...protectedRoute, asyncRoute(async (req, res) => {
     res.json(options.service.paymentMethods(await options.isGuest(req.userId!)));

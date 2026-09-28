@@ -1,8 +1,9 @@
 import { decodeOperatorId } from './provider-identity.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import type {
   MobileTopUpConfig,
+  MobileTopUpCheckoutResumeDto,
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
   MobileTopUpProvider,
@@ -361,6 +362,18 @@ export class MobileTopUpService {
     return createHash('sha256').update(JSON.stringify({ userId, quoteId, recipientId: recipientId ?? null })).digest('hex');
   }
 
+  private checkoutResumeTokenHash(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private checkoutResumeTokenExpiresAt() {
+    return new Date(this.clock().getTime() + this.config.quoteTtlSeconds * 1000).toISOString();
+  }
+
+  private makeCheckoutResumeToken() {
+    return randomBytes(32).toString('base64url');
+  }
+
   private async reservePayment(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
     this.assertEnabled();
     if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
@@ -509,21 +522,27 @@ export class MobileTopUpService {
       }
 
       if (reserved.paymentSessionId) {
-        throw new MobileTopUpError(
-          'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
-          'This Stripe payment session was already created; do not create another attempt',
-          409,
-        );
+        const existing = await this.stripeProvider.getHostedCheckoutSession(reserved.paymentSessionId);
+        const current = await this.repository.getTransaction(userId, reserved.id);
+        if (!current) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+        return {
+          ...this.stripeProvider.flowContract(current.id, existing),
+          amountMinor: usdMinorUnits(current.totalChargeUsd),
+          currency: 'USD',
+          paymentStatus: current.paymentStatus,
+        };
       }
 
       if (!await this.repository.claimOperation(reserved.id, 'payment', this.clock().toISOString())) {
         const current = await this.repository.getTransaction(userId, reserved.id);
         if (current?.paymentSessionId) {
-          throw new MobileTopUpError(
-            'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
-            'This Stripe payment session was already created; do not create another attempt',
-            409,
-          );
+          const existing = await this.stripeProvider.getHostedCheckoutSession(current.paymentSessionId);
+          return {
+            ...this.stripeProvider.flowContract(current.id, existing),
+            amountMinor: usdMinorUnits(current.totalChargeUsd),
+            currency: 'USD',
+            paymentStatus: current.paymentStatus,
+          };
         }
         throw new MobileTopUpError(
           'PAYMENT_SESSION_IN_PROGRESS',
@@ -532,13 +551,17 @@ export class MobileTopUpService {
         );
       }
 
-      let paymentSession: Record<string, unknown>;
+      const resumeToken = this.makeCheckoutResumeToken();
+      const checkoutResumeTokenHash = this.checkoutResumeTokenHash(resumeToken);
+      const checkoutResumeTokenExpiresAt = this.checkoutResumeTokenExpiresAt();
+      let paymentSession: { id: string; url: string };
       try {
         paymentSession = await this.stripeProvider.createPaymentSession({
           transactionId: reserved.id,
           amountMinor: usdMinorUnits(reserved.totalChargeUsd),
           currency: 'USD',
           billingCountry: country,
+          resumeToken,
         });
       } catch (error) {
         await this.repository.updateTransaction(reserved.id, { paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN' });
@@ -547,19 +570,19 @@ export class MobileTopUpService {
         throw new MobileTopUpError('PAYMENT_SESSION_CREATION_UNKNOWN', 'Stripe payment session creation requires reconciliation', 502);
       }
 
-      const sessionId = typeof paymentSession.id === 'string' ? paymentSession.id : '';
-      if (!/^pi_[A-Za-z0-9_]+$/.test(sessionId)) {
+      if (!/^cs_test_[A-Za-z0-9_]+$/.test(paymentSession.id)) {
         throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
       }
 
       await this.repository.updateTransaction(reserved.id, {
-        paymentSessionId: sessionId,
+        paymentSessionId: paymentSession.id,
+        checkoutResumeTokenHash,
+        checkoutResumeTokenExpiresAt,
         paymentStatus: 'SESSION_CREATED',
       });
       await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'STRIPE', testMode: true });
       return {
         ...this.stripeProvider.flowContract(reserved.id, paymentSession),
-        testMode: true,
         amountMinor: usdMinorUnits(reserved.totalChargeUsd),
         currency: 'USD',
         paymentStatus: 'SESSION_CREATED',
@@ -571,6 +594,30 @@ export class MobileTopUpService {
       'Stripe Sandbox is not enabled',
       503,
     );
+  }
+
+  async resumeCheckout(resumeToken: string): Promise<MobileTopUpCheckoutResumeDto> {
+    this.assertEnabled();
+    if (!/^[A-Za-z0-9_-]{43,512}$/.test(resumeToken)) {
+      throw new MobileTopUpError('INVALID_RESUME_TOKEN', 'Invalid checkout resume token', 400);
+    }
+    const record = await this.repository.getTransactionByCheckoutResumeTokenHash(this.checkoutResumeTokenHash(resumeToken));
+    if (!record) throw new MobileTopUpError('RESUME_TOKEN_NOT_FOUND', 'Checkout resume token was not found', 404);
+    if (!record.checkoutResumeTokenExpiresAt || new Date(record.checkoutResumeTokenExpiresAt) <= this.clock()) {
+      throw new MobileTopUpError('RESUME_TOKEN_EXPIRED', 'Checkout resume token has expired', 410);
+    }
+    // Construct the public DTO explicitly so new repository fields cannot leak by default.
+    return {
+      status: record.status,
+      testMode: record.testMode,
+      recipientPhone: record.recipientPhone,
+      operatorName: record.operatorName,
+      productName: record.productName,
+      providerAmount: record.providerAmount,
+      providerCurrency: record.providerCurrency,
+      feeUsd: record.feeUsd,
+      totalChargeUsd: record.totalChargeUsd,
+    };
   }
 
   async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
@@ -675,18 +722,28 @@ export class MobileTopUpService {
 
     const record = await this.repository.getTransactionById(event.transactionId);
     const hostedProvider = record?.paymentProvider === 'STRIPE';
-    if (!record || !hostedProvider || !record.paymentSessionId) {
+    if (!record || !hostedProvider || !record.paymentSessionId || record.paymentSessionId !== event.checkoutSessionId) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
     const paymentIdMismatch = record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId;
-    const ignoreNonSuccessStripeFollowUp = event.type !== 'payment_intent.succeeded' && ['SESSION_CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'FAILED'].includes(record.paymentStatus);
-    if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' ||
-        (paymentIdMismatch && !ignoreNonSuccessStripeFollowUp)) {
+    if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' || paymentIdMismatch) {
       throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event did not match the reserved recharge', 409);
     }
     if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id)) return;
 
+    // Checkout completion can precede payment for delayed methods. A signed
+    // event is authoritative only when it explicitly confirms the session paid.
+    if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type) &&
+        event.paymentStatus !== 'paid') {
+      await this.repository.completePaymentEvent(event.eventId);
+      return;
+    }
+
     const transitionMap = {
+      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'checkout.session.async_payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'checkout.session.expired': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
       'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },

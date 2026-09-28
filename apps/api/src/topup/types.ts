@@ -13,9 +13,42 @@ export interface PaymentSessionInput {
   currency: 'USD';
 }
 
-// Hosted sessions and server authorization are separate capabilities.
+export interface HostedCheckoutSession {
+  id: string;
+  url: string;
+}
+
+export interface HostedCheckoutSessionBaseContract {
+  provider: 'STRIPE';
+  environment: 'SANDBOX';
+  testMode: true;
+  transactionId: string;
+  checkoutSession: HostedCheckoutSession;
+}
+
+export interface HostedCheckoutSessionContract extends HostedCheckoutSessionBaseContract {
+  amountMinor: number;
+  currency: 'USD';
+  paymentStatus: MobileTopUpPaymentStatus;
+}
+
+// Public capability response: explicit customer-facing fields, never an internal record.
+export interface MobileTopUpCheckoutResumeDto {
+  status: MobileTopUpStatus;
+  testMode: true;
+  recipientPhone: string;
+  operatorName: string;
+  productName: string;
+  providerAmount: number;
+  providerCurrency: string;
+  feeUsd: number;
+  totalChargeUsd: number;
+}
+
 export interface MobileTopUpSessionProvider {
-  createPaymentSession(input: PaymentSessionInput): Promise<Record<string, unknown>>;
+  createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string }): Promise<HostedCheckoutSession>;
+  getHostedCheckoutSession(paymentSessionId: string): Promise<HostedCheckoutSession>;
+  flowContract(transactionId: string, checkoutSession: HostedCheckoutSession): HostedCheckoutSessionBaseContract;
 }
 
 export interface MobileTopUpPaymentQuery {
@@ -98,7 +131,6 @@ export interface MobileTopUpProduct {
   amountType: 'FIXED' | 'RANGE';
   minimumAmount?: number;
   maximumAmount?: number;
-  /** Optional provider catalog constraints; increments are relative to minimumAmount. */
   amountIncrement?: number;
   amountPrecision?: number;
 }
@@ -132,7 +164,6 @@ export interface ProviderCoverage {
   environment: 'SANDBOX';
   uniqueCountries: number;
   providers: { provider: MobileTopUpProviderName; enabled: boolean; countries: number; reason?: string }[];
-  /** Sorted unique countries supported by at least two enabled, available providers. */
   overlapCountries: string[];
   reloadlyOnlyCountries: string[];
   dtoneOnlyCountries: string[];
@@ -186,6 +217,67 @@ export class MockMobileTopUpPaymentProvider implements MobileTopUpPaymentProvide
     };
   }
 }
+
+export interface MobileTopUpQuoteRecord {
+  productSnapshot?: MobileTopUpProduct;
+  provider?: MobileTopUpProviderName;
+  providerProductId?: string;
+  id: string;
+  userId: string;
+  countryCode: string;
+  recipientPhone: string;
+  operatorId: number;
+  operatorName: string;
+  productId: string;
+  productName: string;
+  kind: MobileTopUpKind;
+  providerAmount: number;
+  providerCurrency: string;
+  deliveredValue?: number;
+  deliveredCurrency: string;
+  feeUsd: number;
+  totalChargeUsd: number;
+  expiresAt: string;
+  consumedAt?: string;
+  createdAt: string;
+}
+
+export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecord, 'expiresAt' | 'consumedAt'> {
+  quoteId: string;
+  recipientId?: string;
+  providerTransactionId?: string;
+  operatorTransactionId?: string;
+  customIdentifier: string;
+  idempotencyKey: string;
+  requestHash: string;
+  status: MobileTopUpStatus;
+  paymentStatus: MobileTopUpPaymentStatus;
+  paymentAuthorizationId?: string;
+  paymentMethod?: MobileTopUpPaymentMethod;
+  paymentProvider?: MobileTopUpPaymentProviderName;
+  paymentSessionId?: string;
+  paymentProviderTransactionId?: string;
+  checkoutResumeTokenHash?: string;
+  checkoutResumeTokenExpiresAt?: string;
+  paymentStartedAt?: string;
+  fulfillmentStartedAt?: string;
+  recoveryStartedAt?: string;
+  paymentRecoveryCode?: string;
+  providerStatus?: string;
+  failureCode?: string;
+  testMode: true;
+  updatedAt: string;
+  deliveredAt?: string;
+  failedAt?: string;
+  refundedAt?: string;
+}
+
+export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
+    'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
+    'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
+    'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
+    'paymentProvider' | 'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
+    'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
 
 export class MobileTopUpError extends Error {
   constructor(

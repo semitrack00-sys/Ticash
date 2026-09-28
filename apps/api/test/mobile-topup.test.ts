@@ -155,8 +155,8 @@ async function withStripeSandboxEnvironment<T>(run: () => Promise<T>): Promise<T
   process.env.STRIPE_SECRET_KEY = 'sk_test_topup_guest';
   process.env.STRIPE_PUBLIC_KEY = 'pk_test_topup_guest';
   process.env.STRIPE_WEBHOOK_SECRET = 'whsec_topup_guest';
-  process.env.STRIPE_SUCCESS_URL = 'https://ticash.test/topup/success';
-  process.env.STRIPE_FAILURE_URL = 'https://ticash.test/topup/failure';
+  process.env.STRIPE_SUCCESS_URL = 'https://ticash-app.com/topup/success';
+  process.env.STRIPE_FAILURE_URL = 'https://flupflap.com/topup/failure';
   try {
     return await run();
   } finally {

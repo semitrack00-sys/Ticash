@@ -1,59 +1,151 @@
 import { createHmac } from 'node:crypto';
 import request from 'supertest';
-import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
 import { MemoryMobileTopUpRepository } from '../src/topup/repository.js';
 import { MobileTopUpService } from '../src/topup/service.js';
-import { MobileTopUpError, MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpPaymentProvider, type MobileTopUpProvider } from '../src/topup/types.js';
-import { loadCheckoutConfig } from '../src/topup/checkout-config.js';
-import { CheckoutSandboxPaymentProvider, paymentReference } from '../src/topup/checkout-provider.js';
-import { createCheckoutWebhookHandler, verifyCheckoutEvent } from '../src/topup/checkout-webhook.js';
-import { usdMinorUnits } from '../src/topup/payment-utils.js';
+import { MobileTopUpError, MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpPaymentProvider, type MobileTopUpProvider, type MobileTopUpOperator } from '../src/topup/types.js';
+import { loadStripeConfig } from '../src/topup/stripe-config.js';
+import { StripeSandboxPaymentProvider } from '../src/topup/stripe-provider.js';
+import { verifyStripeEvent } from '../src/topup/stripe-webhook.js';
 
 const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId:'fixture', clientSecret:'fixture',
   authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com', billingCurrency:'USD',
-  feeUsd:'3.50', quoteTtlSeconds:300, paymentMode:'mock', productionEnabled:false, approvedForLiveUse:false };
-const checkoutEnv = { CHECKOUT_COM_ENABLED:'true', CHECKOUT_COM_ENVIRONMENT:'sandbox', CHECKOUT_COM_API_BASE_URL:'https://abcdefgh.api.sandbox.checkout.com',
-  CHECKOUT_COM_PROCESSING_CHANNEL_ID:'pc_abcdefghijklmnopqrstuvwxyz',
-  CHECKOUT_COM_SECRET_KEY:'sk_sbox_fixture_secret', CHECKOUT_COM_PUBLIC_KEY:'pk_sbox_fixture_public', CHECKOUT_COM_WEBHOOK_SECRET:'fixture-signing-key',
-  CHECKOUT_COM_SUCCESS_URL:'https://website.example/success', CHECKOUT_COM_FAILURE_URL:'https://website.example/failure' };
+  quoteTtlSeconds:300, paymentMode:'mock', productionEnabled:false, approvedForLiveUse:false };
+const approvedRechargeGrid = [
+  [5, 0.99, 5.99],
+  [10, 1.25, 11.25],
+  [20, 1.49, 21.49],
+  [30, 1.99, 31.99],
+  [50, 2.49, 52.49],
+  [75, 3.49, 78.49],
+  [100, 4.49, 104.49],
+] as const;
 const operator = { id:77,name:'Fixture operator',countryCode:'JM',status:true,bundle:false,denominationType:'FIXED' as const,
-  senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',fixedAmounts:[5],localFixedAmounts:[800],fixedAmountsPlanNames:{},localFixedAmountsPlanNames:{} };
+  senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',fixedAmounts:[5,10,20,30,50,75,100],localFixedAmounts:[800,1300,2400,3500,5700,8200,10800],fixedAmountsPlanNames:{},localFixedAmountsPlanNames:{} };
 const quoteInput = { countryCode:'JM',phone:'+18765551234',operatorId:77,productId:'reloadly:JM:77:airtime:5.00' };
-function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymentProvider()) {
+const quoteInputFor = (amount: number) => ({ countryCode:'JM', phone:'+18765551234', operatorId:77, productId:`reloadly:JM:77:airtime:${amount.toFixed(2)}` });
+const rangeOperator = { ...operator, denominationType: 'RANGE' as const, fixedAmounts: [], localFixedAmounts: [], minAmount: 5, maxAmount: 100 };
+function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymentProvider(), overrideOperator: MobileTopUpOperator = operator) {
   const submit = vi.fn(async () => ({transactionId:'reloadly-fixture',status:'PROCESSING',requestedAmount:5,requestedAmountCurrencyCode:'USD'}));
-  const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[operator],
-    getOperator:async()=>operator,detectOperator:async()=>operator,submitTopUp:submit,
+  const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[overrideOperator],
+    getOperator:async()=>overrideOperator,detectOperator:async()=>overrideOperator,submitTopUp:submit,
     getTopUpStatus:async()=>({transactionId:'reloadly-fixture',status:'SUCCESSFUL',requestedAmount:5,requestedAmountCurrencyCode:'USD'}) };
   const repository = new MemoryMobileTopUpRepository();const audit=vi.fn(async()=>{});
   const service=new MobileTopUpService(config,provider,payment,repository,audit);
   return {service,repository,provider,submit,audit};
 }
-function event(transactionId: string, type = 'payment_captured', id = 'evt_test1', amount = 850) {
-  const raw=Buffer.from(JSON.stringify({id,type,data:{id:'pay_fixture1',reference:paymentReference(transactionId),amount,currency:'USD'}}));
-  const signature=createHmac('sha256',checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET).update(raw).digest('hex');
-  return {raw,signature,verified:()=>verifyCheckoutEvent(raw,signature,checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET)};
-}
-async function hosted(f=fixture()) {
-  const quote=await f.service.createQuote('customer',quoteInput);
-  const session=await f.service.createPaymentSession('customer',{quoteId:quote.id},'session-key-001');
-  await f.repository.updateTransaction(session.transactionId,{paymentProvider:'CHECKOUT_COM',paymentSessionId:'ps_fixture1'});
-  return {...f,quote,session};
-}
 beforeEach(()=>{resetStore();vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('Real provider HTTP is forbidden in tests');}));});
 afterEach(()=>vi.unstubAllGlobals());
 
 describe('sandbox payment foundation',()=>{
+  it.each(['DATA', 'BUNDLE'] as const)('quotes provider-backed $12 %s products without restricting them to legacy anchors', async classification => {
+    const f = fixture();
+    f.provider.getOperator = async () => ({ ...operator, data: classification === 'DATA', bundle: classification === 'BUNDLE',
+      fixedAmounts: [12], localFixedAmounts: [], fixedAmountsPlanNames: { '12': 'Provider plan' } });
+    const { products } = await f.service.products('JM', 77);
+    expect(products).toHaveLength(1);
+    const product = products[0]!;
+    expect(product).toMatchObject({ classification, price: 12, amountType: 'FIXED' });
+    const input = { ...quoteInput, productId: product.id, catalogVersion: product.catalogVersion };
+    const quote = await f.service.createQuote('customer', input);
+    expect(quote).toMatchObject({ providerAmount: 12, feeUsd: 1.25, totalChargeUsd: 13.25, productSnapshot: product });
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, `fixed-plan-${classification}`);
+    expect(session.amountMinor).toBe(1325);
+    await expect(f.service.createQuote('customer', { ...input, amount: 12 })).rejects.toMatchObject({ code: 'INVALID_TOPUP_AMOUNT' });
+    await expect(f.service.createQuote('customer', { ...input, catalogVersion: 'stale' })).rejects.toMatchObject({ code: 'TOPUP_CATALOG_CHANGED' });
+    f.provider.getOperator = async () => ({ ...operator, data: classification === 'DATA', bundle: classification === 'BUNDLE',
+      fixedAmounts: [12], localFixedAmounts: [], fixedAmountsPlanNames: { '12': 'Changed provider plan' } });
+    // The earlier reservation still must revalidate its locked snapshot before fulfillment.
+    await expect(f.service.purchase('customer', { quoteId: quote.id }, `fixed-plan-${classification}`)).rejects.toMatchObject({ code: 'TOPUP_REJECTED' });
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+  it('rejects fabricated fixed products and fixed catalog prices outside policy', async () => {
+    const f = fixture();
+    await expect(f.service.createQuote('customer', quoteInputFor(12))).rejects.toMatchObject({ code: 'TOPUP_PRODUCT_UNAVAILABLE' });
+    f.provider.getOperator = async () => ({ ...operator, fixedAmounts: [4.99, 100.01], localFixedAmounts: [] });
+    expect((await f.service.products('JM', 77)).products).toEqual([]);
+    for (const amount of [4.99, 100.01]) {
+      await expect(f.service.createQuote('customer', quoteInputFor(amount))).rejects.toMatchObject({ code: 'TOPUP_PRODUCT_UNAVAILABLE' });
+    }
+  });
+  it('honors provider range increments and precision and locks those rules in the snapshot', async () => {
+    const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
+    const range = (await f.service.products('JM', 77)).products[0]!;
+    let current = { ...range, minimumAmount: 5.25, maximumAmount: 20.25, price: 5.25, amountIncrement: 0.5, amountPrecision: 2 };
+    f.provider.listProducts = async () => [current];
+    const input = { ...quoteInput, productId: range.id };
+    const quote = await f.service.createQuote('customer', { ...input, amount: 12.25 });
+    expect(quote).toMatchObject({ providerAmount: 12.25, feeUsd: 1.25, totalChargeUsd: 13.5 });
+    for (const amount of [5, 20.75, 12.5, 12.251, 4.99, 100.01]) {
+      await expect(f.service.createQuote('customer', { ...input, amount })).rejects.toMatchObject({ code: 'INVALID_TOPUP_AMOUNT' });
+    }
+    current = { ...current, amountIncrement: 1 };
+    await expect(f.service.createPaymentSession('customer', { quoteId: quote.id }, 'changed-range-rule')).rejects.toMatchObject({ code: 'TOPUP_QUOTE_CHANGED' });
+    current = { ...current, price: 5, minimumAmount: 5, maximumAmount: 20, amountIncrement: 0.1, amountPrecision: 0 };
+    await expect(f.service.createQuote('customer', { ...input, amount: 12.1 })).rejects.toMatchObject({ code: 'INVALID_TOPUP_AMOUNT' });
+    expect((await f.service.createQuote('customer', { ...input, amount: 12 })).totalChargeUsd).toBe(13.25);
+    current = { ...current, amountIncrement: 0 };
+    await expect(f.service.products('JM', 77)).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' });
+    expect(f.submit).not.toHaveBeenCalled();
+  });
   it('reserves a server-priced mock session and completes the existing purchase contract',async()=>{
     const f=fixture();const quote=await f.service.createQuote('customer',quoteInput);
-    expect(quote).toMatchObject({providerAmount:5,feeUsd:3.5,totalChargeUsd:8.5});
+    expect(quote).toMatchObject({providerAmount:5,feeUsd:0.99,totalChargeUsd:5.99});
     const session=await f.service.createPaymentSession('customer',{quoteId:quote.id},'session-key-001');
-    expect(session).toMatchObject({provider:'MOCK',environment:'SANDBOX',amountMinor:850,currency:'USD',paymentStatus:'SESSION_CREATED'});
+    expect(session).toMatchObject({provider:'MOCK',environment:'SANDBOX',amountMinor:599,currency:'USD',paymentStatus:'SESSION_CREATED'});
     expect(f.submit).not.toHaveBeenCalled();
     const receipt=await f.service.purchase('customer',{quoteId:quote.id},'session-key-001');
     expect(receipt).toMatchObject({id:session.transactionId,paymentMethod:'CARD',paymentProvider:'MOCK',paymentStatus:'AUTHORIZED',status:'PROCESSING'});
     expect(receipt.paymentSessionId).toBe(session.paymentSession.id);expect(receipt.paymentAuthorizationId).toBeTruthy();expect(f.submit).toHaveBeenCalledTimes(1);
+  });
+  it.each(approvedRechargeGrid)('uses the approved TiCash fee grid for $%s recharge', async (amount, fee, total) => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInputFor(amount));
+    expect(quote).toMatchObject({ providerAmount: amount, feeUsd: fee, totalChargeUsd: total });
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, `grid-session-${amount}`);
+    expect(session.amountMinor).toBe(Math.round(total * 100));
+  });
+  it.each([
+    [5, 0.99],
+    [7, 0.99],
+    [10, 1.25],
+    [14, 1.25],
+    [19, 1.25],
+    [20, 1.49],
+    [23, 1.49],
+    [30, 1.99],
+    [35, 1.99],
+    [40, 1.99],
+    [50, 2.49],
+    [75, 3.49],
+    [95, 3.49],
+    [100, 4.49],
+  ])('calculates the authoritative backend fee for custom USD amount $%s as $%s', async (amount, fee) => {
+    const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
+    const quote = await f.service.createQuote('customer', { ...quoteInput, operatorId: rangeOperator.id, productId: 'reloadly:JM:77:airtime:range', amount });
+    expect(quote).toMatchObject({ providerAmount: amount, feeUsd: fee, totalChargeUsd: Number((amount + fee).toFixed(2)), providerCurrency: 'USD' });
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, `custom-session-${amount}`);
+    expect(session.amountMinor).toBe(Math.round((amount + fee) * 100));
+  });
+  it.each([
+    4.99,
+    100.01,
+    0,
+    -5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    35.005,
+  ])('rejects invalid custom recharge amount %s', async (amount) => {
+    const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
+    await expect(f.service.createQuote('customer', { ...quoteInput, productId: 'reloadly:JM:77:airtime:range', amount })).rejects.toMatchObject({ statusCode: 400 });
+  });
+  it('preserves the authoritative Stripe total for custom amounts', async () => {
+    const f = fixture(new MockMobileTopUpPaymentProvider(), rangeOperator);
+    const quote = await f.service.createQuote('customer', { ...quoteInput, operatorId: rangeOperator.id, productId: 'reloadly:JM:77:airtime:range', amount: 40 });
+    expect(quote).toMatchObject({ providerAmount: 40, feeUsd: 1.99, totalChargeUsd: 41.99 });
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'custom-stripe-total');
+    expect(session.amountMinor).toBe(4199);
   });
   it('survives concurrent session and purchase retries across service instances',async()=>{
     const f=fixture();const second=new MobileTopUpService(config,f.provider,new MockMobileTopUpPaymentProvider(),f.repository,f.audit);
@@ -149,111 +241,220 @@ describe('payment routes and guest restrictions',()=>{
     }
     await request(app).post('/api/mobile-topups/payment-sessions').auth(token,{type:'bearer'}).send({quoteId:quoted.body.quote.id}).expect(400);
     const response=await request(app).post('/api/mobile-topups/payment-sessions').auth(token,{type:'bearer'}).set('Idempotency-Key','safe-key-123').send({quoteId:quoted.body.quote.id}).expect(201);
-    expect(response.body.amountMinor).toBe(850);expect(f.submit).not.toHaveBeenCalled();
+    expect(response.body.amountMinor).toBe(599);expect(f.submit).not.toHaveBeenCalled();
     expect(JSON.stringify(response.body)).not.toMatch(/secret|cardNumber|cvv|accountNumber|routingNumber/);
-    await request(app).post('/api/webhooks/checkout').send({}).expect(503);
   });
 });
 
-describe('Checkout.com sandbox adapter',()=>{
-  it('is disabled by default with no guessed URL',()=>{expect(loadCheckoutConfig({})).toMatchObject({enabled:false,environment:'sandbox',apiBaseUrl:undefined});});
-  for(const [field,value] of [['CHECKOUT_COM_ENVIRONMENT','production'],['CHECKOUT_COM_API_BASE_URL','https://abcdefgh.api.checkout.com'],
-    ['CHECKOUT_COM_API_BASE_URL','https://abcdefgh.api.sandbox.checkout.com.evil.test'],['CHECKOUT_COM_API_BASE_URL','https://user:pass@abcdefgh.api.sandbox.checkout.com'],
-    ['CHECKOUT_COM_API_BASE_URL','https://abcdefgh.api.sandbox.checkout.com/path'],['CHECKOUT_COM_SECRET_KEY',''],['CHECKOUT_COM_PUBLIC_KEY',''],['CHECKOUT_COM_WEBHOOK_SECRET',''],
-    ['CHECKOUT_COM_PROCESSING_CHANNEL_ID',''],['CHECKOUT_COM_PROCESSING_CHANNEL_ID','invalid-channel']]) {
-    it(`fails closed for invalid ${field}: ${value || '(missing)'}`,()=>{expect(()=>loadCheckoutConfig({...checkoutEnv,[field]:value})).toThrow();});
-  }
-  it('uses only configured sandbox HTTP and preserves the Flow session response unchanged',async()=>{
-    const session={id:'ps_fixture1',payment_session_token:'fixture-client-token',_links:{self:{href:'https://abcdefgh.api.sandbox.checkout.com/payment-sessions/ps_fixture1'}}};
-    const transport=vi.fn(async()=>new Response(JSON.stringify(session),{status:201}));
-    const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),transport);
-    const id='11111111-1111-4111-8111-111111111111';const result=await adapter.createPaymentSession({transactionId:id,amountMinor:usdMinorUnits(8.5),currency:'USD',billingCountry:'US'});
-    expect(result).toEqual(session);expect(transport).toHaveBeenCalledTimes(1);
-    const call=transport.mock.calls[0] as unknown as [string,RequestInit];expect(call[0]).toBe(checkoutEnv.CHECKOUT_COM_API_BASE_URL+'/payment-sessions');
-    expect(call[1]).toMatchObject({redirect:'error',method:'POST',headers:{Authorization:`Bearer ${checkoutEnv.CHECKOUT_COM_SECRET_KEY}`}});
-    expect(JSON.parse(call[1].body as string)).toMatchObject({amount:850,currency:'USD',reference:paymentReference(id),processing_channel_id:checkoutEnv.CHECKOUT_COM_PROCESSING_CHANNEL_ID,billing:{address:{country:'US'}},enabled_payment_methods:['card']});
-    const contract=adapter.flowContract(id,result);expect(contract.paymentSession).toBe(result);expect(contract.publicKey).toBe(checkoutEnv.CHECKOUT_COM_PUBLIC_KEY);
-    expect(JSON.stringify(contract)).not.toContain(checkoutEnv.CHECKOUT_COM_SECRET_KEY);expect(JSON.stringify(contract)).not.toContain(checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET);
-  });
-  it('does not issue HTTP when disabled or required billing context is absent',async()=>{
-    const transport=vi.fn();const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig({}),transport);
-    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:850,currency:'USD',billingCountry:'US'})).rejects.toMatchObject({code:'CHECKOUT_DISABLED'});
-    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:850,currency:'USD'})).rejects.toMatchObject({code:'INVALID_PAYMENT_SESSION'});
-    expect(transport).not.toHaveBeenCalled();
-  });
-  it('rejects leaked server secrets and suppresses provider error details',async()=>{
-    const transport=vi.fn(async()=>new Response(JSON.stringify({id:'ps_fixture1',payment_session_token:'token',secret_key:checkoutEnv.CHECKOUT_COM_SECRET_KEY}),{status:201}));
-    const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),transport);
-    await expect(adapter.createPaymentSession({transactionId:'11111111-1111-4111-8111-111111111111',amountMinor:850,currency:'USD',billingCountry:'US'})).rejects.toMatchObject({message:'Unsafe payment session response'});
-    transport.mockRejectedValue(new Error(checkoutEnv.CHECKOUT_COM_SECRET_KEY));
-    await expect(adapter.getPayment('pay_fixture1')).rejects.toMatchObject({message:'Checkout.com request needs reconciliation'});
-  });
-  it('202 recovery requests remain pending and do not claim confirmed refunds',async()=>{
-    const adapter=new CheckoutSandboxPaymentProvider(loadCheckoutConfig(checkoutEnv),vi.fn(async()=>new Response('{}',{status:202})));
-    const input={transactionId:'11111111-1111-4111-8111-111111111111',paymentId:'pay_fixture1',amountMinor:850};
-    expect(await adapter.void(input)).toBe('VOID_PENDING');expect(await adapter.refund(input)).toBe('REFUND_PENDING');expect(await adapter.capture(input)).toBe('PENDING');
-  });
-});
+describe('Stripe sandbox flow',()=>{
+  const stripeEnv = {
+    STRIPE_ENABLED: 'true',
+    STRIPE_ENVIRONMENT: 'sandbox',
+    STRIPE_SECRET_KEY: 'sk_test_fixture_secret',
+    STRIPE_PUBLIC_KEY: 'pk_test_fixture_public',
+    STRIPE_WEBHOOK_SECRET: 'whsec_fixture_signing_key',
+    STRIPE_SUCCESS_URL: 'https://website.example/success',
+    STRIPE_FAILURE_URL: 'https://website.example/failure',
+  } as const;
 
-describe('verified webhook fulfillment',()=>{
-  it('rejects unsigned, wrong-key, tampered and non-raw payloads before fulfillment',async()=>{
-    const f=await hosted();const e=event(f.session.transactionId);
-    for(const signature of [undefined,'invalid','0'.repeat(64)]) expect(()=>verifyCheckoutEvent(e.raw,signature,checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET)).toThrow();
-    expect(()=>verifyCheckoutEvent(Buffer.concat([e.raw,Buffer.from(' ')]),e.signature,checkoutEnv.CHECKOUT_COM_WEBHOOK_SECRET)).toThrow();
-    expect(()=>verifyCheckoutEvent(e.raw,e.signature,'wrong-key')).toThrow();
-    await expect(f.service.acceptVerifiedPaymentEvent({} as never)).rejects.toMatchObject({statusCode:401});expect(f.submit).not.toHaveBeenCalled();
-  });
-  it('authorization alone cannot fulfill; captures and duplicate events fulfill only once',async()=>{
-    const f=await hosted();await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_approved','evt_authorized').verified());
-    expect(f.submit).not.toHaveBeenCalled();
-    await f.service.purchase('customer',{quoteId:f.quote.id},'session-key-001');expect(f.submit).not.toHaveBeenCalled();
-    const e=event(f.session.transactionId);await Promise.all(Array.from({length:12},()=>f.service.acceptVerifiedPaymentEvent(e.verified())));
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_captured','evt_second').verified());
-    expect(f.submit).toHaveBeenCalledTimes(1);expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({paymentStatus:'CAPTURED',paymentProviderTransactionId:'pay_fixture1',providerTransactionId:'reloadly-fixture'});
-  });
-  it('rejects price mismatches, event ID reuse and provider/transaction mismatch',async()=>{
-    const f=await hosted();await expect(f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_captured','evt_bad',1).verified())).rejects.toMatchObject({code:'PAYMENT_EVENT_MISMATCH'});
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_approved','evt_reused').verified());
-    await expect(f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_captured','evt_reused').verified())).rejects.toMatchObject({code:'PAYMENT_EVENT_CONFLICT'});
-    expect(f.submit).not.toHaveBeenCalled();
-  });
-  it('payment failure prevents fulfillment and stale authorization cannot regress capture',async()=>{
-    const f=await hosted();await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_declined','evt_declined').verified());
-    expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({status:'FAILED',paymentStatus:'FAILED'});expect(f.submit).not.toHaveBeenCalled();
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_captured','evt_late').verified());expect(f.submit).not.toHaveBeenCalled();
-  });
-  it('hosted payment followed by failed recharge stays REFUND_PENDING until a verified refund',async()=>{
-    const f=await hosted();f.submit.mockResolvedValue({transactionId:'reloadly-fixture',status:'FAILED',requestedAmount:5,requestedAmountCurrencyCode:'USD'});
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId).verified());
-    expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({paymentStatus:'REFUND_PENDING',status:'FAILED'});
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_refunded','evt_refund').verified());
-    expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({paymentStatus:'REFUNDED',paymentRecoveryCode:'RECOVERY_CONFIRMED'});
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_captured','evt_latecapture').verified());expect(f.submit).toHaveBeenCalledTimes(1);
-  });
-  it('a concurrent confirmed refund cannot be downgraded by recovery',async()=>{
-    const f=await hosted();f.submit.mockResolvedValue({transactionId:'reloadly-fixture',status:'FAILED',requestedAmount:5,requestedAmountCurrencyCode:'USD'});
-    const original=f.repository.transitionPayment.bind(f.repository);
-    vi.spyOn(f.repository,'transitionPayment').mockImplementation(async(id,from,input)=>{
-      if(input.paymentStatus==='REFUND_PENDING') {
-        await original(id,['CAPTURED'],{paymentStatus:'REFUNDED',paymentRecoveryCode:'RECOVERY_CONFIRMED'});
-      }
-      return original(id,from,input);
+  function stripeResponse(body: Record<string, unknown>) {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
     });
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId).verified());
-    expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({paymentStatus:'REFUNDED',paymentRecoveryCode:'RECOVERY_CONFIRMED'});
+  }
+
+  function transportRequest(transport: ReturnType<typeof vi.fn>, index = 0) {
+    const [url, init] = transport.mock.calls[index] as [string, RequestInit];
+    return {
+      url,
+      init,
+      headers: init.headers as Record<string, string>,
+      body: typeof init.body === 'string' ? init.body : '',
+    };
+  }
+
+  function stripeFixture(transport = vi.fn(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))) {
+    const submit = vi.fn(async () => ({
+      transactionId: 'reloadly-fixture',
+      status: 'PROCESSING',
+      requestedAmount: 5,
+      requestedAmountCurrencyCode: 'USD',
+    }));
+
+    const provider: MobileTopUpProvider = {
+      listCountries: async () => [{ code: 'JM', name: 'Jamaica' }],
+      listOperators: async () => [operator],
+      getOperator: async () => operator,
+      detectOperator: async () => operator,
+      submitTopUp: submit,
+      getTopUpStatus: async () => ({
+        transactionId: 'reloadly-fixture',
+        status: 'SUCCESSFUL',
+        requestedAmount: 5,
+        requestedAmountCurrencyCode: 'USD',
+      }),
+    };
+
+    const service = new MobileTopUpService(
+      { ...config, paymentMode: 'stripe_sandbox' },
+      provider,
+      new MockMobileTopUpPaymentProvider(),
+      new MemoryMobileTopUpRepository(),
+      vi.fn(async () => {}),
+      undefined,
+      new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport),
+    );
+
+    return { service, provider, submit, transport };
+  }
+
+  it('keeps Stripe Sandbox card enabled for guests while preserving billing-country validation', async () => {
+    const f = stripeFixture();
+    const invalidQuote = await f.service.createQuote('customer', quoteInput);
+    expect(f.service.paymentMethods(true).methods).toContainEqual({
+      type: 'CARD',
+      enabled: true,
+      provider: 'STRIPE',
+      testMode: true,
+      label: 'Test card - Stripe Sandbox',
+    });
+    expect(f.service.paymentMethods(false).methods).toContainEqual({
+      type: 'CARD',
+      enabled: true,
+      provider: 'STRIPE',
+      testMode: true,
+      label: 'Test card - Stripe Sandbox',
+    });
+    await expect(f.service.createPaymentSession('customer', { quoteId: invalidQuote.id }, 'guest-stripe-session-001')).rejects.toMatchObject({ code: 'BILLING_COUNTRY_REQUIRED' });
+    const validQuote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: validQuote.id }, 'guest-stripe-session-002', 'US');
+    expect(session).toMatchObject({ provider: 'STRIPE', paymentStatus: 'SESSION_CREATED', amountMinor: 599, currency: 'USD' });
+  });
+
+  it('creates a Stripe payment intent with form-encoded Stripe REST parameters and blocks browser tampering', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-001', 'US');
+    expect(session).toMatchObject({
+      provider: 'STRIPE',
+      environment: 'SANDBOX',
+      paymentStatus: 'SESSION_CREATED',
+      amountMinor: 599,
+      currency: 'USD',
+    });
+    expect(session.paymentSession).toMatchObject({ id: 'pi_fixture_123', client_secret: expect.any(String) });
+    expect(session.paymentSession).not.toHaveProperty('secret');
+    expect(f.submit).not.toHaveBeenCalled();
+
+    expect(f.transport).toHaveBeenCalledTimes(1);
+    const request = transportRequest(f.transport);
+    expect(request.url).toBe('https://api.stripe.com/v1/payment_intents');
+    expect(request.init.method).toBe('POST');
+    expect(request.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(request.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(request.body).toContain('amount=599');
+    expect(request.body).toContain('currency=usd');
+    expect(new URLSearchParams(request.body).get('description')).toBe(`TiCash recharge ${session.transactionId}`);
+    expect(new URLSearchParams(request.body).get('metadata[transactionId]')).toBe(session.transactionId);
+    expect(request.body).toContain('metadata%5BbillingCountry%5D=US');
+    expect(request.body).toContain('automatic_payment_methods%5Benabled%5D=true');
+    expect(request.body).not.toContain('return_url');
+    expect(request.body).not.toContain(encodeURIComponent(stripeEnv.STRIPE_SECRET_KEY));
+    expect(request.body).not.toContain(encodeURIComponent(stripeEnv.STRIPE_WEBHOOK_SECRET));
+    expect(JSON.stringify(session)).not.toContain(stripeEnv.STRIPE_SECRET_KEY);
+    expect(JSON.stringify(session)).not.toContain(stripeEnv.STRIPE_WEBHOOK_SECRET);
+    expect(JSON.stringify(session)).not.toContain(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+  });
+
+  it('form-encodes capture, cancel and refund Stripe requests with header-only authorization', async () => {
+    const transport = vi
+      .fn(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'requires_capture' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'canceled' }))
+      .mockImplementationOnce(async () => stripeResponse({ id: 're_fixture_123', status: 'pending' }));
+    const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
+
+    await provider.createPaymentSession({ transactionId: 'tx-capture-1', amountMinor: 599, currency: 'USD', billingCountry: 'US' });
+    await provider.capture({ paymentId: 'pi_fixture_123', transactionId: 'tx-capture-1', amountMinor: 599 });
+    await provider.void({ paymentId: 'pi_fixture_123', transactionId: 'tx-capture-1' });
+    await provider.refund({ paymentId: 'pi_fixture_123', transactionId: 'tx-refund-1', amountMinor: 599 });
+
+    const capture = transportRequest(transport, 1);
+    expect(capture.url).toBe('https://api.stripe.com/v1/payment_intents/pi_fixture_123/capture');
+    expect(capture.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(capture.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(capture.body).toBe('amount_to_capture=599');
+    expect(capture.body).not.toContain('{');
+
+    const cancel = transportRequest(transport, 2);
+    expect(cancel.url).toBe('https://api.stripe.com/v1/payment_intents/pi_fixture_123/cancel');
+    expect(cancel.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(cancel.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(cancel.body).toBe('');
+
+    const refund = transportRequest(transport, 3);
+    expect(refund.url).toBe('https://api.stripe.com/v1/refunds');
+    expect(refund.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(refund.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
+    expect(refund.body).toContain('payment_intent=pi_fixture_123');
+    expect(refund.body).toContain('amount=599');
+    expect(refund.body).not.toContain('{');
+  });
+
+  it('requires a verified Stripe signature and rejects invalid payloads before fulfillment', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-002', 'US');
+    const payload = JSON.stringify({
+      id: 'evt_test_stripe_1',
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_fixture_123',
+          amount_received: 599,
+          currency: 'usd',
+          status: 'succeeded',
+          metadata: { transactionId: session.transactionId },
+        },
+      },
+    });
+    const raw = Buffer.from(payload, 'utf8');
+    const signed = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${Math.floor(Date.now() / 1000)}.${payload}`).digest('hex')}`;
+
+    expect(() => verifyStripeEvent(raw, undefined, stripeEnv.STRIPE_WEBHOOK_SECRET)).toThrow();
+    expect(() => verifyStripeEvent(raw, signed, 'wrong-secret')).toThrow();
+    expect(verifyStripeEvent(raw, signed, stripeEnv.STRIPE_WEBHOOK_SECRET)).toMatchObject({
+      eventId: 'evt_test_stripe_1',
+      paymentId: 'pi_fixture_123',
+      type: 'payment_intent.succeeded',
+      transactionId: session.transactionId,
+    });
+  });
+
+  it('only successful server-verified Stripe payments can trigger Reloadly fulfillment, and duplicates are ignored', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-003', 'US');
+    const rawSuccess = Buffer.from(JSON.stringify({
+      id: 'evt_stripe_success_1',
+      type: 'payment_intent.succeeded',
+      data: { object: { id: 'pi_stripe_success_1', amount_received: 599, currency: 'usd', status: 'succeeded', metadata: { transactionId: session.transactionId } } },
+    }));
+    const successSig = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${Math.floor(Date.now() / 1000)}.${rawSuccess.toString('utf8')}`).digest('hex')}`;
+
+    await f.service.acceptVerifiedPaymentEvent(verifyStripeEvent(rawSuccess, successSig, stripeEnv.STRIPE_WEBHOOK_SECRET));
     expect(f.submit).toHaveBeenCalledTimes(1);
-  });
-  for (const terminal of ['payment_refunded','payment_voided']) it(`${terminal} arriving before capture prevents later airtime`,async()=>{
-    const f=await hosted();await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,terminal,'evt_terminal').verified());
-    await f.service.acceptVerifiedPaymentEvent(event(f.session.transactionId,'payment_captured','evt_late').verified());
-    expect(f.submit).not.toHaveBeenCalled();expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe(terminal==='payment_refunded'?'REFUNDED':'VOIDED');
-  });
-  it('raw HTTP webhook handling verifies the signature without exposing the payload',async()=>{
-    const f=await hosted();const app=express();app.post('/webhook',express.raw({type:'application/json'}),createCheckoutWebhookHandler(loadCheckoutConfig(checkoutEnv),f.service));
-    app.use((error:Error & {statusCode?:number},_req:express.Request,res:express.Response,next:express.NextFunction)=>{void next;res.status(error.statusCode??500).json({error:error.message});});
-    const e=event(f.session.transactionId);
-    await request(app).post('/webhook').set('Content-Type','application/json').send(e.raw.toString()).expect(401);
-    await request(app).post('/webhook').set('Content-Type','application/json').set('Cko-Signature',e.signature).send(e.raw.toString()).expect(204);
+
+    const rawFailed = Buffer.from(JSON.stringify({
+      id: 'evt_stripe_failed_1',
+      type: 'payment_intent.payment_failed',
+      data: { object: { id: 'pi_stripe_failed_1', amount: 599, currency: 'usd', status: 'requires_payment_method', metadata: { transactionId: session.transactionId } } },
+    }));
+    const failedSig = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${Math.floor(Date.now() / 1000)}.${rawFailed.toString('utf8')}`).digest('hex')}`;
+    await expect(f.service.acceptVerifiedPaymentEvent(verifyStripeEvent(rawFailed, failedSig, stripeEnv.STRIPE_WEBHOOK_SECRET))).resolves.toBeUndefined();
     expect(f.submit).toHaveBeenCalledTimes(1);
   });
 });

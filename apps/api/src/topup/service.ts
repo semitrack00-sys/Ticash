@@ -1,18 +1,20 @@
+import { decodeOperatorId } from './provider-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import type {
   MobileTopUpConfig,
   MobileTopUpDestination,
-  MobileTopUpOperator,
   MobileTopUpPaymentProvider,
-  MobileTopUpProduct,
   MobileTopUpProvider,
   MobileTopUpStatus,
   ProviderTopUpResult,
 } from './types.js';
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
-import { assertVerifiedCheckoutEvent, type VerifiedCheckoutEvent } from './checkout-webhook.js';
+import { approvedRechargePrice } from './recharge-fee-grid.js';
+import { reloadlyProducts, normalizeProduct, assertSameProduct, assertProductAmount } from './product-catalog.js';
+import type { StripeSandboxPaymentProvider } from './stripe-provider.js';
+import { assertVerifiedStripeEvent, type VerifiedStripeEvent } from './stripe-webhook.js';
 import {
   normalizeTopUpCountryCode,
   normalizeTopUpPhone,
@@ -34,92 +36,76 @@ type AuditRecorder = (
 
 const countryCatalogCacheTtlMs = 60_000;
 
-function cents(value: number): number { return Math.round((value + Number.EPSILON) * 100) / 100; }
-
-function planName(operator: MobileTopUpOperator, amount: number): string | undefined {
-  const keys = [String(amount), amount.toFixed(2), amount.toFixed(1)];
-  for (const key of keys) {
-    const value = operator.fixedAmountsPlanNames[key] ?? operator.localFixedAmountsPlanNames[key];
-    if (value) return value;
-  }
-  return undefined;
-}
-
-export function productsFromOperator(operator: MobileTopUpOperator): MobileTopUpProduct[] {
-  const destinationCurrency = operator.destinationCurrencyCode.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(destinationCurrency)) return [];
-  if (operator.denominationType === 'RANGE') {
-    if (!operator.minAmount || !operator.maxAmount || operator.senderCurrencyCode !== 'USD') return [];
-    return [{
-      id: `reloadly:${operator.countryCode}:${operator.id}:airtime:range`,
-      countryCode: operator.countryCode,
-      operatorId: operator.id,
-      kind: 'AIRTIME',
-      name: `${operator.name} airtime`,
-      price: operator.minAmount,
-      priceCurrency: operator.senderCurrencyCode,
-      deliveredCurrency: destinationCurrency,
-      amountType: 'RANGE',
-      minimumAmount: operator.minAmount,
-      maximumAmount: operator.maxAmount,
-    }];
-  }
-  if (operator.senderCurrencyCode !== 'USD') return [];
-  return operator.fixedAmounts.map((amount, index) => {
-    const plan = planName(operator, amount);
-    const kind = plan || operator.bundle ? 'DATA' : 'AIRTIME';
-    const deliveredValue = operator.localFixedAmounts[index] ?? Number.NaN;
-    return {
-      id: `reloadly:${operator.countryCode}:${operator.id}:${kind.toLowerCase()}:${amount.toFixed(2)}`,
-      countryCode: operator.countryCode,
-      operatorId: operator.id,
-      kind,
-      name: plan ?? `${operator.name} ${amount.toFixed(2)} ${operator.senderCurrencyCode}`,
-      price: cents(amount),
-      priceCurrency: operator.senderCurrencyCode,
-      deliveredValue: Number.isFinite(deliveredValue) && deliveredValue > 0 ? deliveredValue : undefined,
-      deliveredCurrency: destinationCurrency,
-      amountType: 'FIXED',
-    } satisfies MobileTopUpProduct;
-  });
-}
+export const productsFromOperator = reloadlyProducts;
 
 function mapProviderStatus(value: string): MobileTopUpStatus {
   const status = value.toUpperCase();
   if (['SUCCESSFUL', 'DELIVERED', 'COMPLETED'].includes(status)) return 'DELIVERED';
-  if (['FAILED', 'REJECTED', 'CANCELLED'].includes(status)) return 'FAILED';
+  if (['FAILED', 'REJECTED', 'DECLINED', 'CANCELLED'].includes(status)) return 'FAILED';
   if (['REFUNDED', 'REVERSED'].includes(status)) return 'REFUNDED';
-  if (['PROCESSING', 'IN_PROGRESS'].includes(status)) return 'PROCESSING';
+  if (['PROCESSING', 'IN_PROGRESS', 'CONFIRMED', 'SUBMITTED'].includes(status)) return 'PROCESSING';
   return 'PENDING';
 }
 
 export class MobileTopUpService {
   private countriesCache?: { expiresAt: number; value: MobileTopUpDestination[]; key: string };
+  private readonly config: MobileTopUpConfig;
+  private readonly provider: MobileTopUpProvider;
+  private readonly paymentProvider: MobileTopUpPaymentProvider;
+  private readonly repository: MobileTopUpRepository;
+  private readonly audit: AuditRecorder;
+  private readonly clock: () => Date;
+  private readonly stripeProvider?: StripeSandboxPaymentProvider;
 
   constructor(
-    private readonly config: MobileTopUpConfig,
-    private readonly provider: MobileTopUpProvider,
-    private readonly paymentProvider: MobileTopUpPaymentProvider,
-    private readonly repository: MobileTopUpRepository,
-    private readonly audit: AuditRecorder,
-    private readonly clock: () => Date = () => new Date(),
-  ) {}
+    config: MobileTopUpConfig,
+    provider: MobileTopUpProvider,
+    paymentProvider: MobileTopUpPaymentProvider,
+    repository: MobileTopUpRepository,
+    audit: AuditRecorder,
+    clock: () => Date = () => new Date(),
+    stripeProvider?: StripeSandboxPaymentProvider,
+  ) {
+    this.config = config;
+    this.provider = provider;
+    this.paymentProvider = paymentProvider;
+    this.repository = repository;
+    this.audit = audit;
+    this.clock = clock;
+    this.stripeProvider = stripeProvider;
+  }
 
   availability() {
+    const providers = this.config.enabled ? this.provider.providerNames ?? [this.provider.name ?? 'RELOADLY'] : [];
     return {
       enabled: this.config.enabled,
       environment: 'SANDBOX',
       billingCurrency: this.config.billingCurrency,
-      provider: 'RELOADLY',
-      paymentMode: 'MOCK',
+      provider: providers.length === 1 ? providers[0] : providers.length ? 'MULTI_PROVIDER' : null,
+      providerMode: providers.length > 1 ? 'MULTI_PROVIDER' : providers.length ? 'SINGLE_PROVIDER' : 'DISABLED',
+      providers,
+      paymentMode: this.config.paymentMode === 'stripe_sandbox'
+        ? 'STRIPE_SANDBOX'
+        : 'MOCK',
       testMode: true,
-      supportedGeographicScope: 'Provider-supported Reloadly Sandbox catalog countries only',
+      supportedGeographicScope: 'Configured sandbox provider catalog countries only',
       supportedCountriesPath: '/api/mobile-topups/countries',
       productionEnabled: false,
       approvedForLiveUse: false,
       liveRechargeEnabled: false,
       recurringRechargeEnabled: false,
     };
+  }
+
+  async coverage() {
+    this.assertEnabled();
+    if (this.provider.coverage) return this.provider.coverage();
+    const countries = await this.listCountries();
+    const provider = this.provider.name ?? 'RELOADLY';
+    return { environment: 'SANDBOX', uniqueCountries: countries.length,
+      providers: [{ provider, enabled: true, countries: countries.length }],
+      overlapCountries: [], reloadlyOnlyCountries: provider === 'RELOADLY' ? countries.map(country => country.code) : [],
+      dtoneOnlyCountries: provider === 'DTONE' ? countries.map(country => country.code) : [] };
   }
 
   private countriesCacheKey() {
@@ -220,7 +206,7 @@ export class MobileTopUpService {
     return operator;
   }
 
-  async products(countryCode: string, operatorId: number) {
+  async products(countryCode: string, operatorId: number, classification?: 'AIRTIME' | 'DATA' | 'BUNDLE') {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operator = await this.provider.getOperator(operatorId);
@@ -234,7 +220,21 @@ export class MobileTopUpService {
     if (!operator.status) {
       throw new MobileTopUpError('TOPUP_OPERATOR_UNAVAILABLE', 'This recharge operator is unavailable', 404);
     }
-    return { operator, products: productsFromOperator(operator) };
+    const owner = decodeOperatorId(operatorId).provider;
+    if (operator.id !== operatorId || (operator.provider && operator.provider !== owner)) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Recharge operator identity did not match', 502);
+    }
+    const rawProducts = await this.provider.listProducts?.(normalizedCountry, operatorId) ?? productsFromOperator(operator);
+    if (!Array.isArray(rawProducts) || rawProducts.some(product => !product || typeof product.id !== 'string' || product.operatorId !== operatorId || product.countryCode !== normalizedCountry ||
+        (product.provider && product.provider !== owner) || !product.id.startsWith(`${owner.toLowerCase()}:${normalizedCountry}:${operatorId}:`) ||
+        product.priceCurrency !== 'USD' || !Number.isFinite(product.price) || product.price <= 0 ||
+        (owner !== 'RELOADLY' && !product.providerProductId))) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
+    }
+    const products = rawProducts.map(product => normalizeProduct({ ...product, provider: owner }))
+      .filter(product => product.price >= 5 && product.price <= 100 && (!classification || product.classification === classification));
+    if (new Set(products.map(p => p.id)).size !== products.length) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Duplicate provider product identity', 502);
+    return { operator: { ...operator, provider: owner }, products };
   }
 
   listRecipients(userId: string) { return this.repository.listRecipients(userId); }
@@ -272,6 +272,7 @@ export class MobileTopUpService {
       phone,
       countryCode,
       operatorId,
+      provider: operatorId === undefined ? undefined : decodeOperatorId(operatorId).provider,
       operatorName,
     });
     await this.audit(userId, 'MOBILE_TOPUP_RECIPIENT_SAVED', 'MobileTopUpRecipient', record.id, {
@@ -285,27 +286,33 @@ export class MobileTopUpService {
     countryCode: string;
     phone: string;
     operatorId: number;
-    productId: string;
+    productId?: string;
     amount?: number;
+    catalogVersion?: string;
   }): Promise<MobileTopUpQuoteRecord> {
     this.assertEnabled();
     const countryCode = normalizeTopUpCountryCode(input.countryCode);
     const phone = normalizeTopUpPhone(input.phone, countryCode);
     const { operator, products } = await this.products(countryCode, input.operatorId);
-    const product = products.find(
-      (item) => item.id === input.productId && normalizeTopUpCountryCode(item.countryCode) === countryCode,
-    );
-    if (!product) {
-      throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
+
+    const product = input.productId ? products.find(item => item.id === input.productId)
+      : products.find(item => item.amountType === 'RANGE' && item.classification === 'AIRTIME');
+    if (!product) throw new MobileTopUpError('TOPUP_PRODUCT_UNAVAILABLE', 'Select a product returned by the recharge provider', 400);
+    if ((input.catalogVersion !== undefined && input.catalogVersion !== product.catalogVersion) ||
+        (product.classification !== 'AIRTIME' && !input.catalogVersion)) {
+      throw new MobileTopUpError('TOPUP_CATALOG_CHANGED', 'Reload the catalog and review the current product', 409);
     }
     let amount = product.price;
     if (product.amountType === 'RANGE') {
-      if (!Number.isFinite(input.amount) || input.amount! < product.minimumAmount! || input.amount! > product.maximumAmount!) {
-        throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount is outside the provider-supported range', 400);
+      if (operator.denominationType !== 'RANGE' || product.classification !== 'AIRTIME' || input.amount === undefined) {
+        throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Enter an amount within the provider range', 400);
       }
-      amount = cents(input.amount!);
+      amount = input.amount;
+    } else if (input.amount !== undefined) {
+      throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
-    const fee = cents(Number(this.config.feeUsd));
+    assertProductAmount(product, amount);
+    const pricing = approvedRechargePrice(amount);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
       userId,
@@ -313,15 +320,18 @@ export class MobileTopUpService {
       recipientPhone: phone,
       operatorId: operator.id,
       operatorName: operator.name,
+      provider: operator.provider ?? decodeOperatorId(operator.id).provider,
+      providerProductId: product.providerProductId,
+      productSnapshot: product,
       productId: product.id,
       productName: product.name,
       kind: product.kind,
-      providerAmount: amount,
+      providerAmount: pricing.amountMinorUnits / 100,
       providerCurrency: product.priceCurrency,
       deliveredValue: product.deliveredValue,
       deliveredCurrency: product.deliveredCurrency,
-      feeUsd: fee,
-      totalChargeUsd: cents(amount + fee),
+      feeUsd: pricing.feeMinorUnits / 100,
+      totalChargeUsd: pricing.totalMinorUnits / 100,
       expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
     });
     await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {
@@ -331,6 +341,20 @@ export class MobileTopUpService {
       testMode: true,
     });
     return quote;
+  }
+
+  private async revalidateQuoteProduct(quote: MobileTopUpQuoteRecord | MobileTopUpTransactionRecord) {
+    const { products } = await this.products(quote.countryCode, quote.operatorId);
+    const current = products.find(p => p.id === quote.productId);
+    if (!current || current.provider !== quote.provider || current.providerProductId !== quote.providerProductId ||
+        current.kind !== quote.kind || current.priceCurrency !== quote.providerCurrency ||
+        (current.amountType === 'FIXED' ? current.price !== quote.providerAmount : quote.providerAmount < current.minimumAmount! || quote.providerAmount > current.maximumAmount!)) {
+      throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'The quoted product is no longer available on the same terms', 400);
+    }
+    // Legacy records lack a benefits snapshot; never fulfill unreviewed legacy data plans.
+    if (!quote.productSnapshot && current.classification !== 'AIRTIME') throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'This plan requires a new quote', 400);
+    if (quote.productSnapshot) assertSameProduct(quote.productSnapshot, current);
+    assertProductAmount(current, quote.providerAmount);
   }
 
   private requestHash(userId: string, quoteId: string, recipientId?: string) {
@@ -355,6 +379,7 @@ export class MobileTopUpService {
     if (quote.consumedAt || new Date(quote.expiresAt) <= timestamp) {
       throw new MobileTopUpError(quote.consumedAt ? 'TOPUP_QUOTE_ALREADY_USED' : 'TOPUP_QUOTE_EXPIRED', 'Recharge quote is no longer valid', 409);
     }
+    await this.revalidateQuoteProduct(quote);
     let savedRecipient: SavedTopUpRecipientRecord | undefined;
     if (input.recipientId) {
       savedRecipient = (await this.repository.listRecipients(userId)).find((item) => item.id === input.recipientId);
@@ -380,8 +405,12 @@ export class MobileTopUpService {
       status: 'PENDING',
       paymentStatus: 'PENDING',
       paymentMethod: 'CARD',
-      paymentProvider: 'MOCK',
-      paymentSessionId: 'mock-session:' + transactionId,
+      paymentProvider: this.config.paymentMode === 'stripe_sandbox'
+        ? 'STRIPE'
+        : 'MOCK',
+      paymentSessionId: this.config.paymentMode === 'mock'
+        ? 'mock-session:' + transactionId
+        : undefined,
       testMode: true,
       createdAt,
       updatedAt: createdAt,
@@ -397,24 +426,151 @@ export class MobileTopUpService {
   }
 
   paymentMethods(guest = false) {
+    const stripe = this.config.paymentMode === 'stripe_sandbox';
+    const stripeReady = stripe && Boolean(this.stripeProvider);
+    const cardEnabled = this.config.enabled &&
+      ((!stripe) || stripeReady);
+
+    const cardReason = !this.config.enabled
+      ? 'RECHARGE_DISABLED'
+      : stripe && !stripeReady
+        ? 'PROVIDER_NOT_CONFIGURED'
+        : undefined;
+
+    const providerName = stripe ? 'STRIPE' : 'MOCK';
+
     return { environment: 'SANDBOX', methods: [
-      { type: 'CARD', enabled: this.config.enabled, provider: 'MOCK', testMode: true, label: 'Test card — Sandbox' },
-      { type: 'APPLE_PAY', enabled: false, provider: 'CHECKOUT_COM', reason: 'PROVIDER_NOT_CONFIGURED' },
-      { type: 'GOOGLE_PAY', enabled: false, provider: 'CHECKOUT_COM', reason: 'PROVIDER_NOT_CONFIGURED' },
+      {
+        type: 'CARD',
+        enabled: cardEnabled,
+        provider: providerName,
+        testMode: true,
+        label: stripe ? 'Test card - Stripe Sandbox' : 'Test card — Sandbox',
+        ...(cardReason ? { reason: cardReason } : {}),
+      },
+      { type: 'APPLE_PAY', enabled: false, provider: providerName, reason: 'PROVIDER_NOT_CONFIGURED' },
+      { type: 'GOOGLE_PAY', enabled: false, provider: providerName, reason: 'PROVIDER_NOT_CONFIGURED' },
       { type: 'BANK_ACCOUNT', enabled: false, provider: 'DWOLLA', reason: guest ? 'GUEST_SCOPE_RESTRICTED' : 'NOT_ENABLED_FOR_RECHARGE' },
     ] };
   }
 
-  async createPaymentSession(userId: string, input: { quoteId: string; recipientId?: string }, key: string) {
+  async createPaymentSession(
+    userId: string,
+    input: { quoteId: string; recipientId?: string },
+    key: string,
+    billingCountry?: string,
+  ) {
     const reserved = await this.reservePayment(userId, input, key);
-    if (reserved.paymentProvider !== 'MOCK') throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Hosted payments are not enabled', 503);
-    const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
-    if (!reserved.paymentStartedAt && await this.repository.transitionPayment(reserved.id, ['PENDING'], {
-      paymentSessionId: sessionId, paymentStatus: 'SESSION_CREATED',
-    })) await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'MOCK', testMode: true });
-    const current = (await this.repository.getTransaction(userId, reserved.id))!;
-    return { provider: 'MOCK', environment: 'SANDBOX', testMode: true, transactionId: current.id,
-      paymentSession: { id: current.paymentSessionId ?? sessionId }, amountMinor: usdMinorUnits(current.totalChargeUsd), currency: 'USD', paymentStatus: current.paymentStatus };
+
+    if (reserved.paymentProvider === 'MOCK') {
+      const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
+      if (!reserved.paymentStartedAt && await this.repository.transitionPayment(reserved.id, ['PENDING'], {
+        paymentSessionId: sessionId,
+        paymentStatus: 'SESSION_CREATED',
+      })) {
+        await this.audit(
+          userId,
+          'MOBILE_TOPUP_PAYMENT_SESSION_CREATED',
+          'MobileTopUpTransaction',
+          reserved.id,
+          { provider: 'MOCK', testMode: true },
+        );
+      }
+
+      const current = (await this.repository.getTransaction(userId, reserved.id))!;
+      return {
+        provider: 'MOCK',
+        environment: 'SANDBOX',
+        testMode: true,
+        transactionId: current.id,
+        paymentSession: { id: current.paymentSessionId ?? sessionId },
+        amountMinor: usdMinorUnits(current.totalChargeUsd),
+        currency: 'USD',
+        paymentStatus: current.paymentStatus,
+      };
+    }
+
+    if (this.config.paymentMode === 'stripe_sandbox') {
+      if (reserved.paymentProvider !== 'STRIPE' || !this.stripeProvider) {
+        throw new MobileTopUpError(
+          'PAYMENT_PROVIDER_DISABLED',
+          'Stripe Sandbox is not enabled',
+          503,
+        );
+      }
+
+      const country = billingCountry?.trim().toUpperCase();
+      if (!country || !/^[A-Z]{2}$/.test(country)) {
+        throw new MobileTopUpError(
+          'BILLING_COUNTRY_REQUIRED',
+          'A verified billing country is required for Stripe Sandbox',
+          409,
+        );
+      }
+
+      if (reserved.paymentSessionId) {
+        throw new MobileTopUpError(
+          'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
+          'This Stripe payment session was already created; do not create another attempt',
+          409,
+        );
+      }
+
+      if (!await this.repository.claimOperation(reserved.id, 'payment', this.clock().toISOString())) {
+        const current = await this.repository.getTransaction(userId, reserved.id);
+        if (current?.paymentSessionId) {
+          throw new MobileTopUpError(
+            'PAYMENT_SESSION_REPLAY_UNAVAILABLE',
+            'This Stripe payment session was already created; do not create another attempt',
+            409,
+          );
+        }
+        throw new MobileTopUpError(
+          'PAYMENT_SESSION_IN_PROGRESS',
+          'Stripe payment session creation is already in progress',
+          409,
+        );
+      }
+
+      let paymentSession: Record<string, unknown>;
+      try {
+        paymentSession = await this.stripeProvider.createPaymentSession({
+          transactionId: reserved.id,
+          amountMinor: usdMinorUnits(reserved.totalChargeUsd),
+          currency: 'USD',
+          billingCountry: country,
+        });
+      } catch (error) {
+        await this.repository.updateTransaction(reserved.id, { paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN' });
+        await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', reserved.id, { provider: 'STRIPE', stage: 'PAYMENT_SESSION' });
+        if (error instanceof MobileTopUpError) throw error;
+        throw new MobileTopUpError('PAYMENT_SESSION_CREATION_UNKNOWN', 'Stripe payment session creation requires reconciliation', 502);
+      }
+
+      const sessionId = typeof paymentSession.id === 'string' ? paymentSession.id : '';
+      if (!/^pi_[A-Za-z0-9_]+$/.test(sessionId)) {
+        throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
+      }
+
+      await this.repository.updateTransaction(reserved.id, {
+        paymentSessionId: sessionId,
+        paymentStatus: 'SESSION_CREATED',
+      });
+      await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'STRIPE', testMode: true });
+      return {
+        ...this.stripeProvider.flowContract(reserved.id, paymentSession),
+        testMode: true,
+        amountMinor: usdMinorUnits(reserved.totalChargeUsd),
+        currency: 'USD',
+        paymentStatus: 'SESSION_CREATED',
+      };
+    }
+
+    throw new MobileTopUpError(
+      'PAYMENT_PROVIDER_DISABLED',
+      'Stripe Sandbox is not enabled',
+      503,
+    );
   }
 
   async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
@@ -451,7 +607,10 @@ export class MobileTopUpService {
     await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_STARTED', 'MobileTopUpTransaction', id, { testMode: true });
     let providerResult: ProviderTopUpResult;
     try {
+      await this.revalidateQuoteProduct(transaction);
       providerResult = await this.provider.submitTopUp({ operatorId: transaction.operatorId, amount: transaction.providerAmount,
+        provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, productId: transaction.productId,
+        providerProductId: transaction.providerProductId, providerCurrency: transaction.providerCurrency, productSnapshot: transaction.productSnapshot,
         recipientPhone: transaction.recipientPhone, recipientCountryCode: transaction.countryCode, customIdentifier: transaction.customIdentifier });
     } catch (error) {
       const rejected = error instanceof MobileTopUpError && error.statusCode === 400;
@@ -468,7 +627,7 @@ export class MobileTopUpService {
     const updated = await this.applyProviderResult(id, providerResult);
     if (transaction.recipientId) await this.repository.updateRecipientLastUsed(transaction.userId, transaction.recipientId, transaction.productId, transaction.productName);
     await this.audit(transaction.userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', id,
-      { provider: 'RELOADLY', status: updated.status, testMode: true });
+      { provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, status: updated.status, testMode: true });
     return updated;
   }
 
@@ -489,7 +648,11 @@ export class MobileTopUpService {
     }));
     await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
     // No implicit fallback from a hosted provider to a mock refund.
-    const recovery = record.paymentProvider === 'MOCK' ? this.paymentProvider : undefined;
+    const recovery = record.paymentProvider === 'MOCK'
+      ? this.paymentProvider
+      : record.paymentProvider === 'STRIPE'
+        ? this.stripeProvider
+        : undefined;
     const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
     try {
       const status = paymentId && (refund
@@ -506,49 +669,41 @@ export class MobileTopUpService {
     return (await this.repository.getTransactionById(id))!;
   }
 
-  async acceptVerifiedPaymentEvent(event: VerifiedCheckoutEvent) {
+  async acceptVerifiedPaymentEvent(event: VerifiedStripeEvent) {
     this.assertEnabled();
-    assertVerifiedCheckoutEvent(event);
+    assertVerifiedStripeEvent(event);
+
     const record = await this.repository.getTransactionById(event.transactionId);
-    if (!record || record.paymentProvider !== 'CHECKOUT_COM' || !record.paymentSessionId) {
+    const hostedProvider = record?.paymentProvider === 'STRIPE';
+    if (!record || !hostedProvider || !record.paymentSessionId) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
+    const paymentIdMismatch = record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId;
+    const ignoreNonSuccessStripeFollowUp = event.type !== 'payment_intent.succeeded' && ['SESSION_CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'FAILED'].includes(record.paymentStatus);
     if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' ||
-        (record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId)) {
+        (paymentIdMismatch && !ignoreNonSuccessStripeFollowUp)) {
       throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event did not match the reserved recharge', 409);
     }
     if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id)) return;
-    const transitions = {
-      payment_approved: { from: ['PENDING', 'SESSION_CREATED'], to: 'AUTHORIZED' },
-      payment_captured: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'CAPTURED' },
-      payment_declined: { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      // Delivery order is not guaranteed. A verified full refund/void must also
-      // stop fulfillment if it arrives before the approval/capture notification.
-      payment_voided: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'VOID_PENDING', 'FAILED'], to: 'VOIDED' },
-      payment_refunded: { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'REFUND_PENDING', 'FAILED'], to: 'REFUNDED' },
+
+    const transitionMap = {
+      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
+      'payment_intent.requires_action': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
+      'payment_intent.incomplete': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
+      'payment_intent.partially_funded': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
     } as const;
-    const transition = transitions[event.type];
+    const transition = transitionMap[event.type];
+    if (!transition) return;
     const changed = await this.repository.transitionPayment(record.id, [...transition.from], {
-      paymentStatus: transition.to, paymentProviderTransactionId: event.paymentId,
+      paymentStatus: transition.to,
+      paymentProviderTransactionId: event.paymentId,
       ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
-      ...(['VOIDED', 'REFUNDED'].includes(transition.to) ? { paymentRecoveryCode: 'RECOVERY_CONFIRMED' } : {}),
     });
-    if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: 'CHECKOUT_COM' });
-    if (changed && ['VOIDED', 'REFUNDED'].includes(transition.to)) {
-      const current = (await this.repository.getTransactionById(record.id))!;
-      if (current.fulfillmentStartedAt && !['FAILED', 'REFUNDED'].includes(current.status)) {
-        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'PAYMENT_REVERSAL_AFTER_FULFILLMENT' });
-        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
-      }
-    }
-    if (!changed && event.type === 'payment_captured') {
-      const current = (await this.repository.getTransactionById(record.id))!;
-      if (['FAILED', 'VOIDED', 'VOID_PENDING'].includes(current.paymentStatus)) {
-        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'CAPTURE_AFTER_TERMINAL_STATE' });
-        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
-      }
-    }
-    if (event.type === 'payment_captured') await this.fulfillPaidRecharge(record.id);
+    if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
+    if (transition.to === 'AUTHORIZED') await this.fulfillPaidRecharge(record.id);
     await this.repository.completePaymentEvent(event.eventId);
   }
 
@@ -558,7 +713,7 @@ export class MobileTopUpService {
     const updated = await this.repository.updateTransaction(id, {
       providerTransactionId: result.transactionId,
       ...(result.operatorTransactionId ? { operatorTransactionId: result.operatorTransactionId } : {}),
-      providerStatus: result.status,
+      providerStatus: result.rawStatus ?? result.status,
       status,
       ...(result.deliveredAmount !== undefined ? { deliveredValue: result.deliveredAmount } : {}),
       ...(result.deliveredAmountCurrencyCode ? { deliveredCurrency: result.deliveredAmountCurrencyCode } : {}),
@@ -577,7 +732,7 @@ export class MobileTopUpService {
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     if (refresh && record.providerTransactionId && !['FAILED', 'REFUNDED'].includes(record.status)) {
-      return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId));
+      return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, record.provider ?? decodeOperatorId(record.operatorId).provider));
     }
     return record;
   }

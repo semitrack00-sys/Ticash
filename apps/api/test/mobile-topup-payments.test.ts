@@ -8,6 +8,8 @@ import { MobileTopUpError, MockMobileTopUpPaymentProvider, type MobileTopUpConfi
 import { loadStripeConfig } from '../src/topup/stripe-config.js';
 import { StripeSandboxPaymentProvider } from '../src/topup/stripe-provider.js';
 import { verifyStripeEvent } from '../src/topup/stripe-webhook.js';
+import { FlupFlapIdentityRepository } from '../src/flupflap/repository.js';
+import { flupFlapOwner } from '../src/flupflap/owner.js';
 
 const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId:'fixture', clientSecret:'fixture',
   authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com', billingCurrency:'USD',
@@ -274,7 +276,10 @@ describe('Stripe sandbox flow',()=>{
     };
   }
 
-  function stripeFixture(transport = vi.fn(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' }))) {
+  function stripeFixture(
+    transport = vi.fn(async () => stripeResponse({ id: 'pi_fixture_123', client_secret: 'pi_fixture_123_secret_456' })),
+    options: { enabled?: boolean; configured?: boolean } = {},
+  ) {
     const submit = vi.fn(async () => ({
       transactionId: 'reloadly-fixture',
       status: 'PROCESSING',
@@ -296,18 +301,208 @@ describe('Stripe sandbox flow',()=>{
       }),
     };
 
+    const stripeProvider = options.configured === false ? undefined
+      : new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
     const service = new MobileTopUpService(
-      { ...config, paymentMode: 'stripe_sandbox' },
+      { ...config, enabled: options.enabled ?? true, paymentMode: 'stripe_sandbox' },
       provider,
       new MockMobileTopUpPaymentProvider(),
       new MemoryMobileTopUpRepository(),
       vi.fn(async () => {}),
       undefined,
-      new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport),
+      stripeProvider,
     );
 
-    return { service, provider, submit, transport };
+    return { service, provider, submit, transport, stripeProvider };
   }
+
+  it.each([true, false])('enables configured Stripe Sandbox CARD for guest=%s while preserving bank restrictions', guest => {
+    const f = stripeFixture();
+    const methods = f.service.paymentMethods(guest).methods;
+    const card = methods.find(method => method.type === 'CARD');
+    expect(card).toMatchObject({ enabled: true, provider: 'STRIPE', testMode: true });
+    expect(card).not.toHaveProperty('reason');
+    expect(methods).toContainEqual({ type: 'BANK_ACCOUNT', enabled: false, provider: 'DWOLLA',
+      reason: guest ? 'GUEST_SCOPE_RESTRICTED' : 'NOT_ENABLED_FOR_RECHARGE' });
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('keeps CARD disabled without a Stripe provider for guest=%s', guest => {
+    const f = stripeFixture(undefined, { configured: false });
+    expect(f.service.paymentMethods(guest).methods.find(method => method.type === 'CARD'))
+      .toMatchObject({ enabled: false, provider: 'STRIPE', reason: 'PROVIDER_NOT_CONFIGURED' });
+  });
+
+  it.each([true, false])('prioritizes RECHARGE_DISABLED for guest=%s regardless of Stripe configuration', guest => {
+    for (const configured of [true, false]) {
+      const f = stripeFixture(undefined, { enabled: false, configured });
+      expect(f.service.paymentMethods(guest).methods.find(method => method.type === 'CARD'))
+        .toMatchObject({ enabled: false, provider: 'STRIPE', reason: 'RECHARGE_DISABLED' });
+    }
+  });
+
+  it.each([undefined, '', 'USA', '1!'])('still rejects missing or malformed billing country %s before contacting Stripe', async billingCountry => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('guest', quoteInput);
+    await expect(f.service.createPaymentSession('guest', { quoteId: quote.id }, 'guest-country-required', billingCountry))
+      .rejects.toMatchObject({ code: 'BILLING_COUNTRY_REQUIRED' });
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('creates a guest Stripe Sandbox session with explicit US billing country, independent of the JM destination', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('guest', quoteInput);
+    const session = await f.service.createPaymentSession('guest', { quoteId: quote.id }, 'guest-explicit-country', 'US');
+    expect(session).toMatchObject({ provider: 'STRIPE', environment: 'SANDBOX', testMode: true, amountMinor: 599 });
+    expect(new URLSearchParams(transportRequest(f.transport).body).get('metadata[billingCountry]')).toBe('US');
+    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('exposes guest CARD through the FlupFlap endpoint without permitting guest profile changes or billing-country inference', async () => {
+    const f = stripeFixture();
+    const app = createApp({
+      flupFlapConfig: { enabled: true, accessSecret: 'test-flupflap-only-secret-at-least-32-characters' },
+      mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' },
+      mobileTopUpProvider: f.provider,
+      mobileTopUpStripeProvider: f.stripeProvider,
+    });
+    const root = '/api/flupflap';
+    const guest = await request(app).post(root + '/auth/guest').send({}).expect(201);
+    const token = guest.body.accessToken;
+    const methods = await request(app).get(root + '/mobile-topups/payment-methods').auth(token, { type: 'bearer' }).expect(200);
+    expect(methods.body.methods).toContainEqual(expect.objectContaining({ type: 'CARD', enabled: true, provider: 'STRIPE' }));
+    expect(methods.body.methods).toContainEqual({ type: 'BANK_ACCOUNT', enabled: false, provider: 'DWOLLA', reason: 'GUEST_SCOPE_RESTRICTED' });
+    await request(app).patch(root + '/auth/me').auth(token, { type: 'bearer' }).send({ countryCode: 'US' }).expect(403);
+    const quote = await request(app).post(root + '/mobile-topups/quotes').auth(token, { type: 'bearer' }).send(quoteInput).expect(201);
+    const missingCountry = await request(app).post(root + '/mobile-topups/payment-sessions').auth(token, { type: 'bearer' })
+      .set('Idempotency-Key', 'guest-route-country-required').send({ quoteId: quote.body.quote.id }).expect(409);
+    expect(missingCountry.body.code).toBe('BILLING_COUNTRY_REQUIRED');
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  function flupFlapStripeFixture() {
+    const f = stripeFixture();
+    const htOperator = { ...operator, countryCode: 'HT', destinationCurrencyCode: 'HTG' };
+    f.provider.listCountries = async () => [{ code: 'HT', name: 'Haiti' }];
+    f.provider.listOperators = async () => [htOperator];
+    f.provider.getOperator = async () => htOperator;
+    f.provider.detectOperator = async () => htOperator;
+    const identities = new FlupFlapIdentityRepository();
+    const repository = new MemoryMobileTopUpRepository();
+    let now = new Date();
+    const app = createApp({
+      flupFlapConfig: { enabled: true, accessSecret: 'test-flupflap-only-secret-at-least-32-characters' },
+      flupFlapRepository: identities,
+      mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' },
+      mobileTopUpProvider: f.provider,
+      mobileTopUpStripeProvider: f.stripeProvider,
+      mobileTopUpRepository: repository,
+      mobileTopUpClock: () => now,
+    });
+    const root = '/api/flupflap/mobile-topups';
+    const quote = async (token: string) => (await request(app).post(root + '/quotes').auth(token, { type: 'bearer' })
+      .send({ countryCode: 'HT', phone: '+50937050210', operatorId: 77, productId: 'reloadly:HT:77:airtime:5.00' }).expect(201)).body.quote;
+    const session = (token: string, body: Record<string, unknown>, key = 'flupflap-guest-billing') => request(app)
+      .post(root + '/payment-sessions').auth(token, { type: 'bearer' }).set('Idempotency-Key', key).send(body);
+    const guest = async () => (await request(app).post('/api/flupflap/auth/guest').send({}).expect(201)).body;
+    return { ...f, app, identities, repository, quote, session, guest,
+      expireQuote: () => { now = new Date(now.getTime() + 600_000); } };
+  }
+
+  it.each(['US', 'us'])('creates a guest HT recharge / %s billing session without changing the guest profile', async billingCountry => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const before = await f.identities.customer(guest.user.id);
+    expect(before?.countryCode).toBeNull();
+    const quote = await f.quote(guest.accessToken);
+    expect(quote).toMatchObject({ countryCode: 'HT', providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
+    const response = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry }).expect(201);
+    expect(response.body).toMatchObject({ provider: 'STRIPE', environment: 'SANDBOX', testMode: true, amountMinor: 599, currency: 'USD' });
+    const payload = new URLSearchParams(transportRequest(f.transport).body);
+    expect(payload.get('metadata[billingCountry]')).toBe('US');
+    expect(payload.get('amount')).toBe('599');
+    expect(payload.get('currency')).toBe('usd');
+    expect(await f.identities.customer(guest.user.id)).toEqual(before);
+    const profile = await request(f.app).get('/api/flupflap/auth/me').auth(guest.accessToken, { type: 'bearer' }).expect(200);
+    expect(profile.body.user).toMatchObject({ guest: true, countryCode: null });
+    await request(f.app).patch('/api/flupflap/auth/me').auth(guest.accessToken, { type: 'bearer' })
+      .send({ countryCode: 'US' }).expect(403);
+    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(f.submit).not.toHaveBeenCalled();
+    // A later session still requires its own explicit country, not the prior session's value or destination.
+    const nextQuote = await f.quote(guest.accessToken);
+    const missing = await f.session(guest.accessToken, { quoteId: nextQuote.id }, 'next-guest-session').expect(409);
+    expect(missing.body.code).toBe('BILLING_COUNTRY_REQUIRED');
+    expect(f.transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['', 'U', 'USA', '1!', ' US ', 'ÜS', null, 123, { country: 'US' }])('rejects malformed guest billingCountry %j at the API boundary', async billingCountry => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    await f.session(guest.accessToken, { quoteId: quote.id, billingCountry }).expect(400);
+    expect(await f.repository.listTransactions(flupFlapOwner(guest.user.id))).toHaveLength(0);
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('preserves permanent customers stored country and rejects browser overrides', async () => {
+    const f = flupFlapStripeFixture();
+    const customer = (await request(f.app).post('/api/flupflap/auth/register')
+      .send({ email: 'stripe-profile@example.test', password: 'correct-horse-42', countryCode: 'US' }).expect(201)).body;
+    const before = await f.identities.customer(customer.user.id);
+    const quote = await f.quote(customer.accessToken);
+    for (const billingCountry of ['CA', 'US']) {
+      await f.session(customer.accessToken, { quoteId: quote.id, billingCountry }).expect(400);
+    }
+    expect(f.transport).not.toHaveBeenCalled();
+    const response = await f.session(customer.accessToken, { quoteId: quote.id }).expect(201);
+    expect(response.body).toMatchObject({ provider: 'STRIPE', amountMinor: 599 });
+    expect(new URLSearchParams(transportRequest(f.transport).body).get('metadata[billingCountry]')).toBe('US');
+    expect(await f.identities.customer(customer.user.id)).toEqual(before);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('does not let a permanent customer without a stored country substitute a request country', async () => {
+    const f = flupFlapStripeFixture();
+    const customer = (await request(f.app).post('/api/flupflap/auth/register')
+      .send({ email: 'stripe-no-country@example.test', password: 'correct-horse-42' }).expect(201)).body;
+    const quote = await f.quote(customer.accessToken);
+    await f.session(customer.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(400);
+    const response = await f.session(customer.accessToken, { quoteId: quote.id }).expect(409);
+    expect(response.body.code).toBe('BILLING_COUNTRY_REQUIRED');
+    expect(f.transport).not.toHaveBeenCalled();
+  });
+
+  it.each(['expired', 'consumed'])('rejects %s guest quotes even with valid explicit billing country', async state => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    if (state === 'expired') f.expireQuote();
+    else await f.repository.markQuoteConsumed(flupFlapOwner(guest.user.id), quote.id, new Date().toISOString());
+    const response = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(409);
+    expect(response.body.code).toBe(state === 'expired' ? 'TOPUP_QUOTE_EXPIRED' : 'TOPUP_QUOTE_ALREADY_USED');
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('rejects browser price, fee, total, currency and provider overrides in guest sessions', async () => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    for (const [field, value] of Object.entries({ amount: 1, fee: 0, feeUsd: 0, total: 1, totalChargeUsd: 1,
+      amountMinor: 1, currency: 'EUR', provider: 'MOCK', productId: 'fabricated', providerAmount: 1, paymentStatus: 'CAPTURED' })) {
+      await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US', [field]: value }).expect(400);
+    }
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(await f.repository.listTransactions(flupFlapOwner(guest.user.id))).toHaveLength(0);
+    expect((await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201)).body.amountMinor).toBe(599);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
 
   it('creates a Stripe payment intent with form-encoded Stripe REST parameters and blocks browser tampering', async () => {
     const f = stripeFixture();

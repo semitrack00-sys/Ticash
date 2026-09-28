@@ -429,15 +429,13 @@ export class MobileTopUpService {
     const stripe = this.config.paymentMode === 'stripe_sandbox';
     const stripeReady = stripe && Boolean(this.stripeProvider);
     const cardEnabled = this.config.enabled &&
-      ((!stripe) || (stripeReady && !guest));
+      ((!stripe) || stripeReady);
 
     const cardReason = !this.config.enabled
       ? 'RECHARGE_DISABLED'
-      : guest && stripe
-        ? 'GUEST_BILLING_PROFILE_REQUIRED'
-        : stripe && !stripeReady
-          ? 'PROVIDER_NOT_CONFIGURED'
-          : undefined;
+      : stripe && !stripeReady
+        ? 'PROVIDER_NOT_CONFIGURED'
+        : undefined;
 
     const providerName = stripe ? 'STRIPE' : 'MOCK';
 

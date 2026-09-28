@@ -10,6 +10,7 @@ import type {
   ProviderTopUpResult,
 } from '../src/topup/types.js';
 import { MobileTopUpError } from '../src/topup/types.js';
+import { loadSecurityConfig } from '../src/security.js';
 import { getCountries, getCountryCallingCode } from 'libphonenumber-js';
 
 const config: MobileTopUpConfig = {
@@ -136,6 +137,37 @@ async function quote(
   }).expect(201);
 }
 
+async function withStripeSandboxEnvironment<T>(run: () => Promise<T>): Promise<T> {
+  const keys = [
+    'MOBILE_TOPUP_PAYMENT_MODE',
+    'STRIPE_ENABLED',
+    'STRIPE_ENVIRONMENT',
+    'STRIPE_SECRET_KEY',
+    'STRIPE_PUBLIC_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+    'STRIPE_SUCCESS_URL',
+    'STRIPE_FAILURE_URL',
+  ] as const;
+  const previous = new Map<string, string | undefined>(keys.map((key) => [key, process.env[key]]));
+  process.env.MOBILE_TOPUP_PAYMENT_MODE = 'stripe_sandbox';
+  process.env.STRIPE_ENABLED = 'true';
+  process.env.STRIPE_ENVIRONMENT = 'sandbox';
+  process.env.STRIPE_SECRET_KEY = 'sk_test_topup_guest';
+  process.env.STRIPE_PUBLIC_KEY = 'pk_test_topup_guest';
+  process.env.STRIPE_WEBHOOK_SECRET = 'whsec_topup_guest';
+  process.env.STRIPE_SUCCESS_URL = 'https://ticash.test/topup/success';
+  process.env.STRIPE_FAILURE_URL = 'https://ticash.test/topup/failure';
+  try {
+    return await run();
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 describe('Worldwide mobile recharge sandbox API', () => {
   beforeEach(resetStore);
 
@@ -237,6 +269,21 @@ describe('Worldwide mobile recharge sandbox API', () => {
     await request(app).post('/api/auth/refresh').send({ refreshToken: refreshed.body.refreshToken }).expect(401);
   });
 
+  it('allows guest creation when Stripe sandbox is the enabled sandbox payment mode', async () => {
+    await withStripeSandboxEnvironment(async () => {
+      const app = createApp({
+        mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' } as MobileTopUpConfig,
+        mobileTopUpProvider: new TestProvider(),
+      });
+      const guest = await request(app).post('/api/auth/guest').expect(201);
+      expect(guest.body.user.role).toBe('CUSTOMER');
+      expect(guest.body).toHaveProperty('accessToken');
+      expect(guest.body).toHaveProperty('refreshToken');
+      const headers = { Authorization: `Bearer ${guest.body.accessToken}` };
+      await request(app).get('/api/mobile-topups/status').set(headers).expect(200);
+    });
+  });
+
   it('restricts guest credentials to recharge and preserves permanent customer account routes', async () => {
     const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
     const guest = await request(app).post('/api/auth/guest').expect(201);
@@ -271,12 +318,38 @@ describe('Worldwide mobile recharge sandbox API', () => {
     await request(app).get('/api/transfers').set(headers).expect(200);
   });
 
+  it('keeps Stripe sandbox guest credentials limited to recharge-only routes', async () => {
+    await withStripeSandboxEnvironment(async () => {
+      const app = createApp({
+        mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' } as MobileTopUpConfig,
+        mobileTopUpProvider: new TestProvider(),
+      });
+      const guest = await request(app).post('/api/auth/guest').expect(201);
+      const guestHeaders = { Authorization: `Bearer ${guest.body.accessToken}` };
+      const restrictedRoutes = [
+        request(app).get('/api/users/me'),
+        request(app).get('/api/kyc/status'),
+        request(app).get('/api/funding/status'),
+        request(app).get('/api/recipients'),
+        request(app).get('/api/admin/session'),
+      ];
+      for (const route of restrictedRoutes) {
+        const response = await route.set(guestHeaders).expect(403);
+        expect(response.body.code).toBe('GUEST_SCOPE_RESTRICTED');
+      }
+    });
+  });
+
   it.each([
-    { environment: 'production' }, { paymentMode: 'live' }, { productionEnabled: true },
+    { environment: 'production' }, { paymentMode: 'live' as const }, { productionEnabled: true },
     { approvedForLiveUse: true }, { enabled: false }, { productionEnabled: undefined },
-    { airtimeBaseUrl: 'https://topups.reloadly.com' },
+    { airtimeBaseUrl: 'https://topups.reloadly.com' }, { securityConfig: { liveMoneyEnabled: true } },
   ])('rejects guest access when configuration is unsafe or incomplete: %j', async (unsafe) => {
-    const app = createApp({ mobileTopUpConfig: { ...config, ...unsafe } as MobileTopUpConfig, mobileTopUpProvider: new TestProvider() });
+    const app = createApp({
+      mobileTopUpConfig: { ...config, ...unsafe } as MobileTopUpConfig,
+      securityConfig: { ...loadSecurityConfig(), ...(unsafe.securityConfig ?? {}) },
+      mobileTopUpProvider: new TestProvider(),
+    });
     const response = await request(app).post('/api/auth/guest').expect(403);
     expect(response.body.code).toBe('GUEST_SANDBOX_REQUIRED');
     expect(response.body).not.toHaveProperty('accessToken');

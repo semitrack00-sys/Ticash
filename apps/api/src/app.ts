@@ -943,12 +943,14 @@ export function createApp(options: CreateAppOptions = {}) {
     if (!guestProxyConfigured) {
       return { error: 'Guest recharge requires a verified TRUST_PROXY_HOPS setting in production', code: 'GUEST_PROXY_CONFIGURATION_REQUIRED' };
     }
+    const allowedPaymentModes = ['mock', 'stripe_sandbox'];
     if (mobileTopUpConfig.enabled === true &&
-        mobileTopUpConfig.environment === 'sandbox' && mobileTopUpConfig.paymentMode === 'mock' &&
+        mobileTopUpConfig.environment === 'sandbox' &&
+        allowedPaymentModes.includes(mobileTopUpConfig.paymentMode) &&
         mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
         securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false &&
         mobileTopUpConfig.airtimeBaseUrl === 'https://topups-sandbox.reloadly.com') return undefined;
-    return { error: 'Guest recharge is available only in enabled Sandbox/mock mode', code: 'GUEST_SANDBOX_REQUIRED' };
+    return { error: 'Guest recharge is available only in an enabled sandbox payment mode', code: 'GUEST_SANDBOX_REQUIRED' };
   };
   app.locals.guestAuthError = guestAuthError;
   const mobileTopUpRepository = options.mobileTopUpRepository ?? (

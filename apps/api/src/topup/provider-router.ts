@@ -1,4 +1,5 @@
 import { isSupportedCountry } from 'libphonenumber-js';
+import { classifyReloadlyFailure, safeProviderErrorCode } from './reloadly-provider.js';
 import { decodeOperatorId, encodeOperatorId, decodeTransactionReference, encodeTransactionReference } from './provider-identity.js';
 import { MobileTopUpError, type MobileTopUpProvider, type MobileTopUpProviderName, type MobileTopUpOperator, type MobileTopUpCountry, type ProviderTopUpRequest, type ProviderCoverage } from './types.js';
 
@@ -27,6 +28,7 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
   }
   private async countryCatalog() {
     const results = await Promise.all(this.providerNames.map(async name => {
+      const startedAt = Date.now();
       try {
         const raw = await this.owning(name).listCountries();
         if (!Array.isArray(raw) || raw.some(country => !country || typeof country.code !== 'string' || !/^[A-Za-z]{2}$/.test(country.code) || typeof country.name !== 'string' || !country.name.trim())) {
@@ -36,6 +38,20 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
         for (const country of raw) countries.set(country.code.toUpperCase(), { code: country.code.toUpperCase(), name: country.name.trim().slice(0, 160) });
         return { name, countries };
       } catch (error) {
+        const status = error instanceof MobileTopUpError ? error.statusCode : undefined;
+        const code = error instanceof MobileTopUpError ? error.code : undefined;
+        if (name === 'RELOADLY') {
+          console.warn('Reloadly sandbox diagnostics', {
+            provider: 'RELOADLY',
+            environment: 'SANDBOX',
+            operation: 'COUNTRIES',
+            failureCategory: classifyReloadlyFailure('COUNTRIES', status, code, error),
+            providerHttpStatus: status,
+            providerErrorCode: safeProviderErrorCode(code),
+            responseContentType: undefined,
+            durationMs: Date.now() - startedAt,
+          });
+        }
         return { name, countries: undefined, reason: error instanceof MobileTopUpError && error.code === 'INVALID_PROVIDER_RESPONSE' ? 'INVALID_PROVIDER_RESPONSE' : 'PROVIDER_UNAVAILABLE' };
       }
     }));

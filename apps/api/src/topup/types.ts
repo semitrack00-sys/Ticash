@@ -1,14 +1,32 @@
+export type MobileTopUpProviderName = 'RELOADLY' | 'DTONE' | 'DING';
 export type MobileTopUpEnvironment = 'sandbox';
+export type ProductClassification = 'AIRTIME' | 'DATA' | 'BUNDLE';
 export type MobileTopUpKind = 'AIRTIME' | 'DATA';
 export type MobileTopUpStatus = 'PENDING' | 'PROCESSING' | 'DELIVERED' | 'FAILED' | 'REFUNDED';
 export type MobileTopUpPaymentStatus = 'PENDING' | 'SESSION_CREATED' | 'AUTHORIZED' | 'CAPTURED' | 'FAILED' | 'VOID_PENDING' | 'VOIDED' | 'REFUND_PENDING' | 'REFUNDED';
 export type MobileTopUpPaymentMethod = 'CARD' | 'APPLE_PAY' | 'GOOGLE_PAY' | 'BANK_ACCOUNT';
-export type MobileTopUpPaymentProviderName = 'MOCK' | 'CHECKOUT_COM' | 'DWOLLA';
+export type MobileTopUpPaymentProviderName = 'MOCK' | 'STRIPE' | 'DWOLLA';
 
 export interface PaymentSessionInput {
   transactionId: string;
   amountMinor: number;
   currency: 'USD';
+}
+
+export interface HostedCheckoutSession {
+  id: string;
+  url: string;
+}
+
+export interface HostedCheckoutSessionContract {
+  provider: 'STRIPE';
+  environment: 'SANDBOX';
+  testMode: true;
+  transactionId: string;
+  checkoutSession: HostedCheckoutSession;
+  amountMinor: number;
+  currency: 'USD';
+  paymentStatus: 'SESSION_CREATED' | 'AWAITING_PAYMENT';
 }
 
 // Hosted sessions and server authorization are separate capabilities.
@@ -39,9 +57,8 @@ export interface MobileTopUpConfig {
   senderPhoneCountry?: string;
   senderPhoneNumber?: string;
   billingCurrency: 'USD';
-  feeUsd: string;
   quoteTtlSeconds: number;
-  paymentMode: 'mock';
+  paymentMode: 'mock' | 'stripe_sandbox';
   productionEnabled: false;
   approvedForLiveUse: false;
 }
@@ -56,11 +73,15 @@ export interface MobileTopUpDestination extends MobileTopUpCountry {
 }
 
 export interface MobileTopUpOperator {
+  logoUrl?: string;
+  provider?: MobileTopUpProviderName;
   id: number;
   name: string;
   countryCode: string;
   status: boolean;
   bundle: boolean;
+  data?: boolean;
+  combo?: boolean;
   denominationType: 'FIXED' | 'RANGE';
   senderCurrencyCode: string;
   destinationCurrencyCode: string;
@@ -73,6 +94,14 @@ export interface MobileTopUpOperator {
 }
 
 export interface MobileTopUpProduct {
+  provider?: MobileTopUpProviderName;
+  providerProductId?: string;
+  classification?: ProductClassification;
+  catalogVersion?: string;
+  description?: string;
+  benefits?: { type: 'DATA' | 'MINUTES' | 'SMS'; amount: number; unit: string }[];
+  validity?: { quantity: number; unit: string; semantics: 'SERVICE' | 'REDEMPTION' };
+  redemptionPeriodIso?: string;
   id: string;
   countryCode: string;
   operatorId: number;
@@ -85,9 +114,17 @@ export interface MobileTopUpProduct {
   amountType: 'FIXED' | 'RANGE';
   minimumAmount?: number;
   maximumAmount?: number;
+  /** Optional provider catalog constraints; increments are relative to minimumAmount. */
+  amountIncrement?: number;
+  amountPrecision?: number;
 }
 
 export interface ProviderTopUpRequest {
+  productSnapshot?: MobileTopUpProduct;
+  provider?: MobileTopUpProviderName;
+  productId?: string;
+  providerProductId?: string;
+  providerCurrency?: string;
   operatorId: number;
   amount: number;
   recipientPhone: string;
@@ -96,6 +133,7 @@ export interface ProviderTopUpRequest {
 }
 
 export interface ProviderTopUpResult {
+  rawStatus?: string;
   transactionId: string;
   status: string;
   operatorTransactionId?: string;
@@ -106,13 +144,29 @@ export interface ProviderTopUpResult {
   fee?: number;
 }
 
+export interface ProviderCoverage {
+  environment: 'SANDBOX';
+  uniqueCountries: number;
+  providers: { provider: MobileTopUpProviderName; enabled: boolean; countries: number; reason?: string }[];
+  /** Sorted unique countries supported by at least two enabled, available providers. */
+  overlapCountries: string[];
+  reloadlyOnlyCountries: string[];
+  dtoneOnlyCountries: string[];
+  dingOnlyCountries?: string[];
+  providerOverlaps?: Record<string, string[]>;
+}
+
 export interface MobileTopUpProvider {
+  readonly name?: MobileTopUpProviderName;
+  readonly providerNames?: MobileTopUpProviderName[];
+  coverage?(): Promise<ProviderCoverage>;
+  listProducts?(countryCode: string, operatorId: number): Promise<MobileTopUpProduct[] | undefined>;
   listCountries(): Promise<MobileTopUpCountry[]>;
   listOperators(countryCode: string): Promise<MobileTopUpOperator[]>;
   detectOperator(phone: string, countryCode: string): Promise<MobileTopUpOperator>;
   getOperator(operatorId: number): Promise<MobileTopUpOperator>;
   submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult>;
-  getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult>;
+  getTopUpStatus(transactionId: string, provider?: MobileTopUpProviderName): Promise<ProviderTopUpResult>;
 }
 
 export interface MobileTopUpPaymentAuthorization {

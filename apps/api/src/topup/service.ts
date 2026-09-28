@@ -548,7 +548,8 @@ export class MobileTopUpService {
       }
 
       const sessionId = typeof paymentSession.id === 'string' ? paymentSession.id : '';
-      if (!/^pi_[A-Za-z0-9_]+$/.test(sessionId)) {
+      const sessionUrl = typeof paymentSession.url === 'string' ? paymentSession.url : '';
+      if (!/^cs_test_[A-Za-z0-9_]+$/.test(sessionId) || !/^https:\/\/checkout\.stripe\.com\/[\S]+$/i.test(sessionUrl)) {
         throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
       }
 
@@ -678,8 +679,9 @@ export class MobileTopUpService {
     if (!record || !hostedProvider || !record.paymentSessionId) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
+    const successStripeTypes = new Set(['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'payment_intent.succeeded']);
     const paymentIdMismatch = record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId;
-    const ignoreNonSuccessStripeFollowUp = event.type !== 'payment_intent.succeeded' && ['SESSION_CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'FAILED'].includes(record.paymentStatus);
+    const ignoreNonSuccessStripeFollowUp = !successStripeTypes.has(event.type) && ['SESSION_CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'FAILED'].includes(record.paymentStatus);
     if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' ||
         (paymentIdMismatch && !ignoreNonSuccessStripeFollowUp)) {
       throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event did not match the reserved recharge', 409);
@@ -687,6 +689,10 @@ export class MobileTopUpService {
     if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id)) return;
 
     const transitionMap = {
+      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED'], to: event.paymentStatus === 'paid' ? 'AUTHORIZED' : 'PENDING' },
+      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'checkout.session.async_payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'checkout.session.expired': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
       'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },

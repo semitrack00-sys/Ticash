@@ -21,6 +21,86 @@ function json(value: unknown, status = 200) {
 }
 
 describe('Reloadly Sandbox top-up provider', () => {
+  it('never logs secrets, tokens or authorization headers in diagnostics', async () => {
+    const secret = 'reloadly-client-secret-DO-NOT-LOG';
+    const token = 'reloadly-access-token-DO-NOT-LOG';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const provider = new ReloadlySandboxTopUpProvider({ ...config, clientId: 'client-id', clientSecret: secret }, vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === config.authUrl) return json({ access_token: token, expires_in: 3600 }, 200);
+      return json({ errorCode: 'INVALID_CLIENT', message: 'bad credentials' }, 401);
+    }));
+
+    await expect(provider.listCountries()).rejects.toMatchObject({ code: 'RELOADLY_INVALID_CLIENT' });
+    const logged = warn.mock.calls.map(call => JSON.stringify(call)).join('\n');
+    expect(logged).not.toContain(secret);
+    expect(logged).not.toContain(token);
+    expect(logged).not.toContain('Authorization');
+    expect(logged).not.toContain('client_secret');
+  });
+
+  it.each([
+    { label: 'oauth 401', authStatus: 401, authResponse: { error: 'invalid_client' }, expected: 'OAUTH_REJECTED' },
+    { label: 'countries 401', status: 401, response: { errorCode: 'UNAUTHORIZED' }, expected: 'PROVIDER_UNAUTHORIZED' },
+    { label: 'countries 403', status: 403, response: { errorCode: 'FORBIDDEN' }, expected: 'PROVIDER_FORBIDDEN' },
+    { label: 'countries 429', status: 429, response: { errorCode: 'RATE_LIMITED' }, expected: 'PROVIDER_RATE_LIMITED' },
+    { label: 'countries 500', status: 500, response: { errorCode: 'UPSTREAM_ERROR' }, expected: 'PROVIDER_5XX' },
+    { label: 'timeout', expected: 'PROVIDER_TIMEOUT' },
+    { label: 'malformed response', status: 200, response: '{bad-json', expected: 'INVALID_PROVIDER_RESPONSE' },
+  ])('categorizes $label safely', async ({ label, authStatus, status, authResponse, response, expected }) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetcher = vi.fn<typeof fetch>(async (url: string | URL | Request) => {
+      if (String(url) === config.authUrl) {
+        if (authStatus) return json(authResponse ?? { access_token: 'token', expires_in: 3600 }, authStatus as number);
+        return json({ access_token: 'token', expires_in: 3600 }, 200);
+      }
+      if (label === 'timeout') throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+      if (label === 'malformed response') return new Response('{not-valid-json', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return json(response, status as number);
+    });
+
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+    await expect(provider.listCountries()).rejects.toThrow();
+    const diagnostic = warn.mock.calls.map(call => call[1]).find((payload): payload is Record<string, unknown> => Boolean(payload) && typeof payload === 'object' && payload.operation === 'COUNTRIES' && 'failureCategory' in payload)
+      ?? warn.mock.calls.map(call => call[1]).find((payload): payload is Record<string, unknown> => Boolean(payload) && typeof payload === 'object' && payload.operation === 'OAUTH_TOKEN' && 'failureCategory' in payload);
+    if (expected === 'OAUTH_REJECTED') {
+      expect(diagnostic).toMatchObject({ provider: 'RELOADLY', environment: 'SANDBOX', operation: 'OAUTH_TOKEN', failureCategory: expected });
+    } else {
+      expect(diagnostic).toMatchObject({ provider: 'RELOADLY', environment: 'SANDBOX', operation: 'COUNTRIES', failureCategory: expected });
+    }
+    if (status && label !== 'malformed response') expect(diagnostic).toMatchObject({ providerHttpStatus: status });
+    const logged = warn.mock.calls.map(call => JSON.stringify(call)).join('\n');
+    expect(logged).not.toContain('token');
+    expect(logged).not.toContain('Authorization');
+    expect(logged).not.toContain('client_secret');
+  });
+
+  it('keeps successful countries responses working while logging only sanitized metadata', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }, 200))
+      .mockResolvedValueOnce(json([{ isoName: 'HT', name: 'Haiti' }, { isoName: 'JM', name: 'Jamaica' }], 200));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+
+    await expect(provider.listCountries()).resolves.toEqual([
+      { code: 'HT', name: 'Haiti' },
+      { code: 'JM', name: 'Jamaica' },
+    ]);
+    const logged = warn.mock.calls.map(call => JSON.stringify(call)).join('\n');
+    expect(logged).toContain('COUNTRIES');
+    expect(logged).not.toContain('token');
+    expect(logged).not.toContain('Authorization');
+  });
+
+  it('does not call purchase/top-up during catalog diagnostics', async () => {
+    const submit = vi.fn(async () => ({ transactionId: 'topup-1', status: 'SUCCESSFUL', requestedAmount: 5, requestedAmountCurrencyCode: 'USD' }));
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }, 200))
+      .mockResolvedValueOnce(json([{ isoName: 'JM', name: 'Jamaica' }], 200));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+    await expect(provider.listCountries()).resolves.toEqual([{ code: 'JM', name: 'Jamaica' }]);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it.each([
     { logos: ['https://cdn.example.test/carrier.png?size=36'], expected: 'https://cdn.example.test/carrier.png?size=36' },
     { logos: ['http://cdn.example.test/insecure.png', null, 'broken', 'https://cdn.example.test/carrier.png'], expected: 'https://cdn.example.test/carrier.png' },

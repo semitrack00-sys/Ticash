@@ -18,6 +18,68 @@ type ReloadlyDocument = Record<string, unknown> & {
   status?: string;
 };
 
+type ReloadlyDiagnosticFailureCategory =
+  | 'OAUTH_REJECTED'
+  | 'PROVIDER_UNAUTHORIZED'
+  | 'PROVIDER_FORBIDDEN'
+  | 'PROVIDER_RATE_LIMITED'
+  | 'PROVIDER_4XX'
+  | 'PROVIDER_5XX'
+  | 'PROVIDER_TIMEOUT'
+  | 'NETWORK_ERROR'
+  | 'INVALID_PROVIDER_RESPONSE'
+  | 'UNKNOWN';
+
+type ReloadlyDiagnostic = {
+  provider: 'RELOADLY';
+  environment: 'SANDBOX';
+  operation: 'OAUTH_TOKEN' | 'COUNTRIES';
+  failureCategory?: ReloadlyDiagnosticFailureCategory;
+  providerHttpStatus?: number;
+  providerErrorCode?: string;
+  responseContentType?: string;
+  durationMs: number;
+  catalogRecordCount?: number;
+};
+
+function safeResponseContentType(response?: Response): string | undefined {
+  const value = response?.headers.get('content-type');
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.split(';', 1)[0]?.trim();
+  return trimmed && trimmed.length <= 128 ? trimmed : undefined;
+}
+
+export function safeProviderErrorCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
+  if (!normalized) return undefined;
+  if (/TOKEN|SECRET|AUTHORIZATION|BEARER|ACCESS|CLIENT_ID|CLIENT_SECRET/i.test(normalized)) return undefined;
+  return normalized.slice(0, 80);
+}
+
+export function classifyReloadlyFailure(
+  operation: 'OAUTH_TOKEN' | 'COUNTRIES',
+  status?: number,
+  code?: unknown,
+  cause?: unknown,
+): ReloadlyDiagnosticFailureCategory {
+  if (cause instanceof Error && /(timeout|timed out|abort|signal)/i.test(`${cause.name} ${cause.message}`)) return 'PROVIDER_TIMEOUT';
+  if (status === 401 && operation === 'OAUTH_TOKEN') return 'OAUTH_REJECTED';
+  if (status === 401) return 'PROVIDER_UNAUTHORIZED';
+  if (status === 403) return 'PROVIDER_FORBIDDEN';
+  if (status === 429) return 'PROVIDER_RATE_LIMITED';
+  if (typeof status === 'number' && status >= 500) return 'PROVIDER_5XX';
+  if (typeof status === 'number' && status >= 400) return 'PROVIDER_4XX';
+  if (typeof code === 'string' && /INVALID|MALFORMED|FORMAT|UNSUPPORTED|SCHEMA/i.test(code)) return 'INVALID_PROVIDER_RESPONSE';
+  if (typeof code === 'string' && /TIMEOUT|ABORT|RATE|TOO_MANY/i.test(code)) return 'PROVIDER_TIMEOUT';
+  if (typeof cause === 'object' && cause !== null && 'cause' in cause) return 'UNKNOWN';
+  return 'UNKNOWN';
+}
+
+function logReloadlyDiagnostic(diagnostic: ReloadlyDiagnostic) {
+  console.warn('Reloadly sandbox diagnostics', { ...diagnostic });
+}
+
 function numericList(value: unknown): number[] {
   return Array.isArray(value)
     ? value.map(Number).filter((item) => Number.isFinite(item) && item > 0)
@@ -144,6 +206,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     if (!this.config.clientId || !this.config.clientSecret) {
       throw new MobileTopUpError('TOPUP_CONFIGURATION_ERROR', 'Reloadly credentials are unavailable', 503);
     }
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await this.fetchImpl(this.config.authUrl, {
@@ -157,16 +220,40 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
         }),
         signal: AbortSignal.timeout(15_000),
       });
-    } catch {
+    } catch (error) {
+      logReloadlyDiagnostic({
+        provider: 'RELOADLY',
+        environment: 'SANDBOX',
+        operation: 'OAUTH_TOKEN',
+        failureCategory: classifyReloadlyFailure('OAUTH_TOKEN', undefined, undefined, error),
+        responseContentType: undefined,
+        durationMs: Date.now() - startedAt,
+      });
       throw new MobileTopUpError('RELOADLY_UNAVAILABLE', 'Mobile recharge authentication is unavailable', 502);
     }
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     const token = typeof body.access_token === 'string' ? body.access_token : undefined;
     const expiresIn = Number(body.expires_in);
     if (!response.ok || !token || !Number.isFinite(expiresIn)) {
+      logReloadlyDiagnostic({
+        provider: 'RELOADLY',
+        environment: 'SANDBOX',
+        operation: 'OAUTH_TOKEN',
+        failureCategory: classifyReloadlyFailure('OAUTH_TOKEN', response.status, body.errorCode ?? body.code ?? body.error, undefined),
+        providerHttpStatus: response.status,
+        providerErrorCode: safeProviderErrorCode(body.errorCode ?? body.code ?? body.error),
+        responseContentType: safeResponseContentType(response),
+        durationMs: Date.now() - startedAt,
+      });
       throw new MobileTopUpError('RELOADLY_AUTHENTICATION_FAILED', 'Reloadly Sandbox authentication failed', 502);
     }
     this.token = { value: token, expiresAt: Date.now() + Math.max(1, expiresIn) * 1000 };
+    logReloadlyDiagnostic({
+      provider: 'RELOADLY',
+      environment: 'SANDBOX',
+      operation: 'OAUTH_TOKEN',
+      durationMs: Date.now() - startedAt,
+    });
     return token;
   }
 
@@ -176,6 +263,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     if (url.origin !== this.config.airtimeBaseUrl) {
       throw new MobileTopUpError('INVALID_PROVIDER_URL', 'Refusing an unexpected Reloadly URL', 500);
     }
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -188,7 +276,15 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
         },
         signal: init.signal ?? AbortSignal.timeout(15_000),
       });
-    } catch {
+    } catch (error) {
+      logReloadlyDiagnostic({
+        provider: 'RELOADLY',
+        environment: 'SANDBOX',
+        operation: 'COUNTRIES',
+        failureCategory: classifyReloadlyFailure('COUNTRIES', undefined, undefined, error),
+        responseContentType: undefined,
+        durationMs: Date.now() - startedAt,
+      });
       throw new MobileTopUpError('RELOADLY_UNAVAILABLE', 'Reloadly Sandbox is temporarily unavailable', 502);
     }
     const body = await response.json().catch(() => ({})) as ReloadlyDocument;
@@ -197,20 +293,46 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
         ? body.errorCode
         : typeof body.code === 'string' ? body.code : 'REQUEST_FAILED';
       const code = rawCode.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80).toUpperCase();
+      logReloadlyDiagnostic({
+        provider: 'RELOADLY',
+        environment: 'SANDBOX',
+        operation: 'COUNTRIES',
+        failureCategory: classifyReloadlyFailure('COUNTRIES', response.status, code, undefined),
+        providerHttpStatus: response.status,
+        providerErrorCode: safeProviderErrorCode(code),
+        responseContentType: safeResponseContentType(response),
+        durationMs: Date.now() - startedAt,
+      });
       throw new MobileTopUpError(`RELOADLY_${code}`, 'Reloadly rejected the recharge request', response.status >= 500 ? 502 : 400);
     }
     return body;
   }
 
   async listCountries(): Promise<MobileTopUpCountry[]> {
+    const startedAt = Date.now();
     const body = await this.request('countries');
     const raw = Array.isArray(body) ? body : body.content;
     if (!Array.isArray(raw) || raw.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+      logReloadlyDiagnostic({
+        provider: 'RELOADLY',
+        environment: 'SANDBOX',
+        operation: 'COUNTRIES',
+        failureCategory: 'INVALID_PROVIDER_RESPONSE',
+        durationMs: Date.now() - startedAt,
+      });
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned an invalid catalog', 502);
     }
-    return raw
+    const mapped = raw
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
       .map(mapCountry);
+    logReloadlyDiagnostic({
+      provider: 'RELOADLY',
+      environment: 'SANDBOX',
+      operation: 'COUNTRIES',
+      durationMs: Date.now() - startedAt,
+      catalogRecordCount: mapped.length,
+    });
+    return mapped;
   }
 
   async listOperators(countryCode: string): Promise<MobileTopUpOperator[]> {

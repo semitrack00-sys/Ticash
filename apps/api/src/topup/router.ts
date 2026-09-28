@@ -38,6 +38,10 @@ const purchaseSchema = z.object({
   recipientId: z.uuid().optional(),
 }).strict();
 
+const guestPaymentSessionSchema = purchaseSchema.extend({
+  billingCountry: z.string().regex(/^[A-Za-z]{2}$/).transform(value => value.toUpperCase()).optional(),
+});
+
 export function createMobileTopUpRouter(options: {
   authenticate: RequestHandler;
   requireFundingAllowed: RequestHandler;
@@ -56,10 +60,15 @@ export function createMobileTopUpRouter(options: {
   router.post('/payment-sessions', ...protectedRoute, asyncRoute(async (req, res) => {
     const key = req.header('idempotency-key');
     if (!key) throw new MobileTopUpError('IDEMPOTENCY_KEY_REQUIRED', 'An Idempotency-Key header is required', 400);
-    const billingCountry = await options.billingCountryForUser(req.userId!);
+    const guest = await options.isGuest(req.userId!);
+    const { billingCountry: requestBillingCountry, ...input } = guest
+      ? guestPaymentSessionSchema.parse(req.body)
+      : { ...purchaseSchema.parse(req.body), billingCountry: undefined };
+    // Guest billing country is session context only; permanent customers use their stored profile.
+    const billingCountry = guest ? requestBillingCountry : await options.billingCountryForUser(req.userId!);
     res.status(201).json(await options.service.createPaymentSession(
       req.userId!,
-      purchaseSchema.parse(req.body),
+      input,
       key,
       billingCountry,
     ));

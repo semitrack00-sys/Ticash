@@ -156,7 +156,12 @@ const defaultAccessSecret = 'development-access-secret-change-before-production'
 const accessSecret = process.env.JWT_ACCESS_SECRET ?? defaultAccessSecret;
 const paymentsMode = process.env.PAYMENTS_MODE ?? 'mock';
 const payoutsMode = process.env.PAYOUTS_MODE ?? 'mock';
-const productionWebOrigins = ['https://ticash-app.com', 'https://www.ticash-app.com'] as const;
+const productionWebOrigins = [
+  'https://ticash-app.com',
+  'https://www.ticash-app.com',
+  'https://flupflap.com',
+  'https://www.flupflap.com',
+] as const;
 const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@ticash.local';
 const adminPassword = process.env.ADMIN_PASSWORD ?? 'AdminPass123!';
 const demoEmail = process.env.DEMO_EMAIL ?? 'demo@ticash.local';

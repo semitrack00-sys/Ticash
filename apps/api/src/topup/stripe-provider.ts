@@ -1,7 +1,7 @@
 import { MobileTopUpError, type HostedCheckoutSession, type HostedCheckoutSessionBaseContract, type MobileTopUpPaymentCapture, type MobileTopUpPaymentQuery, type MobileTopUpPaymentRecovery, type MobileTopUpSessionProvider, type PaymentSessionInput } from './types.js';
 import { validateStripeConfig, type StripeConfig } from './stripe-config.js';
 
-export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider, MobileTopUpPaymentRecovery, MobileTopUpPaymentQuery, MobileTopUpPaymentCapture {
+export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider, MobileTopUpPaymentRecovery, MobileTopUpPaymentQuery, MobileTopUpPaymentCapture {
   private readonly config: Readonly<StripeConfig>;
 
   constructor(config: StripeConfig, private readonly transport: typeof fetch = fetch) {
@@ -48,6 +48,16 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
     }
   }
 
+  private checkoutSessionPattern() {
+    return this.config.environment === 'production'
+      ? /^cs_live_[A-Za-z0-9_]+$/
+      : /^cs_test_[A-Za-z0-9_]+$/;
+  }
+
+  private runtimeEnvironment() {
+    return this.config.environment === 'production' ? 'PRODUCTION' : 'SANDBOX';
+  }
+
   private buildReturnUrl(baseUrl: string, resumeToken: string) {
     const url = new URL(baseUrl);
     url.searchParams.set('checkoutResumeToken', resumeToken);
@@ -77,7 +87,7 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
   }
 
   private assertSafeSession(data: Record<string, unknown>): HostedCheckoutSession {
-    if (typeof data?.id !== 'string' || !/^cs_test_[A-Za-z0-9_]+$/.test(data.id) || typeof data.url !== 'string' || !/^https:\/\/checkout\.stripe\.com\//i.test(data.url) || 'client_secret' in data) {
+    if (typeof data?.id !== 'string' || !this.checkoutSessionPattern().test(data.id) || typeof data.url !== 'string' || !/^https:\/\/checkout\.stripe\.com\//i.test(data.url) || 'client_secret' in data) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
     }
     const serialized = JSON.stringify(data);
@@ -89,11 +99,17 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
   }
 
   flowContract(transactionId: string, checkoutSession: HostedCheckoutSession): HostedCheckoutSessionBaseContract {
-    return { provider: 'STRIPE', environment: 'SANDBOX', testMode: true, transactionId, checkoutSession: this.assertSafeSession(checkoutSession as unknown as Record<string, unknown>) };
+    return {
+      provider: 'STRIPE',
+      environment: this.runtimeEnvironment(),
+      testMode: this.config.testMode,
+      transactionId,
+      checkoutSession: this.assertSafeSession(checkoutSession as unknown as Record<string, unknown>),
+    };
   }
 
   async getHostedCheckoutSession(paymentSessionId: string) {
-    if (!/^cs_test_[A-Za-z0-9_]+$/.test(paymentSessionId)) {
+    if (!this.checkoutSessionPattern().test(paymentSessionId)) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);
     }
     const { data } = await this.request(`/v1/checkout/sessions/${encodeURIComponent(paymentSessionId)}`);
@@ -132,5 +148,14 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
 
   private assertMinorAmount(value: number) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new MobileTopUpError('INVALID_PAYMENT_AMOUNT', 'Invalid USD minor-unit amount', 400);
+  }
+}
+
+export class StripeSandboxPaymentProvider extends StripeHostedCheckoutProvider {
+  constructor(config: StripeConfig, transport: typeof fetch = fetch) {
+    if (config.environment !== 'sandbox') {
+      throw new MobileTopUpError('TOPUP_CONFIGURATION_ERROR', 'Stripe sandbox provider requires sandbox configuration', 500);
+    }
+    super(config, transport);
   }
 }

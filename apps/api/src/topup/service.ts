@@ -7,6 +7,7 @@ import type {
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
   MobileTopUpProvider,
+  MobileTopUpRuntimeEnvironment,
   MobileTopUpStatus,
   ProviderTopUpResult,
 } from './types.js';
@@ -14,8 +15,9 @@ import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
 import { approvedRechargePrice } from './recharge-fee-grid.js';
 import { reloadlyProducts, normalizeProduct, assertSameProduct, assertProductAmount } from './product-catalog.js';
-import type { StripeSandboxPaymentProvider } from './stripe-provider.js';
+import type { StripeHostedCheckoutProvider } from './stripe-provider.js';
 import { assertVerifiedStripeEvent, type VerifiedStripeEvent } from './stripe-webhook.js';
+import { topUpRuntimeEnvironment } from './config.js';
 import {
   normalizeTopUpCountryCode,
   normalizeTopUpPhone,
@@ -56,7 +58,7 @@ export class MobileTopUpService {
   private readonly repository: MobileTopUpRepository;
   private readonly audit: AuditRecorder;
   private readonly clock: () => Date;
-  private readonly stripeProvider?: StripeSandboxPaymentProvider;
+  private readonly stripeProvider?: StripeHostedCheckoutProvider;
 
   constructor(
     config: MobileTopUpConfig,
@@ -65,7 +67,7 @@ export class MobileTopUpService {
     repository: MobileTopUpRepository,
     audit: AuditRecorder,
     clock: () => Date = () => new Date(),
-    stripeProvider?: StripeSandboxPaymentProvider,
+    stripeProvider?: StripeHostedCheckoutProvider,
   ) {
     this.config = config;
     this.provider = provider;
@@ -76,26 +78,50 @@ export class MobileTopUpService {
     this.stripeProvider = stripeProvider;
   }
 
+  private runtimeEnvironment(): MobileTopUpRuntimeEnvironment {
+    return topUpRuntimeEnvironment(this.config);
+  }
+
+  private isTestMode() {
+    return this.config.environment === 'sandbox';
+  }
+
   availability() {
     const providers = this.config.enabled ? this.provider.providerNames ?? [this.provider.name ?? 'RELOADLY'] : [];
     return {
       enabled: this.config.enabled,
-      environment: 'SANDBOX',
+      environment: this.runtimeEnvironment(),
       billingCurrency: this.config.billingCurrency,
       provider: providers.length === 1 ? providers[0] : providers.length ? 'MULTI_PROVIDER' : null,
       providerMode: providers.length > 1 ? 'MULTI_PROVIDER' : providers.length ? 'SINGLE_PROVIDER' : 'DISABLED',
       providers,
-      paymentMode: this.config.paymentMode === 'stripe_sandbox'
-        ? 'STRIPE_SANDBOX'
+      paymentMode: this.config.paymentMode === 'stripe_sandbox' ? 'STRIPE_SANDBOX'
+        : this.config.paymentMode === 'stripe_live' ? 'STRIPE_LIVE'
         : 'MOCK',
-      testMode: true,
-      supportedGeographicScope: 'Configured sandbox provider catalog countries only',
+      testMode: this.isTestMode(),
+      supportedGeographicScope: this.isTestMode()
+        ? 'Configured sandbox provider catalog countries only'
+        : 'Configured provider catalog countries only',
       supportedCountriesPath: '/api/mobile-topups/countries',
-      productionEnabled: false,
-      approvedForLiveUse: false,
-      liveRechargeEnabled: false,
+      productionEnabled: this.config.productionEnabled,
+      approvedForLiveUse: this.config.approvedForLiveUse === true,
+      liveRechargeEnabled: this.config.liveRechargeEnabled === true,
       recurringRechargeEnabled: false,
     };
+  }
+
+  private assertTransactionEnvironment(
+    record: Pick<MobileTopUpTransactionRecord, 'paymentEnvironment' | 'rechargeEnvironment' | 'testMode'>,
+    code = 'TOPUP_ENVIRONMENT_MISMATCH',
+    message = 'Payment and recharge environments must match before fulfillment',
+  ) {
+    const expectedEnvironment = this.runtimeEnvironment();
+    if (record.paymentEnvironment !== record.rechargeEnvironment ||
+        record.paymentEnvironment !== expectedEnvironment ||
+        record.rechargeEnvironment !== expectedEnvironment ||
+        record.testMode !== this.isTestMode()) {
+      throw new MobileTopUpError(code, message, 409);
+    }
   }
 
   async coverage() {
@@ -103,7 +129,7 @@ export class MobileTopUpService {
     if (this.provider.coverage) return this.provider.coverage();
     const countries = await this.listCountries();
     const provider = this.provider.name ?? 'RELOADLY';
-    return { environment: 'SANDBOX', uniqueCountries: countries.length,
+    return { environment: this.runtimeEnvironment(), uniqueCountries: countries.length,
       providers: [{ provider, enabled: true, countries: countries.length }],
       overlapCountries: [], reloadlyOnlyCountries: provider === 'RELOADLY' ? countries.map(country => country.code) : [],
       dtoneOnlyCountries: provider === 'DTONE' ? countries.map(country => country.code) : [] };
@@ -121,7 +147,7 @@ export class MobileTopUpService {
 
   private assertEnabled() {
     if (!this.config.enabled) {
-      throw new MobileTopUpError('MOBILE_TOPUP_DISABLED', 'Mobile recharge Sandbox is not enabled', 503);
+      throw new MobileTopUpError('MOBILE_TOPUP_DISABLED', 'Mobile recharge is not enabled', 503);
     }
   }
 
@@ -333,13 +359,14 @@ export class MobileTopUpService {
       deliveredCurrency: product.deliveredCurrency,
       feeUsd: pricing.feeMinorUnits / 100,
       totalChargeUsd: pricing.totalMinorUnits / 100,
+      testMode: this.isTestMode(),
       expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
     });
     await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {
       countryCode: quote.countryCode,
       operatorId: operator.id,
       productId: product.id,
-      testMode: true,
+      testMode: this.isTestMode(),
     });
     return quote;
   }
@@ -392,6 +419,13 @@ export class MobileTopUpService {
     if (quote.consumedAt || new Date(quote.expiresAt) <= timestamp) {
       throw new MobileTopUpError(quote.consumedAt ? 'TOPUP_QUOTE_ALREADY_USED' : 'TOPUP_QUOTE_EXPIRED', 'Recharge quote is no longer valid', 409);
     }
+    if (quote.testMode !== this.isTestMode()) {
+      throw new MobileTopUpError(
+        'TOPUP_ENVIRONMENT_MISMATCH',
+        'Quote environment does not match the active recharge environment',
+        409,
+      );
+    }
     await this.revalidateQuoteProduct(quote);
     let savedRecipient: SavedTopUpRecipientRecord | undefined;
     if (input.recipientId) {
@@ -418,13 +452,13 @@ export class MobileTopUpService {
       status: 'PENDING',
       paymentStatus: 'PENDING',
       paymentMethod: 'CARD',
-      paymentProvider: this.config.paymentMode === 'stripe_sandbox'
-        ? 'STRIPE'
-        : 'MOCK',
+      paymentProvider: this.config.paymentMode === 'mock' ? 'MOCK' : 'STRIPE',
       paymentSessionId: this.config.paymentMode === 'mock'
         ? 'mock-session:' + transactionId
         : undefined,
-      testMode: true,
+      testMode: this.isTestMode(),
+      paymentEnvironment: this.runtimeEnvironment(),
+      rechargeEnvironment: this.runtimeEnvironment(),
       createdAt,
       updatedAt: createdAt,
     };
@@ -439,7 +473,7 @@ export class MobileTopUpService {
   }
 
   paymentMethods(guest = false) {
-    const stripe = this.config.paymentMode === 'stripe_sandbox';
+    const stripe = this.config.paymentMode === 'stripe_sandbox' || this.config.paymentMode === 'stripe_live';
     const stripeReady = stripe && Boolean(this.stripeProvider);
     const cardEnabled = this.config.enabled &&
       ((!stripe) || stripeReady);
@@ -452,13 +486,15 @@ export class MobileTopUpService {
 
     const providerName = stripe ? 'STRIPE' : 'MOCK';
 
-    return { environment: 'SANDBOX', methods: [
+    return { environment: this.runtimeEnvironment(), methods: [
       {
         type: 'CARD',
         enabled: cardEnabled,
         provider: providerName,
-        testMode: true,
-        label: stripe ? 'Test card - Stripe Sandbox' : 'Test card — Sandbox',
+        testMode: this.isTestMode(),
+        label: stripe
+          ? this.isTestMode() ? 'Test card - Stripe Sandbox' : 'Card - Stripe'
+          : this.isTestMode() ? 'Test card — Sandbox' : 'Card',
         ...(cardReason ? { reason: cardReason } : {}),
       },
       { type: 'APPLE_PAY', enabled: false, provider: providerName, reason: 'PROVIDER_NOT_CONFIGURED' },
@@ -474,6 +510,7 @@ export class MobileTopUpService {
     billingCountry?: string,
   ) {
     const reserved = await this.reservePayment(userId, input, key);
+    this.assertTransactionEnvironment(reserved);
 
     if (reserved.paymentProvider === 'MOCK') {
       const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
@@ -486,15 +523,15 @@ export class MobileTopUpService {
           'MOBILE_TOPUP_PAYMENT_SESSION_CREATED',
           'MobileTopUpTransaction',
           reserved.id,
-          { provider: 'MOCK', testMode: true },
+          { provider: 'MOCK', testMode: this.isTestMode() },
         );
       }
 
       const current = (await this.repository.getTransaction(userId, reserved.id))!;
       return {
         provider: 'MOCK',
-        environment: 'SANDBOX',
-        testMode: true,
+        environment: this.runtimeEnvironment(),
+        testMode: this.isTestMode(),
         transactionId: current.id,
         paymentSession: { id: current.paymentSessionId ?? sessionId },
         amountMinor: usdMinorUnits(current.totalChargeUsd),
@@ -503,11 +540,11 @@ export class MobileTopUpService {
       };
     }
 
-    if (this.config.paymentMode === 'stripe_sandbox') {
+    if (this.config.paymentMode === 'stripe_sandbox' || this.config.paymentMode === 'stripe_live') {
       if (reserved.paymentProvider !== 'STRIPE' || !this.stripeProvider) {
         throw new MobileTopUpError(
           'PAYMENT_PROVIDER_DISABLED',
-          'Stripe Sandbox is not enabled',
+          'Stripe is not enabled',
           503,
         );
       }
@@ -516,15 +553,17 @@ export class MobileTopUpService {
       if (!country || !/^[A-Z]{2}$/.test(country)) {
         throw new MobileTopUpError(
           'BILLING_COUNTRY_REQUIRED',
-          'A verified billing country is required for Stripe Sandbox',
+          'A verified billing country is required for Stripe checkout',
           409,
         );
       }
 
       if (reserved.paymentSessionId) {
+        this.assertTransactionEnvironment(reserved);
         const existing = await this.stripeProvider.getHostedCheckoutSession(reserved.paymentSessionId);
         const current = await this.repository.getTransaction(userId, reserved.id);
         if (!current) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+        this.assertTransactionEnvironment(current);
         return {
           ...this.stripeProvider.flowContract(current.id, existing),
           amountMinor: usdMinorUnits(current.totalChargeUsd),
@@ -536,6 +575,7 @@ export class MobileTopUpService {
       if (!await this.repository.claimOperation(reserved.id, 'payment', this.clock().toISOString())) {
         const current = await this.repository.getTransaction(userId, reserved.id);
         if (current?.paymentSessionId) {
+          this.assertTransactionEnvironment(current);
           const existing = await this.stripeProvider.getHostedCheckoutSession(current.paymentSessionId);
           return {
             ...this.stripeProvider.flowContract(current.id, existing),
@@ -570,17 +610,13 @@ export class MobileTopUpService {
         throw new MobileTopUpError('PAYMENT_SESSION_CREATION_UNKNOWN', 'Stripe payment session creation requires reconciliation', 502);
       }
 
-      if (!/^cs_test_[A-Za-z0-9_]+$/.test(paymentSession.id)) {
-        throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
-      }
-
       await this.repository.updateTransaction(reserved.id, {
         paymentSessionId: paymentSession.id,
         checkoutResumeTokenHash,
         checkoutResumeTokenExpiresAt,
         paymentStatus: 'SESSION_CREATED',
       });
-      await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'STRIPE', testMode: true });
+      await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_SESSION_CREATED', 'MobileTopUpTransaction', reserved.id, { provider: 'STRIPE', testMode: this.isTestMode() });
       return {
         ...this.stripeProvider.flowContract(reserved.id, paymentSession),
         amountMinor: usdMinorUnits(reserved.totalChargeUsd),
@@ -591,7 +627,7 @@ export class MobileTopUpService {
 
     throw new MobileTopUpError(
       'PAYMENT_PROVIDER_DISABLED',
-      'Stripe Sandbox is not enabled',
+      'Stripe is not enabled',
       503,
     );
   }
@@ -622,6 +658,7 @@ export class MobileTopUpService {
 
   async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
     const transaction = await this.reservePayment(userId, input, idempotencyKey);
+    this.assertTransactionEnvironment(transaction);
     // Hosted-provider records can only be fulfilled by verified server events.
     if (transaction.paymentProvider !== 'MOCK') return transaction;
     if (await this.repository.claimOperation(transaction.id, 'payment', this.clock().toISOString())) {
@@ -650,8 +687,9 @@ export class MobileTopUpService {
     this.assertEnabled();
     const transaction = await this.repository.getTransactionById(id);
     if (!transaction) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+    this.assertTransactionEnvironment(transaction);
     if (!await this.repository.claimOperation(id, 'fulfillment', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
-    await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_STARTED', 'MobileTopUpTransaction', id, { testMode: true });
+    await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_STARTED', 'MobileTopUpTransaction', id, { testMode: this.isTestMode() });
     let providerResult: ProviderTopUpResult;
     try {
       await this.revalidateQuoteProduct(transaction);
@@ -674,11 +712,15 @@ export class MobileTopUpService {
     const updated = await this.applyProviderResult(id, providerResult);
     if (transaction.recipientId) await this.repository.updateRecipientLastUsed(transaction.userId, transaction.recipientId, transaction.productId, transaction.productName);
     await this.audit(transaction.userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', id,
-      { provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, status: updated.status, testMode: true });
+      { provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, status: updated.status, testMode: this.isTestMode() });
     return updated;
   }
 
   private async recoverPayment(id: string, providerReversed = false) {
+    const initialRecord = await this.repository.getTransactionById(id);
+    if (!initialRecord) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+    this.assertTransactionEnvironment(initialRecord);
+
     if (!await this.repository.claimOperation(id, 'recovery', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
     let record;
     let refund;
@@ -686,13 +728,16 @@ export class MobileTopUpService {
     // A webhook may confirm capture/recovery while the claim is being acquired.
     // Compare-and-set prevents downgrading that confirmation to a pending state.
     do {
-      record = (await this.repository.getTransactionById(id))!;
+      record = await this.repository.getTransactionById(id);
+      if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+      this.assertTransactionEnvironment(record);
       if (!['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return record;
       refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');
       pending = refund ? 'REFUND_PENDING' : 'VOID_PENDING';
     } while (!await this.repository.transitionPayment(id, [record.paymentStatus], {
       paymentStatus: pending, paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
     }));
+    this.assertTransactionEnvironment(record);
     await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
     // No implicit fallback from a hosted provider to a mock refund.
     const recovery = record.paymentProvider === 'MOCK'
@@ -724,6 +769,13 @@ export class MobileTopUpService {
     const hostedProvider = record?.paymentProvider === 'STRIPE';
     if (!record || !hostedProvider || !record.paymentSessionId || record.paymentSessionId !== event.checkoutSessionId) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
+    }
+    const expectedEnvironment = this.runtimeEnvironment();
+    if (event.environment !== expectedEnvironment) {
+      throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event environment did not match the active runtime', 409);
+    }
+    if (record.paymentEnvironment !== record.rechargeEnvironment || record.paymentEnvironment !== expectedEnvironment) {
+      throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event environment did not match the reserved recharge', 409);
     }
     const paymentIdMismatch = record.paymentProviderTransactionId && record.paymentProviderTransactionId !== event.paymentId;
     if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' || paymentIdMismatch) {
@@ -789,6 +841,7 @@ export class MobileTopUpService {
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     if (refresh && record.providerTransactionId && !['FAILED', 'REFUNDED'].includes(record.status)) {
+      this.assertTransactionEnvironment(record);
       return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, record.provider ?? decodeOperatorId(record.operatorId).provider));
     }
     return record;

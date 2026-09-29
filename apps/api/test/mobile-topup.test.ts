@@ -241,6 +241,43 @@ describe('Worldwide mobile recharge sandbox API', () => {
     expect(countries.body.countries).toEqual(supportedCountries.map((c) => ({ ...c, callingCode: c.code === 'HT' ? '+509' : '+1' })));
   });
 
+  it('reports production status only for a fully coherent live-gated configuration', async () => {
+    const app = createApp({
+      mobileTopUpConfig: {
+        ...config,
+        environment: 'production',
+        paymentMode: 'stripe_live',
+        airtimeBaseUrl: 'https://topups.reloadly.com',
+        productionEnabled: true,
+        approvedForLiveUse: true,
+        appApprovedForLiveUse: true,
+        liveMoneyEnabled: true,
+        liveRechargeEnabled: true,
+      },
+      stripeConfig: {
+        enabled: true,
+        environment: 'production',
+        testMode: false,
+        secretKey: 'sk_live_fixture_secret',
+        publicKey: 'pk_live_fixture_public',
+        webhookSecret: 'whsec_live_fixture_signing_key',
+        successUrl: 'https://ticash-app.com/success',
+        failureUrl: 'https://flupflap.com/failure',
+      },
+      mobileTopUpProvider: new TestProvider(),
+    });
+    const headers = await auth(app, 'status-live');
+    const response = await request(app).get('/api/mobile-topups/status').set(headers).expect(200);
+    expect(response.body).toMatchObject({
+      environment: 'PRODUCTION',
+      paymentMode: 'STRIPE_LIVE',
+      testMode: false,
+      productionEnabled: true,
+      approvedForLiveUse: true,
+      liveRechargeEnabled: true,
+    });
+  });
+
   it('creates unique guest customers with valid rotating tokens, catalog access and a mock purchase', async () => {
     const provider = new TestProvider();
     const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
@@ -341,7 +378,7 @@ describe('Worldwide mobile recharge sandbox API', () => {
   });
 
   it.each([
-    { environment: 'production' }, { paymentMode: 'live' as const }, { productionEnabled: true },
+    { productionEnabled: true },
     { approvedForLiveUse: true }, { enabled: false }, { productionEnabled: undefined },
     { airtimeBaseUrl: 'https://topups.reloadly.com' }, { securityConfig: { liveMoneyEnabled: true } },
   ])('rejects guest access when configuration is unsafe or incomplete: %j', async (unsafe) => {
@@ -353,6 +390,17 @@ describe('Worldwide mobile recharge sandbox API', () => {
     const response = await request(app).post('/api/auth/guest').expect(403);
     expect(response.body.code).toBe('GUEST_SANDBOX_REQUIRED');
     expect(response.body).not.toHaveProperty('accessToken');
+  });
+
+  it.each([
+    { environment: 'production' as const },
+    { paymentMode: 'stripe_live' as const },
+  ])('fails startup for incoherent topup runtime combinations: %j', (unsafe) => {
+    expect(() => createApp({
+      mobileTopUpConfig: { ...config, ...unsafe } as MobileTopUpConfig,
+      securityConfig: loadSecurityConfig(),
+      mobileTopUpProvider: new TestProvider(),
+    })).toThrow();
   });
 
   it('rejects guest-supplied identity/privileges and rate-limits successful guest creation', async () => {

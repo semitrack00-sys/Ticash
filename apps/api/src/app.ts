@@ -1144,12 +1144,19 @@ export function createApp(options: CreateAppOptions = {}) {
   }));
 
   const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
+  const flupFlapProductionAllowed = () => mobileTopUpConfig.environment === 'production' &&
+    mobileTopUpConfig.paymentMode === 'stripe_live' && mobileTopUpConfig.productionEnabled === true &&
+    mobileTopUpConfig.approvedForLiveUse === true && mobileTopUpConfig.liveRechargeEnabled === true &&
+    securityConfig.approvedForLiveUse === true && securityConfig.liveMoneyEnabled === true;
   const flupFlap = createFlupFlapIdentity({
     config: options.flupFlapConfig ?? loadFlupFlapConfig(), repository: flupFlapRepository,
-    guestError: guestAuthError, emailService: passwordResetEmailService, audit: recordAudit,
-    sandboxAllowed: () => mobileTopUpConfig.environment === 'sandbox' &&
+    // FlupFlap may admit approved production guests without changing TiCash guest policy.
+    guestError: () => flupFlapProductionAllowed() && guestProxyConfigured && mobileTopUpConfig.enabled === true &&
+      mobileTopUpConfig.airtimeBaseUrl === 'https://topups.reloadly.com' ? undefined : guestAuthError(),
+    emailService: passwordResetEmailService, audit: recordAudit,
+    accessAllowed: () => (mobileTopUpConfig.environment === 'sandbox' &&
       mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
-      securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false,
+      securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false) || flupFlapProductionAllowed(),
   });
   app.use('/api/admin/flupflap', createFlupFlapAdmin({
     authenticate, permission, identities:flupFlapRepository, recharge:mobileTopUpRepository,

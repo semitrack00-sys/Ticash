@@ -31,14 +31,14 @@ const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export function createFlupFlapIdentity(options: {
   config: FlupFlapConfig; repository: FlupFlapIdentityRepository;
   guestError: () => { error: string; code: string } | undefined;
-  sandboxAllowed: () => boolean;
+  accessAllowed: () => boolean;
   emailService: PasswordResetEmailService;
   audit: (owner:string|undefined, action:string, entity:string, id?:string) => Promise<void>;
 }) {
   const { config, repository: repo } = options;
   const router = express.Router();
   const available: RequestHandler = (_req,res,next) => {
-    if (!config.enabled || !config.accessSecret || !options.sandboxAllowed()) { res.status(503).json({ code:'FLUPFLAP_UNAVAILABLE', error:'FlupFlap is not configured for safe access' }); return; }
+    if (!config.enabled || !config.accessSecret || !options.accessAllowed()) { res.status(503).json({ code:'FLUPFLAP_UNAVAILABLE', error:'FlupFlap is not configured for safe access' }); return; }
     next();
   };
   const active = (c: FlupFlapCustomer | null) => Boolean(c && c.status === 'ACTIVE' && (!c.guestExpiresAt || c.guestExpiresAt > new Date()));
@@ -53,7 +53,7 @@ export function createFlupFlapIdentity(options: {
   }
   const authenticate: RequestHandler = async (request,res,next) => {
     const req = request as AuthRequest;
-    if (!config.enabled || !config.accessSecret || !options.sandboxAllowed()) { res.status(503).json({code:'FLUPFLAP_UNAVAILABLE'}); return; }
+    if (!config.enabled || !config.accessSecret || !options.accessAllowed()) { res.status(503).json({code:'FLUPFLAP_UNAVAILABLE'}); return; }
     try {
       const match = /^Bearer ([^\s]+)$/.exec(req.header('authorization') ?? '');
       if (!match) throw new Error('Invalid credentials');

@@ -2,20 +2,22 @@ import jwt from 'jsonwebtoken';
 import {loadFlupFlapConfig} from '../src/flupflap/auth.js';
 import request from 'supertest';
 import { createHash } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
 import { FlupFlapIdentityRepository } from '../src/flupflap/repository.js';
 import { flupFlapOwner, ownerFromDb } from '../src/flupflap/owner.js';
 import { MemoryMobileTopUpRepository } from '../src/topup/repository.js';
 import type { MobileTopUpConfig, MobileTopUpOperator, MobileTopUpProvider } from '../src/topup/types.js';
+import { loadSecurityConfig } from '../src/security.js';
+import { loadStripeConfig } from '../src/topup/stripe-config.js';
 
 const config: MobileTopUpConfig = {enabled:true,environment:'sandbox',clientId:'fixture',clientSecret:'fixture',authUrl:'https://auth.reloadly.com/oauth/token',airtimeBaseUrl:'https://topups-sandbox.reloadly.com',billingCurrency:'USD',quoteTtlSeconds:300,paymentMode:'mock',productionEnabled:false,approvedForLiveUse:false};
 const operator: MobileTopUpOperator = {id:77,name:'Fixture operator',countryCode:'JM',status:true,bundle:false,denominationType:'FIXED',senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',fixedAmounts:[5],localFixedAmounts:[800],fixedAmountsPlanNames:{},localFixedAmountsPlanNames:{}};
-function setup() {
+function setup(options: Parameters<typeof createApp>[0] = {}) {
  const identities=new FlupFlapIdentityRepository(); const recharge=new MemoryMobileTopUpRepository();
  const provider:MobileTopUpProvider={listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[operator],getOperator:async()=>operator,detectOperator:async()=>operator,
  submitTopUp:vi.fn(async()=>({transactionId:'fixture-provider',status:'PROCESSING'})),getTopUpStatus:async()=>({transactionId:'fixture-provider',status:'PROCESSING'})};
- const app=createApp({flupFlapConfig:{enabled:true,accessSecret:'test-flupflap-only-secret-at-least-32-characters'},flupFlapRepository:identities,mobileTopUpConfig:config,mobileTopUpProvider:provider,mobileTopUpRepository:recharge});
+ const app=createApp({flupFlapConfig:{enabled:true,accessSecret:'test-flupflap-only-secret-at-least-32-characters'},flupFlapRepository:identities,mobileTopUpConfig:config,mobileTopUpProvider:provider,mobileTopUpRepository:recharge,...options});
  return {app,identities,recharge,provider};
 }
 const root='/api/flupflap';
@@ -133,4 +135,124 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   expect(()=>loadFlupFlapConfig({FLUPFLAP_ENABLED:'true',FLUPFLAP_ACCESS_SECRET:secret,NODE_ENV:'production'})).toThrow('persistent database');
  });
 
+});
+
+describe('FlupFlap access in fully approved production', () => {
+ beforeEach(() => {
+  resetStore();
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubEnv('TRUST_PROXY_HOPS', '1');
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network requests are forbidden in identity tests'); }));
+ });
+ afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+ function production() {
+  const mobileTopUpConfig: MobileTopUpConfig = {
+   ...config, environment:'production', paymentMode:'stripe_live', productionEnabled:true,
+   approvedForLiveUse:true, liveRechargeEnabled:true, appApprovedForLiveUse:true, liveMoneyEnabled:true,
+   airtimeBaseUrl:'https://topups.reloadly.com',
+  };
+  const securityConfig = { ...loadSecurityConfig({}), approvedForLiveUse:true, liveMoneyEnabled:true };
+  const stripeConfig = loadStripeConfig({
+   STRIPE_ENABLED:'true', STRIPE_ENVIRONMENT:'production', MOBILE_TOPUP_PAYMENT_MODE:'stripe_live',
+   STRIPE_LIVE_SECRET_KEY:'sk_live_fixture_only', STRIPE_LIVE_PUBLIC_KEY:'pk_live_fixture_only',
+   STRIPE_LIVE_WEBHOOK_SECRET:'whsec_fixture_only', STRIPE_SUCCESS_URL:'https://flupflap.com/recharge',
+   STRIPE_FAILURE_URL:'https://flupflap.com/recharge',
+  });
+  return { mobileTopUpConfig, securityConfig, stripeConfig };
+ }
+
+ it('allows guest, registration and login with all approvals, without a payment/provider request', async () => {
+  const { app, provider } = setup(production());
+  const guest = (await request(app).post(root+'/auth/guest').send({}).expect(201)).body;
+  expect(guest.user).toMatchObject({domain:'FLUPFLAP', guest:true});
+  await request(app).get(root+'/auth/me').set(headers(guest.accessToken)).expect(200);
+  const customer = await signup(app, 'production');
+  const login = await request(app).post(root+'/auth/login').send({email:customer.user.email,password:'correct-horse-42'}).expect(200);
+  expect(login.body.user).toMatchObject({id:customer.user.id, domain:'FLUPFLAP', guest:false});
+  await request(app).get(root+'/auth/me').set(headers(login.body.accessToken)).expect(200);
+  expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it.each([
+  ['topup','paymentMode','mock'], ['topup','paymentMode',undefined],
+  ['topup','productionEnabled',false], ['topup','approvedForLiveUse',false],
+  ['topup','liveRechargeEnabled',false], ['security','approvedForLiveUse',false],
+  ['security','liveMoneyEnabled',false], ['topup','environment','sandbox'],
+ ] as const)('blocks mixed/partial production at both identity checks: %s.%s=%s', async (scope, key, value) => {
+  const options = production(); const {app} = setup(options);
+  // Exercise the runtime gate after coherent startup; do not bypass or weaken startup validation.
+  Object.assign(scope === 'topup' ? options.mobileTopUpConfig : options.securityConfig, {[key]:value});
+  for (const endpoint of ['guest','register','login']) {
+   const response = await request(app).post(root+'/auth/'+endpoint).send({}).expect(503);
+   expect(response.body.code).toBe('FLUPFLAP_UNAVAILABLE');
+   expect(response.body).not.toHaveProperty('accessToken');
+  }
+  const protectedResponse = await request(app).get(root+'/mobile-topups/status').expect(503);
+  expect(protectedResponse.body.code).toBe('FLUPFLAP_UNAVAILABLE');
+  expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it.each(['productionEnabled','approvedForLiveUse','securityApproval','liveMoneyEnabled'] as const)(
+  'keeps sandbox authentication blocked when %s is enabled', async key => {
+   const mobileTopUpConfig = {...config}; const securityConfig = loadSecurityConfig({});
+   if (key === 'securityApproval') securityConfig.approvedForLiveUse = true;
+   else if (key === 'liveMoneyEnabled') securityConfig.liveMoneyEnabled = true;
+   else mobileTopUpConfig[key] = true;
+   const {app} = setup({mobileTopUpConfig,securityConfig});
+   expect((await request(app).post(root+'/auth/guest').send({}).expect(503)).body.code).toBe('FLUPFLAP_UNAVAILABLE');
+  });
+
+ it.each(['paymentMode','liveRechargeEnabled'] as const)('preserves existing startup rejection of incoherent %s', key => {
+  const options = production();
+  if (key === 'paymentMode') options.mobileTopUpConfig.paymentMode = 'mock';
+  else options.mobileTopUpConfig.liveRechargeEnabled = false;
+  expect(() => setup(options)).toThrow(); expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it('preserves cross-domain isolation and guest profile/bank restrictions in production', async () => {
+  const {app, provider} = setup(production());
+  const guest = (await request(app).post(root+'/auth/guest').send({}).expect(201)).body;
+  const customer = await signup(app, 'isolated');
+  for (const token of [guest.accessToken, customer.accessToken]) {
+   for (const path of ['/api/users/me','/api/recipients','/api/funding/wallet','/api/admin/session','/api/mobile-topups/countries']) {
+    await request(app).get(path).set(headers(token)).expect(401);
+   }
+  }
+  const legacy = (await request(app).post('/api/auth/register').send({email:'legacy@example.test',password:'correct-horse-42',firstName:'Ti',lastName:'Cash'}).expect(201)).body;
+  await request(app).get(root+'/auth/me').set(headers(legacy.accessToken)).expect(401);
+  await request(app).get(root+'/mobile-topups/countries').set(headers(legacy.accessToken)).expect(401);
+  await request(app).patch(root+'/auth/me').set(headers(guest.accessToken)).send({countryCode:'US'}).expect(403);
+  const methods = await request(app).get(root+'/mobile-topups/payment-methods').set(headers(guest.accessToken)).expect(200);
+  expect(methods.body.methods.find((m:{type:string})=>m.type==='BANK_ACCOUNT')).toMatchObject({enabled:false,reason:'GUEST_SCOPE_RESTRICTED'});
+  expect((await request(app).post('/api/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_SANDBOX_REQUIRED');
+  expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it.each([true,false])('preserves recharge restrictions for production guest=%s', async guest => {
+  const {app,identities,provider} = setup(production());
+  const customer = guest ? (await request(app).post(root+'/auth/guest').send({}).expect(201)).body : await signup(app);
+  await identities.update(customer.user.id,{rechargeRestricted:true});
+  for (const path of ['quotes','transactions','payment-sessions']) {
+   const response = await request(app).post(root+'/mobile-topups/'+path).set(headers(customer.accessToken)).send({}).expect(403);
+   expect(response.body.code).toBe('RECHARGE_RESTRICTED');
+  }
+  expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it('retains proxy configuration enforcement for production guests but allows permanent sign-in', async () => {
+  vi.stubEnv('TRUST_PROXY_HOPS', undefined);
+  const {app} = setup(production());
+  expect((await request(app).post(root+'/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_PROXY_CONFIGURATION_REQUIRED');
+  const customer = await signup(app);
+  await request(app).post(root+'/auth/login').send({email:customer.user.email,password:'correct-horse-42'}).expect(200);
+  expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it('keeps FlupFlap enablement and its own signing secret required', async () => {
+  for (const flupFlapConfig of [{enabled:false,accessSecret:'test-flupflap-only-secret-at-least-32-characters'},{enabled:true}]) {
+   const {app} = setup({...production(),flupFlapConfig});
+   expect((await request(app).post(root+'/auth/guest').send({}).expect(503)).body.code).toBe('FLUPFLAP_UNAVAILABLE');
+  }
+ });
 });

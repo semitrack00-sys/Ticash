@@ -87,7 +87,8 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
   }
 
   private assertSafeSession(data: Record<string, unknown>): HostedCheckoutSession {
-    if (typeof data?.id !== 'string' || !this.checkoutSessionPattern().test(data.id) || typeof data.url !== 'string' || !/^https:\/\/checkout\.stripe\.com\//i.test(data.url) || 'client_secret' in data) {
+    const clientSecret = data.client_secret;
+    if (typeof data?.id !== 'string' || !this.checkoutSessionPattern().test(data.id) || typeof data.url !== 'string' || !/^https:\/\/checkout\.stripe\.com\//i.test(data.url) || (clientSecret !== undefined && clientSecret !== null)) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
     }
     const serialized = JSON.stringify(data);

@@ -707,6 +707,49 @@ describe('Stripe sandbox flow',()=>{
     expect(JSON.stringify(stored)).not.toContain(resumeToken);
   });
 
+  it.each([
+    { label: 'null client_secret', response: { id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123', client_secret: null } },
+    { label: 'absent client_secret', response: { id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' } },
+  ])('accepts hosted Stripe Checkout when %s', async ({ response }) => {
+    const transport = vi.fn(async () => stripeResponse(response));
+    const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
+
+    const session = await provider.createPaymentSession({
+      transactionId: 'tx-null-client-secret',
+      amountMinor: 599,
+      currency: 'USD',
+      billingCountry: 'US',
+      resumeToken: 'A'.repeat(43),
+    });
+
+    expect(session).toMatchObject({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' });
+    expect(session).not.toHaveProperty('client_secret');
+    expect(JSON.stringify(session)).not.toContain('client_secret');
+  });
+
+  it.each([
+    { label: 'string', client_secret: 'cs_test_secret_value' },
+    { label: 'empty string', client_secret: '' },
+    { label: 'object', client_secret: {} },
+    { label: 'number', client_secret: 123 },
+  ])('rejects hosted Stripe Checkout when client_secret is a non-null %s', async ({ client_secret }) => {
+    const transport = vi.fn(async () => stripeResponse({
+      id: 'cs_test_fixture_123',
+      url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123',
+      client_secret,
+    }));
+    const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
+
+    await expect(provider.createPaymentSession({
+      transactionId: 'tx-reject-client-secret',
+      amountMinor: 599,
+      currency: 'USD',
+      billingCountry: 'US',
+      resumeToken: 'A'.repeat(43),
+    })).rejects.toMatchObject({ code: 'INVALID_PAYMENT_SESSION', statusCode: 502 });
+    expect(JSON.stringify(transport.mock.calls)).not.toContain('cs_test_secret_value');
+  });
+
   it('resolves checkout resumes without granting payment authority', async () => {
     const f = stripeFixture();
     const app = createApp({

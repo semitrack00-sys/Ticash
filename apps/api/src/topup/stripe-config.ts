@@ -100,17 +100,17 @@ export function loadStripeConfig(env: NodeJS.ProcessEnv = process.env): StripeCo
 }
 
 export function validateStripeConfig(config: StripeConfig, { strict = true }: { strict?: boolean } = {}) {
-  const secretPrefix = config.environment === 'production' ? 'sk_live_' : 'sk_test_';
+  const validSecretPrefixes = config.environment === 'production' ? ['sk_live_', 'rk_live_'] : ['sk_test_', 'rk_test_'];
+  const oppositeSecretPrefixes = config.environment === 'production' ? ['sk_test_', 'rk_test_'] : ['sk_live_', 'rk_live_'];
   const publicPrefix = config.environment === 'production' ? 'pk_live_' : 'pk_test_';
-  const oppositeSecretPrefix = config.environment === 'production' ? 'sk_test_' : 'sk_live_';
   const oppositePublicPrefix = config.environment === 'production' ? 'pk_test_' : 'pk_live_';
 
-  if (config.secretKey?.startsWith(oppositeSecretPrefix) || config.publicKey?.startsWith(oppositePublicPrefix)) {
+  if (oppositeSecretPrefixes.some((prefix) => config.secretKey?.startsWith(prefix)) || config.publicKey?.startsWith(oppositePublicPrefix)) {
     throw stripeValidationError('Stripe credential key prefixes do not match STRIPE_ENVIRONMENT', config);
   }
 
   const incomplete = (
-    !config.secretKey?.startsWith(secretPrefix) ||
+    !validSecretPrefixes.some((prefix) => config.secretKey?.startsWith(prefix)) ||
     !config.publicKey?.startsWith(publicPrefix) ||
     !config.webhookSecret?.startsWith('whsec_') ||
     !config.successUrl ||

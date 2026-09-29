@@ -75,6 +75,7 @@ export interface MobileTopUpConfig {
   senderPhoneNumber?: string;
   billingCurrency: 'USD';
   quoteTtlSeconds: number;
+  checkoutResumeTtlSeconds?: number;
   paymentMode: 'mock' | 'stripe_sandbox';
   productionEnabled: false;
   approvedForLiveUse: false;

@@ -367,7 +367,7 @@ export class MobileTopUpService {
   }
 
   private checkoutResumeTokenExpiresAt() {
-    return new Date(this.clock().getTime() + this.config.quoteTtlSeconds * 1000).toISOString();
+    return new Date(this.clock().getTime() + (this.config.checkoutResumeTtlSeconds ?? 3600) * 1000).toISOString();
   }
 
   private makeCheckoutResumeToken() {

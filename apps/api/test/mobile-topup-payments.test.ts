@@ -278,7 +278,12 @@ describe('Stripe sandbox flow',()=>{
 
   function stripeFixture(
     transport = vi.fn(async () => stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' })),
-    options: { enabled?: boolean; configured?: boolean } = {},
+    options: {
+      enabled?: boolean;
+      configured?: boolean;
+      clock?: () => Date;
+      configOverride?: Partial<MobileTopUpConfig>;
+    } = {},
   ) {
     const submit = vi.fn(async () => ({
       transactionId: 'reloadly-fixture',
@@ -305,12 +310,17 @@ describe('Stripe sandbox flow',()=>{
       : new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
     const repository = new MemoryMobileTopUpRepository();
     const service = new MobileTopUpService(
-      { ...config, enabled: options.enabled ?? true, paymentMode: 'stripe_sandbox' },
+      {
+        ...config,
+        ...(options.configOverride ?? {}),
+        enabled: options.enabled ?? true,
+        paymentMode: 'stripe_sandbox',
+      },
       provider,
       new MockMobileTopUpPaymentProvider(),
       repository,
       vi.fn(async () => {}),
-      undefined,
+      options.clock,
       stripeProvider,
     );
 
@@ -600,6 +610,56 @@ describe('Stripe sandbox flow',()=>{
       f.stripeProvider,
     );
     await expect(expiredService.resumeCheckout(resumeToken)).rejects.toMatchObject({ code: 'RESUME_TOKEN_EXPIRED' });
+  });
+
+  it('keeps checkout resume valid after quote expiry when dedicated resume TTL is longer', async () => {
+    let now = new Date('2026-09-28T12:00:00.000Z');
+    const f = stripeFixture(undefined, {
+      clock: () => now,
+      configOverride: { quoteTtlSeconds: 30, checkoutResumeTtlSeconds: 3600 },
+    });
+
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-resume-after-quote-expiry', 'US');
+    const params = new URLSearchParams(transportRequest(f.transport).body);
+    const resumeToken = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+
+    now = new Date(now.getTime() + 31_000); // Quote TTL (30s) is expired.
+    const resumed = await f.service.resumeCheckout(resumeToken);
+    expect(resumed).toMatchObject({
+      status: 'PENDING',
+      testMode: true,
+      recipientPhone: quote.recipientPhone,
+      operatorName: quote.operatorName,
+      productName: quote.productName,
+      providerAmount: 5,
+      providerCurrency: 'USD',
+      feeUsd: 0.99,
+      totalChargeUsd: 5.99,
+    });
+    expect((await f.repository.getTransactionById(session.transactionId))?.paymentStatus).toBe('SESSION_CREATED');
+    expect(f.submit).not.toHaveBeenCalled();
+    expect(f.transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('expires checkout resume strictly at the dedicated TTL boundary', async () => {
+    let now = new Date('2026-09-28T14:00:00.000Z');
+    const f = stripeFixture(undefined, {
+      clock: () => now,
+      configOverride: { quoteTtlSeconds: 300, checkoutResumeTtlSeconds: 120 },
+    });
+
+    const quote = await f.service.createQuote('customer', quoteInput);
+    await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-resume-boundary', 'US');
+    const params = new URLSearchParams(transportRequest(f.transport).body);
+    const resumeToken = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+
+    now = new Date(now.getTime() + 119_999);
+    await expect(f.service.resumeCheckout(resumeToken)).resolves.toMatchObject({ testMode: true, status: 'PENDING' });
+
+    now = new Date(now.getTime() + 1);
+    await expect(f.service.resumeCheckout(resumeToken)).rejects.toMatchObject({ code: 'RESUME_TOKEN_EXPIRED' });
+    expect(f.submit).not.toHaveBeenCalled();
   });
 
   it('serializes only the customer-safe resume DTO, including when internal recovery fields are populated', async () => {

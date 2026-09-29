@@ -1,4 +1,4 @@
-import { MobileTopUpError, type MobileTopUpPaymentCapture, type MobileTopUpPaymentQuery, type MobileTopUpPaymentRecovery, type MobileTopUpSessionProvider, type PaymentSessionInput } from './types.js';
+import { MobileTopUpError, type HostedCheckoutSession, type HostedCheckoutSessionBaseContract, type MobileTopUpPaymentCapture, type MobileTopUpPaymentQuery, type MobileTopUpPaymentRecovery, type MobileTopUpSessionProvider, type PaymentSessionInput } from './types.js';
 import { validateStripeConfig, type StripeConfig } from './stripe-config.js';
 
 export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider, MobileTopUpPaymentRecovery, MobileTopUpPaymentQuery, MobileTopUpPaymentCapture {
@@ -14,7 +14,7 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
     const append = (key: string, value: unknown) => {
       if (value === undefined || value === null) return;
       if (Array.isArray(value)) {
-        for (const entry of value) append(`${key}[]`, entry);
+        value.forEach((entry, index) => append(`${key}[${index}]`, entry));
         return;
       }
       if (typeof value === 'object') {
@@ -48,26 +48,36 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
     }
   }
 
-  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string }) {
-    if (input.currency !== 'USD' || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0 || !/^[A-Z]{2}$/.test(input.billingCountry ?? '')) {
+  private buildReturnUrl(baseUrl: string, resumeToken: string) {
+    const url = new URL(baseUrl);
+    url.searchParams.set('checkoutResumeToken', resumeToken);
+    return url.toString();
+  }
+
+  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string }) {
+    if (input.currency !== 'USD' || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0 || !/^[A-Za-z0-9_-]{43,512}$/.test(input.resumeToken) || !/^[A-Z]{2}$/.test(input.billingCountry ?? '')) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Server-verified billing country and USD amount are required', 400);
     }
-    const { data } = await this.request('/v1/payment_intents', 'POST', {
-      amount: input.amountMinor,
-      currency: 'usd',
-      description: `TiCash recharge ${input.transactionId}`,
+    const { data } = await this.request('/v1/checkout/sessions', 'POST', {
+      mode: 'payment',
+      success_url: this.buildReturnUrl(this.config.successUrl!, input.resumeToken),
+      cancel_url: this.buildReturnUrl(this.config.failureUrl!, input.resumeToken),
+      client_reference_id: input.transactionId,
       metadata: {
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
       },
-      automatic_payment_methods: { enabled: true },
-    });
-    this.assertSafeSession(data);
-    return data;
+      line_items: [{ quantity: 1, price_data: {
+        currency: 'usd',
+        unit_amount: input.amountMinor,
+        product_data: { name: `TiCash recharge ${input.transactionId}` },
+      } }],
+    }, input.transactionId + ':checkout');
+    return this.assertSafeSession(data);
   }
 
-  private assertSafeSession(data: Record<string, unknown>) {
-    if (typeof data?.id !== 'string' || !/^pi_[A-Za-z0-9_]+$/.test(data.id) || typeof data.client_secret !== 'string' || !data.client_secret) {
+  private assertSafeSession(data: Record<string, unknown>): HostedCheckoutSession {
+    if (typeof data?.id !== 'string' || !/^cs_test_[A-Za-z0-9_]+$/.test(data.id) || typeof data.url !== 'string' || !/^https:\/\/checkout\.stripe\.com\//i.test(data.url) || 'client_secret' in data) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment session', 502);
     }
     const serialized = JSON.stringify(data);
@@ -75,11 +85,23 @@ export class StripeSandboxPaymentProvider implements MobileTopUpSessionProvider,
         /"(?:secret_key|webhook_secret|api_key|access_token|refresh_token|database_url)"/i.test(serialized)) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Unsafe payment session response', 502);
     }
+    return { id: data.id, url: data.url };
   }
 
-  flowContract(transactionId: string, paymentSession: Record<string, unknown>) {
-    this.assertSafeSession(paymentSession);
-    return { provider: 'STRIPE', environment: 'SANDBOX', transactionId, paymentSession, publicKey: this.config.publicKey };
+  flowContract(transactionId: string, checkoutSession: HostedCheckoutSession): HostedCheckoutSessionBaseContract {
+    return { provider: 'STRIPE', environment: 'SANDBOX', testMode: true, transactionId, checkoutSession: this.assertSafeSession(checkoutSession as unknown as Record<string, unknown>) };
+  }
+
+  async getHostedCheckoutSession(paymentSessionId: string) {
+    if (!/^cs_test_[A-Za-z0-9_]+$/.test(paymentSessionId)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);
+    }
+    const { data } = await this.request(`/v1/checkout/sessions/${encodeURIComponent(paymentSessionId)}`);
+    const session = this.assertSafeSession(data);
+    if (session.id !== paymentSessionId) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe payment session does not match the reservation', 502);
+    }
+    return session;
   }
 
   async getPayment(paymentId: string) {

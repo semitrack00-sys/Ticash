@@ -43,4 +43,24 @@ describe('mobile top-up configuration', () => {
     } as NodeJS.ProcessEnv)).toThrow();
   });
 
+  it('uses an independent checkout resume TTL default and validates bounded integers', () => {
+    expect(loadMobileTopUpConfig({} as NodeJS.ProcessEnv).checkoutResumeTtlSeconds).toBe(3600);
+
+    expect(loadMobileTopUpConfig({
+      MOBILE_TOPUP_CHECKOUT_RESUME_TTL_SECONDS: '120',
+    } as NodeJS.ProcessEnv).checkoutResumeTtlSeconds).toBe(120);
+
+    expect(() => loadMobileTopUpConfig({
+      MOBILE_TOPUP_CHECKOUT_RESUME_TTL_SECONDS: '59',
+    } as NodeJS.ProcessEnv)).toThrow();
+
+    expect(() => loadMobileTopUpConfig({
+      MOBILE_TOPUP_CHECKOUT_RESUME_TTL_SECONDS: '86401',
+    } as NodeJS.ProcessEnv)).toThrow();
+
+    expect(() => loadMobileTopUpConfig({
+      MOBILE_TOPUP_CHECKOUT_RESUME_TTL_SECONDS: '1.5',
+    } as NodeJS.ProcessEnv)).toThrow();
+  });
+
 });

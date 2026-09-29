@@ -13,13 +13,20 @@ export type StripeEventType =
   | 'payment_intent.processing'
   | 'payment_intent.requires_action'
   | 'payment_intent.incomplete'
-  | 'payment_intent.partially_funded';
+  | 'payment_intent.partially_funded'
+  | 'checkout.session.completed'
+  | 'checkout.session.async_payment_succeeded'
+  | 'checkout.session.async_payment_failed'
+  | 'checkout.session.expired';
 
 export interface VerifiedStripeEvent {
   readonly [verifiedEvent]: true;
   eventId: string;
   transactionId: string;
   paymentId: string;
+  checkoutSessionId: string;
+  paymentIntentId?: string;
+  paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   payloadHash: string;
   amountMinor: number;
   currency: 'USD';
@@ -52,13 +59,28 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
 
   const parsed = z.object({
     id: z.string().min(1).max(200),
-    type: z.string().min(1).max(200),
+    type: z.enum([
+      'payment_intent.succeeded',
+      'payment_intent.payment_failed',
+      'payment_intent.canceled',
+      'payment_intent.processing',
+      'payment_intent.requires_action',
+      'payment_intent.incomplete',
+      'payment_intent.partially_funded',
+      'checkout.session.completed',
+      'checkout.session.async_payment_succeeded',
+      'checkout.session.async_payment_failed',
+      'checkout.session.expired',
+    ]),
     data: z.object({ object: z.object({
-      id: z.string().regex(/^pi_[A-Za-z0-9_]+$/).max(100),
+      id: z.string().min(1).max(100),
       amount: z.number().int().optional(),
       amount_received: z.number().int().optional(),
+      amount_total: z.number().int().optional(),
       currency: z.string().min(3).max(3).optional(),
       metadata: z.record(z.string(), z.string()).optional(),
+      payment_intent: z.string().regex(/^pi_[A-Za-z0-9_]+$/).optional(),
+      payment_status: z.enum(['paid', 'unpaid', 'no_payment_required']).optional(),
     }).passthrough() }).passthrough(),
   }).safeParse(body);
 
@@ -66,12 +88,20 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
   const object = parsed.data.data.object;
   const metadata = object.metadata ?? {};
   const transactionId = metadata.transactionId ?? metadata.transaction_id ?? metadata.rechargeId ?? metadata.recharge_id;
-  const amountMinor = Number(object.amount_received ?? object.amount ?? 0);
+  const isCheckoutSession = parsed.data.type.startsWith('checkout.session.');
+  const amountMinor = Number(isCheckoutSession ? object.amount_total : object.amount_received ?? object.amount ?? 0);
+  const paymentIntentId = object.payment_intent;
   if (!transactionId || !Number.isFinite(amountMinor) || amountMinor <= 0) {
     throw new MobileTopUpError('INVALID_PAYMENT_EVENT', 'Payment event is missing a server-bound transaction reference', 400);
   }
-  if ((object.currency ?? 'usd').toUpperCase() !== 'USD') {
+  if ((object.currency ?? '').toUpperCase() !== 'USD') {
     throw new MobileTopUpError('INVALID_PAYMENT_EVENT', 'Unsupported or invalid payment event', 400);
+  }
+  if (isCheckoutSession && (!/^cs_[A-Za-z0-9_]+$/.test(object.id) || !paymentIntentId && !['checkout.session.async_payment_failed', 'checkout.session.expired'].includes(parsed.data.type))) {
+    throw new MobileTopUpError('INVALID_PAYMENT_EVENT', 'Checkout session event is missing a payment-intent binding', 400);
+  }
+  if (!isCheckoutSession && !/^pi_[A-Za-z0-9_]+$/.test(object.id)) {
+    throw new MobileTopUpError('INVALID_PAYMENT_EVENT', 'Invalid payment-intent identity', 400);
   }
 
   return {
@@ -79,7 +109,10 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
     eventId: parsed.data.id,
     type: parsed.data.type as StripeEventType,
     transactionId,
-    paymentId: object.id,
+    paymentId: paymentIntentId ?? object.id,
+    checkoutSessionId: object.id,
+    ...(paymentIntentId ? { paymentIntentId } : {}),
+    ...(isCheckoutSession ? { paymentStatus: object.payment_status } : {}),
     amountMinor,
     currency: 'USD',
     payloadHash: createHash('sha256').update(raw).digest('hex'),

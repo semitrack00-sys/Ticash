@@ -67,6 +67,8 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentProvider?: MobileTopUpPaymentProviderName;
   paymentSessionId?: string;
   paymentProviderTransactionId?: string;
+  checkoutResumeTokenHash?: string;
+  checkoutResumeTokenExpiresAt?: string;
   paymentStartedAt?: string;
   fulfillmentStartedAt?: string;
   recoveryStartedAt?: string;
@@ -89,6 +91,7 @@ export interface MobileTopUpRepository {
   markQuoteConsumed(userId: string, id: string, when: string): Promise<void>;
   reserveTransaction(input: MobileTopUpTransactionRecord): Promise<{ record: MobileTopUpTransactionRecord; created: boolean }>;
   getTransactionById(id: string): Promise<MobileTopUpTransactionRecord | undefined>;
+  getTransactionByCheckoutResumeTokenHash(tokenHash: string): Promise<MobileTopUpTransactionRecord | undefined>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
   registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string): Promise<boolean>;
@@ -107,7 +110,8 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
     'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
     'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
-    'paymentProvider' | 'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode'>>;
+      'paymentProvider' | 'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
+      'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
 
 const recipients = new Map<string, SavedTopUpRecipientRecord>();
 const quotes = new Map<string, MobileTopUpQuoteRecord>();
@@ -127,6 +131,10 @@ function now(): string { return new Date().toISOString(); }
 
 export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   async getTransactionById(id: string) { return transactions.get(id); }
+
+  async getTransactionByCheckoutResumeTokenHash(tokenHash: string) {
+    return [...transactions.values()].find((item) => item.checkoutResumeTokenHash === tokenHash);
+  }
 
   async claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string) {
     const record = transactions.get(id);
@@ -318,6 +326,7 @@ function transactionFromDb(record: {
   failedAt: Date | null; refundedAt: Date | null;
   paymentMethod?: MobileTopUpPaymentMethod | null; paymentProvider?: MobileTopUpPaymentProviderName | string | null;
   paymentSessionId?: string | null; paymentProviderTransactionId?: string | null;
+  checkoutResumeTokenHash?: string | null; checkoutResumeTokenExpiresAt?: Date | null;
   paymentStartedAt?: Date | null; fulfillmentStartedAt?: Date | null; recoveryStartedAt?: Date | null;
   paymentRecoveryCode?: string | null;
 }): MobileTopUpTransactionRecord {
@@ -342,6 +351,8 @@ function transactionFromDb(record: {
     paymentProvider: paymentProvider as MobileTopUpPaymentProviderName | undefined,
     paymentSessionId: record.paymentSessionId ?? undefined,
     paymentProviderTransactionId: record.paymentProviderTransactionId ?? undefined,
+    checkoutResumeTokenHash: record.checkoutResumeTokenHash ?? undefined,
+    checkoutResumeTokenExpiresAt: record.checkoutResumeTokenExpiresAt?.toISOString(),
     paymentStartedAt: record.paymentStartedAt?.toISOString(),
     fulfillmentStartedAt: record.fulfillmentStartedAt?.toISOString(),
     recoveryStartedAt: record.recoveryStartedAt?.toISOString(),
@@ -375,6 +386,11 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async getTransactionById(id: string) {
     const record = await this.prisma.mobileTopUpTransaction.findUnique({ where: { id } });
+    return record ? transactionFromDb(record) : undefined;
+  }
+
+  async getTransactionByCheckoutResumeTokenHash(tokenHash: string) {
+    const record = await this.prisma.mobileTopUpTransaction.findFirst({ where: { checkoutResumeTokenHash: tokenHash } });
     return record ? transactionFromDb(record) : undefined;
   }
 
@@ -505,6 +521,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           paymentStartedAt: input.paymentStartedAt ? new Date(input.paymentStartedAt) : null,
           fulfillmentStartedAt: input.fulfillmentStartedAt ? new Date(input.fulfillmentStartedAt) : null,
           recoveryStartedAt: input.recoveryStartedAt ? new Date(input.recoveryStartedAt) : null,
+          checkoutResumeTokenHash: input.checkoutResumeTokenHash ?? undefined,
+          checkoutResumeTokenExpiresAt: input.checkoutResumeTokenExpiresAt ? new Date(input.checkoutResumeTokenExpiresAt) : null,
           recipientId: input.recipientId,
           countryCode: input.countryCode,
           deliveredAt: input.deliveredAt ? new Date(input.deliveredAt) : null,

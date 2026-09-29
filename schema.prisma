@@ -607,6 +607,8 @@ model MobileTopUpTransaction {
   paymentProvider       MobileTopUpPaymentProviderName?
   paymentSessionId      String?
   paymentProviderTransactionId String?
+  checkoutResumeTokenHash String? @unique
+  checkoutResumeTokenExpiresAt DateTime?
   paymentStartedAt      DateTime?
   fulfillmentStartedAt  DateTime?
   recoveryStartedAt     DateTime?

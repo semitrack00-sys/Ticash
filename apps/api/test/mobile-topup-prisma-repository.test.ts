@@ -46,11 +46,12 @@ describe('PrismaMobileTopUpRepository', () => {
       deliveredCurrency: 'HTG',
       feeUsd: 0,
       totalChargeUsd: 4,
+      testMode: true,
       expiresAt: storedQuote.expiresAt.toISOString(),
     });
 
     expect(quote.provider).toBe('RELOADLY');
-    expect(quote).not.toHaveProperty('testMode');
+    expect(quote.testMode).toBe(true);
     expect(quote).toMatchObject({
       id: 'quote-id',
       countryCode: 'HT',
@@ -87,7 +88,7 @@ describe('payment foundation persistence', () => {
       mobileTopUpTransaction: { findUnique: vi.fn(async () => null) },
       $transaction: async (fn: (tx: unknown) => unknown) => fn({ mobileTopUpQuote: { updateMany: vi.fn(async () => ({ count: 1 })) }, mobileTopUpTransaction: { create: transactionCreate } }),
     } as never);
-    const quote = await repository.createQuote({ ...identity, userId: 'customer', countryCode: 'JM', recipientPhone: recipientRow.phone, operatorName: 'Fixture', productName: 'Exact product', kind: 'AIRTIME', providerAmount: 5, providerCurrency: 'USD', deliveredCurrency: 'JMD', feeUsd: 0.99, totalChargeUsd: 5.99, expiresAt: timestamp.toISOString() });
+    const quote = await repository.createQuote({ ...identity, userId: 'customer', countryCode: 'JM', recipientPhone: recipientRow.phone, operatorName: 'Fixture', productName: 'Exact product', kind: 'AIRTIME', providerAmount: 5, providerCurrency: 'USD', deliveredCurrency: 'JMD', feeUsd: 0.99, totalChargeUsd: 5.99, testMode: true, expiresAt: timestamp.toISOString() });
     expect(quote).toMatchObject(identity);
     expect(quoteCreate).toHaveBeenCalledWith({ data: expect.objectContaining(identity) });
     const reserved = await repository.reserveTransaction({ ...quote, id: 'transaction', quoteId: quote.id, idempotencyKey: 'fixture-key', requestHash: 'hash', customIdentifier: 'fixture-reference', status: 'PENDING', paymentStatus: 'AUTHORIZED', testMode: true, updatedAt: timestamp.toISOString() });
@@ -133,5 +134,142 @@ describe('payment foundation persistence', () => {
     const updateMany=vi.fn(async()=>({count:0}));const repository=new PrismaMobileTopUpRepository({mobileTopUpTransaction:{updateMany}} as never);
     expect(await repository.transitionPayment('transaction',['SESSION_CREATED','AUTHORIZED'],{paymentStatus:'CAPTURED',paymentProviderTransactionId:'pay_one'})).toBe(false);
     expect(updateMany.mock.calls[0][0]).toMatchObject({where:{id:'transaction',paymentStatus:{in:['SESSION_CREATED','AUTHORIZED']},OR:[{paymentProviderTransactionId:null},{paymentProviderTransactionId:'pay_one'}]}});
+  });
+
+  it.each([
+    { label: 'sandbox', testMode: true },
+    { label: 'production', testMode: false },
+  ])('persists %s testMode into quote and transaction writes', async ({ testMode }) => {
+    const quoteRow = { ...row, id: 'quote', expiresAt: timestamp, consumedAt: null, testMode };
+    const quoteCreate = vi.fn(async () => quoteRow);
+    const transactionCreate = vi.fn(async () => ({ ...row, testMode }));
+    const repository = new PrismaMobileTopUpRepository({
+      mobileTopUpQuote: { create: quoteCreate },
+      mobileTopUpTransaction: { findUnique: vi.fn(async () => null) },
+      $transaction: async (fn: (tx: unknown) => unknown) => fn({
+        mobileTopUpQuote: { updateMany: vi.fn(async () => ({ count: 1 })) },
+        mobileTopUpTransaction: { create: transactionCreate },
+      }),
+    } as never);
+
+    const quote = await repository.createQuote({
+      userId: 'customer',
+      countryCode: 'JM',
+      recipientPhone: '+18765551234',
+      operatorId: 77,
+      operatorName: 'Fixture',
+      productId: 'reloadly:JM:77:airtime:5.00',
+      productName: 'Fixture product',
+      kind: 'AIRTIME',
+      providerAmount: 5,
+      providerCurrency: 'USD',
+      deliveredCurrency: 'JMD',
+      feeUsd: 0.99,
+      totalChargeUsd: 5.99,
+      testMode,
+      expiresAt: timestamp.toISOString(),
+    });
+
+    await repository.reserveTransaction({
+      ...quote,
+      id: 'transaction',
+      quoteId: quote.id,
+      idempotencyKey: 'fixture-key',
+      requestHash: 'hash',
+      customIdentifier: 'fixture-reference',
+      status: 'PENDING',
+      paymentStatus: 'AUTHORIZED',
+      paymentEnvironment: testMode ? 'SANDBOX' : 'PRODUCTION',
+      rechargeEnvironment: testMode ? 'SANDBOX' : 'PRODUCTION',
+      updatedAt: timestamp.toISOString(),
+    });
+
+    expect(quoteCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ testMode }) });
+    expect(transactionCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ testMode }) });
+  });
+
+  it('keeps historical sandbox ledger account keys for delivered/refunded entries', async () => {
+    const findUnique = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'delivered-ledger' });
+    const upsert = vi.fn(async ({ where }: { where: { key: string } }) => ({ id: where.key, key: where.key }));
+    const findUniqueOrThrow = vi.fn(async ({ where }: { where: { key: string } }) => ({ id: where.key, key: where.key }));
+    const create = vi.fn(async () => ({ id: 'ledger-transaction' }));
+    const createMany = vi.fn(async () => ({ count: 3 }));
+    const repository = new PrismaMobileTopUpRepository({
+      $transaction: async (fn: (tx: unknown) => unknown) => fn({
+        ledgerTransaction: { findUnique, create },
+        ledgerAccount: { upsert, findUniqueOrThrow },
+        ledgerEntry: { createMany },
+      }),
+    } as never);
+
+    const sandboxRecord = {
+      id: 'transaction',
+      providerAmount: 5,
+      totalChargeUsd: 5.99,
+      feeUsd: 0.99,
+      rechargeEnvironment: 'SANDBOX',
+    } as MobileTopUpTransactionRecord;
+
+    await repository.postDeliveredLedger(sandboxRecord);
+    await repository.postRefundLedger(sandboxRecord);
+
+    const upsertKeys = upsert.mock.calls.map(call => call[0].where.key);
+    const refundLookupKeys = findUniqueOrThrow.mock.calls.map(call => call[0].where.key);
+    expect(upsertKeys).toEqual([
+      'TOPUP_TEST_PAYMENT_CLEARING_USD',
+      'TOPUP_PROVIDER_SETTLEMENT_USD',
+      'TOPUP_FEE_REVENUE_USD',
+    ]);
+    expect(refundLookupKeys).toEqual([
+      'TOPUP_TEST_PAYMENT_CLEARING_USD',
+      'TOPUP_PROVIDER_SETTLEMENT_USD',
+      'TOPUP_FEE_REVENUE_USD',
+    ]);
+    expect([...upsertKeys, ...refundLookupKeys]).not.toContain('TOPUP_PRODUCTION_PAYMENT_CLEARING_USD');
+    expect(createMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses production-only ledger keys and never writes to sandbox accounts for production entries', async () => {
+    const findUnique = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'delivered-ledger' });
+    const upsert = vi.fn(async ({ where }: { where: { key: string } }) => ({ id: where.key, key: where.key }));
+    const findUniqueOrThrow = vi.fn(async ({ where }: { where: { key: string } }) => ({ id: where.key, key: where.key }));
+    const create = vi.fn(async () => ({ id: 'ledger-transaction' }));
+    const createMany = vi.fn(async () => ({ count: 3 }));
+    const repository = new PrismaMobileTopUpRepository({
+      $transaction: async (fn: (tx: unknown) => unknown) => fn({
+        ledgerTransaction: { findUnique, create },
+        ledgerAccount: { upsert, findUniqueOrThrow },
+        ledgerEntry: { createMany },
+      }),
+    } as never);
+
+    const productionRecord = {
+      id: 'transaction-production',
+      providerAmount: 5,
+      totalChargeUsd: 5.99,
+      feeUsd: 0.99,
+      rechargeEnvironment: 'PRODUCTION',
+    } as MobileTopUpTransactionRecord;
+
+    await repository.postDeliveredLedger(productionRecord);
+    await repository.postRefundLedger(productionRecord);
+
+    const keys = [
+      ...upsert.mock.calls.map(call => call[0].where.key),
+      ...findUniqueOrThrow.mock.calls.map(call => call[0].where.key),
+    ];
+    expect(keys).toContain('TOPUP_PRODUCTION_PAYMENT_CLEARING_USD');
+    expect(keys).toContain('TOPUP_PRODUCTION_PROVIDER_SETTLEMENT_USD');
+    expect(keys).toContain('TOPUP_PRODUCTION_FEE_REVENUE_USD');
+    expect(keys).not.toContain('TOPUP_TEST_PAYMENT_CLEARING_USD');
+    expect(keys).not.toContain('TOPUP_PROVIDER_SETTLEMENT_USD');
+    expect(keys).not.toContain('TOPUP_FEE_REVENUE_USD');
+    expect(createMany).toHaveBeenCalledTimes(2);
   });
 });

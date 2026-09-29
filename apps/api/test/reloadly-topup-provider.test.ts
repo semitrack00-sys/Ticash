@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
+import { ReloadlyProductionTopUpProvider, ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
 import type { MobileTopUpConfig } from '../src/topup/types.js';
 
 const config: MobileTopUpConfig = {
@@ -21,6 +21,39 @@ function json(value: unknown, status = 200) {
 }
 
 describe('Reloadly Sandbox top-up provider', () => {
+  it('uses production audience/base URL and rejects arbitrary provider URLs without real network', async () => {
+    const productionConfig: MobileTopUpConfig = {
+      ...config,
+      environment: 'production',
+      clientId: 'live-id',
+      clientSecret: 'live-secret',
+      airtimeBaseUrl: 'https://topups.reloadly.com',
+      paymentMode: 'stripe_live',
+      productionEnabled: true,
+      approvedForLiveUse: true,
+      appApprovedForLiveUse: true,
+      liveMoneyEnabled: true,
+      liveRechargeEnabled: true,
+    };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'live-token', expires_in: 3600 }, 200))
+      .mockResolvedValueOnce(json([], 200));
+
+    const provider = new ReloadlyProductionTopUpProvider(productionConfig, fetcher);
+    await expect(provider.listCountries()).resolves.toEqual([]);
+
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
+      audience: productionConfig.airtimeBaseUrl,
+      client_id: 'live-id',
+      grant_type: 'client_credentials',
+    });
+    expect(String(fetcher.mock.calls[1]?.[0])).toBe('https://topups.reloadly.com/countries');
+
+    await expect((provider as unknown as { request: (path: string) => Promise<unknown> }).request('https://evil.example.test/topups'))
+      .rejects.toMatchObject({ code: 'INVALID_PROVIDER_URL' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('never logs secrets, tokens or authorization headers in diagnostics', async () => {
     const secret = 'reloadly-client-secret-DO-NOT-LOG';
     const token = 'reloadly-access-token-DO-NOT-LOG';

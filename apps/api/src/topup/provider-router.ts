@@ -6,7 +6,10 @@ import { MobileTopUpError, type MobileTopUpProvider, type MobileTopUpProviderNam
 export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
   readonly providerNames: MobileTopUpProviderName[];
   private readonly providers: Map<MobileTopUpProviderName, MobileTopUpProvider>;
-  constructor(entries: [MobileTopUpProviderName, MobileTopUpProvider][]) {
+  constructor(
+    entries: [MobileTopUpProviderName, MobileTopUpProvider][],
+    private readonly environment: 'SANDBOX' | 'PRODUCTION' = 'SANDBOX',
+  ) {
     if (new Set(entries.map(([name]) => name)).size !== entries.length) throw new Error('Duplicate recharge provider');
     this.providers = new Map(entries);
     this.providerNames = (['RELOADLY', 'DTONE', 'DING'] as const).filter(name => this.providers.has(name));
@@ -41,9 +44,9 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
         const status = error instanceof MobileTopUpError ? error.statusCode : undefined;
         const code = error instanceof MobileTopUpError ? error.code : undefined;
         if (name === 'RELOADLY') {
-          console.warn('Reloadly sandbox diagnostics', {
+          console.warn('Reloadly diagnostics', {
             provider: 'RELOADLY',
-            environment: 'SANDBOX',
+            environment: this.environment,
             operation: 'COUNTRIES',
             failureCategory: classifyReloadlyFailure('COUNTRIES', status, code, error),
             providerHttpStatus: status,
@@ -74,7 +77,7 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
     const ding = sets.get('DING') ?? new Set<string>();
     if (!all.size && results.some(result => result.countries?.size)) throw new MobileTopUpError('UNSUPPORTED_CALLING_CODE', 'No provider destinations have supported calling-code metadata', 502);
     return {
-      environment: 'SANDBOX', uniqueCountries: all.size,
+      environment: this.environment, uniqueCountries: all.size,
       providers: (['RELOADLY', 'DTONE', 'DING'] as const).map(provider => {
         const result = results.find(item => item.name === provider);
         return { provider, enabled: this.providers.has(provider), countries: sets.get(provider)?.size ?? 0,

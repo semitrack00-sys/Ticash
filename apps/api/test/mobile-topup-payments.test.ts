@@ -14,6 +14,16 @@ import { flupFlapOwner } from '../src/flupflap/owner.js';
 const config: MobileTopUpConfig = { enabled: true, environment: 'sandbox', clientId:'fixture', clientSecret:'fixture',
   authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com', billingCurrency:'USD',
   quoteTtlSeconds:300, paymentMode:'mock', productionEnabled:false, approvedForLiveUse:false };
+const productionConfig: MobileTopUpConfig = {
+  ...config,
+  environment: 'production',
+  paymentMode: 'mock',
+  productionEnabled: true,
+  approvedForLiveUse: true,
+  appApprovedForLiveUse: true,
+  liveMoneyEnabled: true,
+  liveRechargeEnabled: true,
+};
 const approvedRechargeGrid = [
   [5, 0.99, 5.99],
   [10, 1.25, 11.25],
@@ -217,6 +227,133 @@ describe('sandbox payment foundation',()=>{
     expect(await f.service.purchase('customer',{quoteId:quote.id},'same-key-123')).toMatchObject({status:'PROCESSING',paymentStatus:'AUTHORIZED',paymentRecoveryCode:'FULFILLMENT_RECONCILIATION_REQUIRED'});
     expect(f.submit).toHaveBeenCalledTimes(1);expect(payment.void).not.toHaveBeenCalled();
   });
+
+  it('fails closed before provider submission when persisted payment/recharge environments mismatch', async () => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'env-mismatch-check');
+    const stored = (await f.repository.listTransactions('customer'))[0]!;
+    await f.repository.updateTransaction(stored.id, { paymentStatus: 'AUTHORIZED' });
+    await f.repository.updateTransaction(stored.id, { paymentEnvironment: 'PRODUCTION' } as never);
+    await expect(f.service.fulfillPaidRecharge(session.transactionId)).rejects.toMatchObject({ code: 'TOPUP_ENVIRONMENT_MISMATCH' });
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('blocks Stripe refund when sandbox transaction is recovered under production runtime before any provider action', async () => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'recovery-env-refund');
+    const record = (await f.repository.listTransactions('customer'))[0]!;
+    await f.repository.updateTransaction(record.id, {
+      paymentStatus: 'CAPTURED',
+      paymentProvider: 'STRIPE',
+      paymentProviderTransactionId: 'pi_refund_guard',
+    });
+    const refund = vi.fn(async () => 'REFUNDED' as const);
+    const voidPayment = vi.fn(async () => 'VOIDED' as const);
+    const productionRuntimeService = new MobileTopUpService(
+      productionConfig,
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      f.audit,
+      undefined,
+      { refund, void: voidPayment } as never,
+    );
+
+    await expect((productionRuntimeService as unknown as { recoverPayment: (id: string) => Promise<unknown> }).recoverPayment(session.transactionId))
+      .rejects.toMatchObject({ code: 'TOPUP_ENVIRONMENT_MISMATCH' });
+    expect(refund).not.toHaveBeenCalled();
+    expect(voidPayment).not.toHaveBeenCalled();
+  });
+
+  it('blocks Stripe void when sandbox transaction is recovered under production runtime before any provider action', async () => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'recovery-env-void');
+    const record = (await f.repository.listTransactions('customer'))[0]!;
+    await f.repository.updateTransaction(record.id, {
+      paymentStatus: 'AUTHORIZED',
+      paymentProvider: 'STRIPE',
+      paymentProviderTransactionId: 'pi_void_guard',
+    });
+    const refund = vi.fn(async () => 'REFUNDED' as const);
+    const voidPayment = vi.fn(async () => 'VOIDED' as const);
+    const productionRuntimeService = new MobileTopUpService(
+      productionConfig,
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      f.audit,
+      undefined,
+      { refund, void: voidPayment } as never,
+    );
+
+    await expect((productionRuntimeService as unknown as { recoverPayment: (id: string) => Promise<unknown> }).recoverPayment(session.transactionId))
+      .rejects.toMatchObject({ code: 'TOPUP_ENVIRONMENT_MISMATCH' });
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(refund).not.toHaveBeenCalled();
+  });
+
+  it('blocks recovery provider selection when production transaction is recovered under sandbox runtime', async () => {
+    const f = fixture();
+    const productionService = new MobileTopUpService(
+      productionConfig,
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      f.audit,
+    );
+    const quote = await productionService.createQuote('customer', quoteInput);
+    const session = await productionService.createPaymentSession('customer', { quoteId: quote.id }, 'prod-recovery-under-sandbox');
+    const record = (await f.repository.listTransactions('customer'))[0]!;
+    await f.repository.updateTransaction(record.id, {
+      paymentStatus: 'AUTHORIZED',
+      paymentProvider: 'STRIPE',
+      paymentProviderTransactionId: 'pi_prod_guard',
+    });
+    const refund = vi.fn(async () => 'REFUNDED' as const);
+    const voidPayment = vi.fn(async () => 'VOIDED' as const);
+    const sandboxRuntimeService = new MobileTopUpService(
+      config,
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      f.audit,
+      undefined,
+      { refund, void: voidPayment } as never,
+    );
+
+    await expect((sandboxRuntimeService as unknown as { recoverPayment: (id: string) => Promise<unknown> }).recoverPayment(session.transactionId))
+      .rejects.toMatchObject({ code: 'TOPUP_ENVIRONMENT_MISMATCH' });
+    expect(refund).not.toHaveBeenCalled();
+    expect(voidPayment).not.toHaveBeenCalled();
+  });
+
+  it('rejects SANDBOX records marked with testMode=false', () => {
+    const f = fixture();
+    const assertEnv = (f.service as unknown as { assertTransactionEnvironment: (r: { paymentEnvironment: 'SANDBOX' | 'PRODUCTION'; rechargeEnvironment: 'SANDBOX' | 'PRODUCTION'; testMode: boolean }) => void }).assertTransactionEnvironment.bind(f.service);
+    expect(() => assertEnv({ paymentEnvironment: 'SANDBOX', rechargeEnvironment: 'SANDBOX', testMode: false }))
+      .toThrowError(MobileTopUpError);
+  });
+
+  it('rejects PRODUCTION records marked with testMode=true and accepts matching combinations', () => {
+    const sandbox = fixture();
+    const production = new MobileTopUpService(
+      productionConfig,
+      sandbox.provider,
+      new MockMobileTopUpPaymentProvider(),
+      sandbox.repository,
+      sandbox.audit,
+    );
+    const assertSandbox = (sandbox.service as unknown as { assertTransactionEnvironment: (r: { paymentEnvironment: 'SANDBOX' | 'PRODUCTION'; rechargeEnvironment: 'SANDBOX' | 'PRODUCTION'; testMode: boolean }) => void }).assertTransactionEnvironment.bind(sandbox.service);
+    const assertProduction = (production as unknown as { assertTransactionEnvironment: (r: { paymentEnvironment: 'SANDBOX' | 'PRODUCTION'; rechargeEnvironment: 'SANDBOX' | 'PRODUCTION'; testMode: boolean }) => void }).assertTransactionEnvironment.bind(production);
+
+    expect(() => assertSandbox({ paymentEnvironment: 'SANDBOX', rechargeEnvironment: 'SANDBOX', testMode: true })).not.toThrow();
+    expect(() => assertProduction({ paymentEnvironment: 'PRODUCTION', rechargeEnvironment: 'PRODUCTION', testMode: false })).not.toThrow();
+    expect(() => assertProduction({ paymentEnvironment: 'PRODUCTION', rechargeEnvironment: 'PRODUCTION', testMode: true }))
+      .toThrowError(MobileTopUpError);
+  });
 });
 
 describe('payment routes and guest restrictions',()=>{
@@ -378,6 +515,7 @@ describe('Stripe sandbox flow',()=>{
       flupFlapConfig: { enabled: true, accessSecret: 'test-flupflap-only-secret-at-least-32-characters' },
       mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' },
       mobileTopUpProvider: f.provider,
+      stripeConfig: loadStripeConfig({ ...stripeEnv, MOBILE_TOPUP_PAYMENT_MODE: 'stripe_sandbox' }),
       mobileTopUpStripeProvider: f.stripeProvider,
     });
     const root = '/api/flupflap';
@@ -410,6 +548,7 @@ describe('Stripe sandbox flow',()=>{
       flupFlapRepository: identities,
       mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' },
       mobileTopUpProvider: f.provider,
+      stripeConfig: loadStripeConfig({ ...stripeEnv, MOBILE_TOPUP_PAYMENT_MODE: 'stripe_sandbox' }),
       mobileTopUpStripeProvider: f.stripeProvider,
       mobileTopUpRepository: repository,
       mobileTopUpClock: () => now,
@@ -573,6 +712,7 @@ describe('Stripe sandbox flow',()=>{
     const app = createApp({
       mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' },
       mobileTopUpProvider: f.provider,
+      stripeConfig: loadStripeConfig({ ...stripeEnv, MOBILE_TOPUP_PAYMENT_MODE: 'stripe_sandbox' }),
       mobileTopUpRepository: f.repository,
       mobileTopUpStripeProvider: f.stripeProvider,
     });
@@ -674,7 +814,10 @@ describe('Stripe sandbox flow',()=>{
       failureCode: 'internal-failure', providerStatus: 'internal-status',
     });
     const app = createApp({ mobileTopUpConfig: { ...config, paymentMode: 'stripe_sandbox' },
-      mobileTopUpProvider: f.provider, mobileTopUpRepository: f.repository, mobileTopUpStripeProvider: f.stripeProvider });
+      mobileTopUpProvider: f.provider,
+      stripeConfig: loadStripeConfig({ ...stripeEnv, MOBILE_TOPUP_PAYMENT_MODE: 'stripe_sandbox' }),
+      mobileTopUpRepository: f.repository,
+      mobileTopUpStripeProvider: f.stripeProvider });
     const record = (await f.repository.getTransactionById(session.transactionId))!;
     const allowed = ['status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
     for (const path of ['/api/mobile-topups/checkout-resume', '/api/flupflap/mobile-topups/checkout-resume']) {
@@ -786,6 +929,7 @@ describe('Stripe sandbox flow',()=>{
     const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-002', 'US');
     const payload = JSON.stringify({
       id: 'evt_test_stripe_1',
+      livemode: false,
       type: 'checkout.session.completed',
       data: {
         object: {
@@ -822,7 +966,7 @@ describe('Stripe sandbox flow',()=>{
           id: session.checkoutSession.id, amount_total: session.amountMinor, currency: 'usd',
           payment_intent: 'pi_binding', payment_status: 'paid', metadata: { transactionId: session.transactionId },
           ...overrides,
-        } } }));
+        } }, livemode: false }));
         const timestamp = Math.floor(Date.now() / 1000);
         const signature = `t=${timestamp},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${timestamp}.${raw.toString('utf8')}`).digest('hex')}`;
         return verifyStripeEvent(raw, signature, stripeEnv.STRIPE_WEBHOOK_SECRET);
@@ -872,6 +1016,23 @@ describe('Stripe sandbox flow',()=>{
       expect(f.submit).not.toHaveBeenCalled();
     });
 
+    it('fails closed when webhook event environment does not match the stored reservation binding', async () => {
+      const f = await checkout();
+      await f.repository.updateTransaction(f.session.transactionId, { paymentEnvironment: 'PRODUCTION' } as never);
+      await expect(f.service.acceptVerifiedPaymentEvent(f.event('checkout.session.completed')))
+        .rejects.toMatchObject({ code: 'PAYMENT_EVENT_MISMATCH' });
+      expect(f.submit).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when webhook livemode environment does not match runtime environment', async () => {
+      const f = await checkout();
+      const paid = f.event('checkout.session.completed');
+      const liveEvent = { ...paid, environment: 'PRODUCTION' as const };
+      await expect(f.service.acceptVerifiedPaymentEvent(liveEvent))
+        .rejects.toMatchObject({ code: 'PAYMENT_EVENT_MISMATCH' });
+      expect(f.submit).not.toHaveBeenCalled();
+    });
+
     it.each([
       { currency: 'eur' }, { currency: undefined }, { amount_total: undefined, amount: 599 },
       { payment_intent: undefined }, { payment_intent: 'cs_test_not_an_intent' },
@@ -912,6 +1073,7 @@ describe('Stripe sandbox flow',()=>{
     const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-003', 'US');
     const rawSuccess = Buffer.from(JSON.stringify({
       id: 'evt_stripe_success_1',
+      livemode: false,
       type: 'checkout.session.completed',
       data: { object: { id: session.checkoutSession.id, amount_total: session.amountMinor, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_stripe_success_1', metadata: { transactionId: session.transactionId } } },
     }));
@@ -922,6 +1084,7 @@ describe('Stripe sandbox flow',()=>{
 
     const rawFailed = Buffer.from(JSON.stringify({
       id: 'evt_stripe_failed_1',
+      livemode: false,
       type: 'checkout.session.async_payment_failed',
       data: { object: { id: session.checkoutSession.id, amount_total: session.amountMinor, currency: 'usd', payment_status: 'unpaid', payment_intent: 'pi_stripe_success_1', metadata: { transactionId: session.transactionId } } },
     }));

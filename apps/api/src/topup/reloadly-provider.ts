@@ -32,7 +32,7 @@ type ReloadlyDiagnosticFailureCategory =
 
 type ReloadlyDiagnostic = {
   provider: 'RELOADLY';
-  environment: 'SANDBOX';
+  environment: 'SANDBOX' | 'PRODUCTION';
   operation: 'OAUTH_TOKEN' | 'COUNTRIES';
   failureCategory?: ReloadlyDiagnosticFailureCategory;
   providerHttpStatus?: number;
@@ -77,7 +77,7 @@ export function classifyReloadlyFailure(
 }
 
 function logReloadlyDiagnostic(diagnostic: ReloadlyDiagnostic) {
-  console.warn('Reloadly sandbox diagnostics', { ...diagnostic });
+  console.warn('Reloadly diagnostics', { ...diagnostic });
 }
 
 function numericList(value: unknown): number[] {
@@ -192,7 +192,7 @@ function mapTopUp(raw: ReloadlyDocument): ProviderTopUpResult {
   };
 }
 
-export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
+export class ReloadlyTopUpProvider implements MobileTopUpProvider {
   readonly name = 'RELOADLY' as const;
   private token?: { value: string; expiresAt: number };
 
@@ -200,6 +200,10 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     private readonly config: MobileTopUpConfig,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
+
+  private runtimeEnvironment() {
+    return this.config.environment === 'production' ? 'PRODUCTION' : 'SANDBOX';
+  }
 
   private async accessToken(): Promise<string> {
     if (this.token && this.token.expiresAt > Date.now() + 30_000) return this.token.value;
@@ -223,7 +227,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     } catch (error) {
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
-        environment: 'SANDBOX',
+        environment: this.runtimeEnvironment(),
         operation: 'OAUTH_TOKEN',
         failureCategory: classifyReloadlyFailure('OAUTH_TOKEN', undefined, undefined, error),
         responseContentType: undefined,
@@ -237,7 +241,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     if (!response.ok || !token || !Number.isFinite(expiresIn)) {
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
-        environment: 'SANDBOX',
+        environment: this.runtimeEnvironment(),
         operation: 'OAUTH_TOKEN',
         failureCategory: classifyReloadlyFailure('OAUTH_TOKEN', response.status, body.errorCode ?? body.code ?? body.error, undefined),
         providerHttpStatus: response.status,
@@ -245,12 +249,12 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
         responseContentType: safeResponseContentType(response),
         durationMs: Date.now() - startedAt,
       });
-      throw new MobileTopUpError('RELOADLY_AUTHENTICATION_FAILED', 'Reloadly Sandbox authentication failed', 502);
+      throw new MobileTopUpError('RELOADLY_AUTHENTICATION_FAILED', 'Reloadly authentication failed', 502);
     }
     this.token = { value: token, expiresAt: Date.now() + Math.max(1, expiresIn) * 1000 };
     logReloadlyDiagnostic({
       provider: 'RELOADLY',
-      environment: 'SANDBOX',
+      environment: this.runtimeEnvironment(),
       operation: 'OAUTH_TOKEN',
       durationMs: Date.now() - startedAt,
     });
@@ -279,13 +283,13 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     } catch (error) {
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
-        environment: 'SANDBOX',
+        environment: this.runtimeEnvironment(),
         operation: 'COUNTRIES',
         failureCategory: classifyReloadlyFailure('COUNTRIES', undefined, undefined, error),
         responseContentType: undefined,
         durationMs: Date.now() - startedAt,
       });
-      throw new MobileTopUpError('RELOADLY_UNAVAILABLE', 'Reloadly Sandbox is temporarily unavailable', 502);
+      throw new MobileTopUpError('RELOADLY_UNAVAILABLE', 'Reloadly is temporarily unavailable', 502);
     }
     const body = await response.json().catch(() => ({})) as ReloadlyDocument;
     if (!response.ok) {
@@ -295,7 +299,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
       const code = rawCode.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80).toUpperCase();
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
-        environment: 'SANDBOX',
+        environment: this.runtimeEnvironment(),
         operation: 'COUNTRIES',
         failureCategory: classifyReloadlyFailure('COUNTRIES', response.status, code, undefined),
         providerHttpStatus: response.status,
@@ -315,7 +319,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
     if (!Array.isArray(raw) || raw.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
-        environment: 'SANDBOX',
+        environment: this.runtimeEnvironment(),
         operation: 'COUNTRIES',
         failureCategory: 'INVALID_PROVIDER_RESPONSE',
         durationMs: Date.now() - startedAt,
@@ -327,7 +331,7 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
       .map(mapCountry);
     logReloadlyDiagnostic({
       provider: 'RELOADLY',
-      environment: 'SANDBOX',
+      environment: this.runtimeEnvironment(),
       operation: 'COUNTRIES',
       durationMs: Date.now() - startedAt,
       catalogRecordCount: mapped.length,
@@ -406,5 +410,23 @@ export class ReloadlySandboxTopUpProvider implements MobileTopUpProvider {
 
   async getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult> {
     return mapTopUp(await this.request(`topups/${encodeURIComponent(transactionId)}/status`));
+  }
+}
+
+export class ReloadlySandboxTopUpProvider extends ReloadlyTopUpProvider {
+  constructor(config: MobileTopUpConfig, fetchImpl: typeof fetch = fetch) {
+    if (config.environment !== 'sandbox') {
+      throw new MobileTopUpError('TOPUP_CONFIGURATION_ERROR', 'Reloadly sandbox provider requires sandbox configuration', 500);
+    }
+    super(config, fetchImpl);
+  }
+}
+
+export class ReloadlyProductionTopUpProvider extends ReloadlyTopUpProvider {
+  constructor(config: MobileTopUpConfig, fetchImpl: typeof fetch = fetch) {
+    if (config.environment !== 'production') {
+      throw new MobileTopUpError('TOPUP_CONFIGURATION_ERROR', 'Reloadly production provider requires production configuration', 500);
+    }
+    super(config, fetchImpl);
   }
 }

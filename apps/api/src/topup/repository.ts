@@ -3,6 +3,7 @@ import { decodeOperatorId } from './provider-identity.js';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
+  MobileTopUpRuntimeEnvironment,
   MobileTopUpKind,
   MobileTopUpProduct,
   MobileTopUpProviderName,
@@ -47,6 +48,7 @@ export interface MobileTopUpQuoteRecord {
   deliveredCurrency: string;
   feeUsd: number;
   totalChargeUsd: number;
+  testMode: boolean;
   expiresAt: string;
   consumedAt?: string;
   createdAt: string;
@@ -65,6 +67,8 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentAuthorizationId?: string;
   paymentMethod?: MobileTopUpPaymentMethod;
   paymentProvider?: MobileTopUpPaymentProviderName;
+  paymentEnvironment: MobileTopUpRuntimeEnvironment;
+  rechargeEnvironment: MobileTopUpRuntimeEnvironment;
   paymentSessionId?: string;
   paymentProviderTransactionId?: string;
   checkoutResumeTokenHash?: string;
@@ -75,7 +79,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentRecoveryCode?: string;
   providerStatus?: string;
   failureCode?: string;
-  testMode: true;
+  testMode: boolean;
   updatedAt: string;
   deliveredAt?: string;
   failedAt?: string;
@@ -110,7 +114,8 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
     'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
     'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
-      'paymentProvider' | 'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
+  'paymentProvider' |
+  'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
       'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
 
 const recipients = new Map<string, SavedTopUpRecipientRecord>();
@@ -259,7 +264,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async updateTransaction(id: string, input: Partial<MobileTopUpTransactionRecord>) {
+  async updateTransaction(id: string, input: TransactionUpdate) {
     const record = transactions.get(id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     const updated = { ...record, ...input, updatedAt: now() };
@@ -286,7 +291,7 @@ function quoteFromDb(record: {
   id: string; userId: string | null; flupFlapCustomerId?: string | null; countryCode: string; recipientPhone: string; operatorId: number; operatorName: string;
   productId: string; productName: string; kind: MobileTopUpKind; providerAmount: Prisma.Decimal;
   providerCurrency: string; deliveredValue: Prisma.Decimal | null; deliveredCurrency: string;
-  feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; expiresAt: Date; consumedAt: Date | null; createdAt: Date;
+  feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; testMode: boolean; expiresAt: Date; consumedAt: Date | null; createdAt: Date;
 }): MobileTopUpQuoteRecord {
   return {
     id: record.id,
@@ -307,6 +312,7 @@ function quoteFromDb(record: {
     deliveredCurrency: record.deliveredCurrency,
     feeUsd: Number(record.feeUsd),
     totalChargeUsd: Number(record.totalChargeUsd),
+    testMode: record.testMode,
     expiresAt: record.expiresAt.toISOString(),
     consumedAt: record.consumedAt?.toISOString(),
     createdAt: record.createdAt.toISOString(),
@@ -325,6 +331,8 @@ function transactionFromDb(record: {
   failureCode: string | null; testMode: boolean; createdAt: Date; updatedAt: Date; deliveredAt: Date | null;
   failedAt: Date | null; refundedAt: Date | null;
   paymentMethod?: MobileTopUpPaymentMethod | null; paymentProvider?: MobileTopUpPaymentProviderName | string | null;
+  paymentEnvironment?: 'SANDBOX' | 'PRODUCTION' | null;
+  rechargeEnvironment?: 'SANDBOX' | 'PRODUCTION' | null;
   paymentSessionId?: string | null; paymentProviderTransactionId?: string | null;
   checkoutResumeTokenHash?: string | null; checkoutResumeTokenExpiresAt?: Date | null;
   paymentStartedAt?: Date | null; fulfillmentStartedAt?: Date | null; recoveryStartedAt?: Date | null;
@@ -349,6 +357,8 @@ function transactionFromDb(record: {
     paymentAuthorizationId: record.paymentAuthorizationId ?? undefined,
     paymentMethod: record.paymentMethod ?? undefined,
     paymentProvider: paymentProvider as MobileTopUpPaymentProviderName | undefined,
+    paymentEnvironment: record.paymentEnvironment ?? 'SANDBOX',
+    rechargeEnvironment: record.rechargeEnvironment ?? 'SANDBOX',
     paymentSessionId: record.paymentSessionId ?? undefined,
     paymentProviderTransactionId: record.paymentProviderTransactionId ?? undefined,
     checkoutResumeTokenHash: record.checkoutResumeTokenHash ?? undefined,
@@ -372,7 +382,7 @@ function transactionFromDb(record: {
     totalChargeUsd: Number(record.totalChargeUsd),
     providerStatus: record.providerStatus ?? undefined,
     failureCode: record.failureCode ?? undefined,
-    testMode: true,
+    testMode: record.testMode,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     deliveredAt: record.deliveredAt?.toISOString(),
@@ -481,7 +491,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       ...ownerData(input.userId),
       productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
       provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
-      testMode: true,
+      testMode: input.testMode,
       expiresAt: new Date(input.expiresAt),
       consumedAt: input.consumedAt ? new Date(input.consumedAt) : null,
     } });
@@ -517,10 +527,12 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       ...ownerData(input.userId),
           productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
           provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
-          testMode: true,
+          testMode: input.testMode,
           paymentStartedAt: input.paymentStartedAt ? new Date(input.paymentStartedAt) : null,
           fulfillmentStartedAt: input.fulfillmentStartedAt ? new Date(input.fulfillmentStartedAt) : null,
           recoveryStartedAt: input.recoveryStartedAt ? new Date(input.recoveryStartedAt) : null,
+          paymentEnvironment: input.paymentEnvironment,
+          rechargeEnvironment: input.rechargeEnvironment,
           checkoutResumeTokenHash: input.checkoutResumeTokenHash ?? undefined,
           checkoutResumeTokenExpiresAt: input.checkoutResumeTokenExpiresAt ? new Date(input.checkoutResumeTokenExpiresAt) : null,
           recipientId: input.recipientId,
@@ -566,29 +578,30 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     return records.map(transactionFromDb);
   }
 
-  async updateTransaction(id: string, input: Partial<MobileTopUpTransactionRecord>) {
+  async updateTransaction(id: string, input: TransactionUpdate) {
     const record = await this.prisma.mobileTopUpTransaction.update({ where: { id }, data: transactionUpdateData(input) });
     return transactionFromDb(record);
   }
 
   async postDeliveredLedger(record: MobileTopUpTransactionRecord) {
     const reference = `mobile-topup:${record.id}:delivered`;
+    const keys = ledgerAccountKeys(record);
     await this.prisma.$transaction(async (tx) => {
       if (await tx.ledgerTransaction.findUnique({ where: { reference } })) return;
       const clearing = await tx.ledgerAccount.upsert({
-        where: { key: 'TOPUP_TEST_PAYMENT_CLEARING_USD' },
+        where: { key: keys.clearing },
         update: {},
-        create: { key: 'TOPUP_TEST_PAYMENT_CLEARING_USD', name: 'Mobile recharge test payment clearing', type: 'ASSET', currency: 'USD' },
+        create: { key: keys.clearing, name: keys.clearingName, type: 'ASSET', currency: 'USD' },
       });
       const provider = await tx.ledgerAccount.upsert({
-        where: { key: 'TOPUP_PROVIDER_SETTLEMENT_USD' },
+        where: { key: keys.providerSettlement },
         update: {},
-        create: { key: 'TOPUP_PROVIDER_SETTLEMENT_USD', name: 'Mobile recharge provider settlement', type: 'LIABILITY', currency: 'USD' },
+        create: { key: keys.providerSettlement, name: keys.providerSettlementName, type: 'LIABILITY', currency: 'USD' },
       });
       const fee = await tx.ledgerAccount.upsert({
-        where: { key: 'TOPUP_FEE_REVENUE_USD' },
+        where: { key: keys.feeRevenue },
         update: {},
-        create: { key: 'TOPUP_FEE_REVENUE_USD', name: 'Mobile recharge fees', type: 'REVENUE', currency: 'USD' },
+        create: { key: keys.feeRevenue, name: keys.feeRevenueName, type: 'REVENUE', currency: 'USD' },
       });
       const transaction = await tx.ledgerTransaction.create({ data: { reference, type: 'MOBILE_TOPUP_DELIVERED' } });
       await tx.ledgerEntry.createMany({ data: [
@@ -601,12 +614,13 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async postRefundLedger(record: MobileTopUpTransactionRecord) {
     const reference = `mobile-topup:${record.id}:refunded`;
+    const keys = ledgerAccountKeys(record);
     await this.prisma.$transaction(async (tx) => {
       if (await tx.ledgerTransaction.findUnique({ where: { reference } })) return;
       if (!await tx.ledgerTransaction.findUnique({ where: { reference: `mobile-topup:${record.id}:delivered` } })) return;
-      const clearing = await tx.ledgerAccount.findUniqueOrThrow({ where: { key: 'TOPUP_TEST_PAYMENT_CLEARING_USD' } });
-      const provider = await tx.ledgerAccount.findUniqueOrThrow({ where: { key: 'TOPUP_PROVIDER_SETTLEMENT_USD' } });
-      const fee = await tx.ledgerAccount.findUniqueOrThrow({ where: { key: 'TOPUP_FEE_REVENUE_USD' } });
+      const clearing = await tx.ledgerAccount.findUniqueOrThrow({ where: { key: keys.clearing } });
+      const provider = await tx.ledgerAccount.findUniqueOrThrow({ where: { key: keys.providerSettlement } });
+      const fee = await tx.ledgerAccount.findUniqueOrThrow({ where: { key: keys.feeRevenue } });
       const transaction = await tx.ledgerTransaction.create({ data: { reference, type: 'MOBILE_TOPUP_REFUNDED' } });
       await tx.ledgerEntry.createMany({ data: [
         { transactionId: transaction.id, accountId: clearing.id, direction: 'CREDIT', amount: record.totalChargeUsd, currency: 'USD' },
@@ -615,6 +629,27 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       ] });
     });
   }
+}
+
+function ledgerAccountKeys(record: MobileTopUpTransactionRecord) {
+  const sandbox = record.rechargeEnvironment === 'SANDBOX';
+  return sandbox
+    ? {
+      clearing: 'TOPUP_TEST_PAYMENT_CLEARING_USD',
+      clearingName: 'Mobile recharge test payment clearing',
+      providerSettlement: 'TOPUP_PROVIDER_SETTLEMENT_USD',
+      providerSettlementName: 'Mobile recharge provider settlement',
+      feeRevenue: 'TOPUP_FEE_REVENUE_USD',
+      feeRevenueName: 'Mobile recharge fees',
+    }
+    : {
+      clearing: 'TOPUP_PRODUCTION_PAYMENT_CLEARING_USD',
+      clearingName: 'Mobile recharge production payment clearing',
+      providerSettlement: 'TOPUP_PRODUCTION_PROVIDER_SETTLEMENT_USD',
+      providerSettlementName: 'Mobile recharge production provider settlement',
+      feeRevenue: 'TOPUP_PRODUCTION_FEE_REVENUE_USD',
+      feeRevenueName: 'Mobile recharge production fees',
+    };
 }
 
 function operationField(operation: 'payment' | 'fulfillment' | 'recovery') {

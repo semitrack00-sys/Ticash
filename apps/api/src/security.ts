@@ -94,9 +94,6 @@ export function loadSecurityConfig(environment: NodeJS.ProcessEnv = process.env)
   if (value.TRANSFER_LIMITS_ENABLED === 'true' && Object.values(limits).some((limit) => limit === undefined)) {
     throw new Error('All transfer limit values are required when TRANSFER_LIMITS_ENABLED=true');
   }
-  if (value.LIVE_MONEY_ENABLED === 'true' || value.APPROVED_FOR_LIVE_USE === 'true') {
-    throw new Error('Live money movement is not supported by this Sandbox build');
-  }
   return {
     loginMaxFailures: value.LOGIN_MAX_FAILURES,
     loginLockMinutes: value.LOGIN_LOCK_MINUTES,
@@ -111,8 +108,8 @@ export function loadSecurityConfig(environment: NodeJS.ProcessEnv = process.env)
     },
     dataRetentionDays: value.DATA_RETENTION_DAYS,
     sandboxComplianceAutoClear: value.SANDBOX_COMPLIANCE_AUTO_CLEAR === 'true',
-    approvedForLiveUse: false,
-    liveMoneyEnabled: false,
+    approvedForLiveUse: value.APPROVED_FOR_LIVE_USE === 'true',
+    liveMoneyEnabled: value.LIVE_MONEY_ENABLED === 'true',
   };
 }
 

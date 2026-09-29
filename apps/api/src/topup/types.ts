@@ -1,5 +1,6 @@
 export type MobileTopUpProviderName = 'RELOADLY' | 'DTONE' | 'DING';
-export type MobileTopUpEnvironment = 'sandbox';
+export type MobileTopUpEnvironment = 'sandbox' | 'production';
+export type MobileTopUpRuntimeEnvironment = 'SANDBOX' | 'PRODUCTION';
 export type ProductClassification = 'AIRTIME' | 'DATA' | 'BUNDLE';
 export type MobileTopUpKind = 'AIRTIME' | 'DATA';
 export type MobileTopUpStatus = 'PENDING' | 'PROCESSING' | 'DELIVERED' | 'FAILED' | 'REFUNDED';
@@ -20,8 +21,8 @@ export interface HostedCheckoutSession {
 
 export interface HostedCheckoutSessionBaseContract {
   provider: 'STRIPE';
-  environment: 'SANDBOX';
-  testMode: true;
+  environment: MobileTopUpRuntimeEnvironment;
+  testMode: boolean;
   transactionId: string;
   checkoutSession: HostedCheckoutSession;
 }
@@ -35,7 +36,7 @@ export interface HostedCheckoutSessionContract extends HostedCheckoutSessionBase
 // Public capability response: explicit customer-facing fields, never an internal record.
 export interface MobileTopUpCheckoutResumeDto {
   status: MobileTopUpStatus;
-  testMode: true;
+  testMode: boolean;
   recipientPhone: string;
   operatorName: string;
   productName: string;
@@ -76,9 +77,12 @@ export interface MobileTopUpConfig {
   billingCurrency: 'USD';
   quoteTtlSeconds: number;
   checkoutResumeTtlSeconds?: number;
-  paymentMode: 'mock' | 'stripe_sandbox';
-  productionEnabled: false;
-  approvedForLiveUse: false;
+  paymentMode: 'mock' | 'stripe_sandbox' | 'stripe_live';
+  productionEnabled: boolean;
+  approvedForLiveUse: boolean;
+  appApprovedForLiveUse?: boolean;
+  liveMoneyEnabled?: boolean;
+  liveRechargeEnabled?: boolean;
 }
 
 export interface MobileTopUpCountry {
@@ -162,7 +166,7 @@ export interface ProviderTopUpResult {
 }
 
 export interface ProviderCoverage {
-  environment: 'SANDBOX';
+  environment: MobileTopUpRuntimeEnvironment;
   uniqueCountries: number;
   providers: { provider: MobileTopUpProviderName; enabled: boolean; countries: number; reason?: string }[];
   overlapCountries: string[];
@@ -188,7 +192,7 @@ export interface MobileTopUpProvider {
 export interface MobileTopUpPaymentAuthorization {
   authorizationId: string;
   status: MobileTopUpPaymentStatus;
-  testMode: true;
+  testMode: boolean;
 }
 
 export interface MobileTopUpPaymentProvider extends MobileTopUpPaymentRecovery {
@@ -238,6 +242,7 @@ export interface MobileTopUpQuoteRecord {
   deliveredCurrency: string;
   feeUsd: number;
   totalChargeUsd: number;
+  testMode: boolean;
   expiresAt: string;
   consumedAt?: string;
   createdAt: string;
@@ -256,6 +261,8 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentAuthorizationId?: string;
   paymentMethod?: MobileTopUpPaymentMethod;
   paymentProvider?: MobileTopUpPaymentProviderName;
+  paymentEnvironment: MobileTopUpRuntimeEnvironment;
+  rechargeEnvironment: MobileTopUpRuntimeEnvironment;
   paymentSessionId?: string;
   paymentProviderTransactionId?: string;
   checkoutResumeTokenHash?: string;
@@ -266,7 +273,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentRecoveryCode?: string;
   providerStatus?: string;
   failureCode?: string;
-  testMode: true;
+  testMode: boolean;
   updatedAt: string;
   deliveredAt?: string;
   failedAt?: string;
@@ -277,7 +284,8 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
     'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
     'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
-    'paymentProvider' | 'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
+  'paymentProvider' |
+  'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
     'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
 
 export class MobileTopUpError extends Error {

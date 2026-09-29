@@ -140,9 +140,9 @@ describe('security and compliance hardening', () => {
       .toEqual({ token: '[REDACTED]', accountNumber: '[REDACTED]', reason: 'review' });
   });
 
-  it('rejects incomplete limits and every attempt to enable live money', () => {
+  it('rejects incomplete limits and parses live-gate booleans without enabling behavior by itself', () => {
     expect(() => securityConfig({ TRANSFER_LIMITS_ENABLED: 'true' })).toThrow(/All transfer limit/);
-    expect(() => securityConfig({ LIVE_MONEY_ENABLED: 'true' })).toThrow(/Live money movement/);
-    expect(() => securityConfig({ APPROVED_FOR_LIVE_USE: 'true' })).toThrow(/Live money movement/);
+    expect(securityConfig({ LIVE_MONEY_ENABLED: 'true' }).liveMoneyEnabled).toBe(true);
+    expect(securityConfig({ APPROVED_FOR_LIVE_USE: 'true' }).approvedForLiveUse).toBe(true);
   });
 });

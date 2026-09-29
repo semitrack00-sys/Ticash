@@ -52,8 +52,8 @@ import {
 import { createDiditWebhookHandler, createKycRouter } from './kyc/router.js';
 import { KycService } from './kyc/service.js';
 import { KycError, type DiditConfig, type DiditProvider, type KycStatus } from './kyc/types.js';
-import { loadMobileTopUpConfig } from './topup/config.js';
-import { ReloadlySandboxTopUpProvider } from './topup/reloadly-provider.js';
+import { assertMobileTopUpConfigurationCoherence, loadMobileTopUpConfig, topUpRuntimeEnvironment } from './topup/config.js';
+import { ReloadlyProductionTopUpProvider, ReloadlySandboxTopUpProvider } from './topup/reloadly-provider.js';
 import {
   MemoryMobileTopUpRepository,
   PrismaMobileTopUpRepository,
@@ -63,7 +63,7 @@ import {
 import { createMobileTopUpRouter } from './topup/router.js';
 import { MobileTopUpService } from './topup/service.js';
 import { loadStripeConfig } from './topup/stripe-config.js';
-import { StripeSandboxPaymentProvider } from './topup/stripe-provider.js';
+import { StripeHostedCheckoutProvider } from './topup/stripe-provider.js';
 import { createStripeWebhookHandler } from './topup/stripe-webhook.js';
 import {
   MockMobileTopUpPaymentProvider,
@@ -647,7 +647,7 @@ export interface CreateAppOptions {
   mobileTopUpConfig?: MobileTopUpConfig;
   mobileTopUpProvider?: MobileTopUpProvider;
   mobileTopUpPaymentProvider?: MobileTopUpPaymentProvider;
-  mobileTopUpStripeProvider?: StripeSandboxPaymentProvider;
+  mobileTopUpStripeProvider?: StripeHostedCheckoutProvider;
   stripeConfig?: ReturnType<typeof loadStripeConfig>;
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
@@ -941,6 +941,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const fxService = new FxService(fxConfig, fxRepository, fxProvider, options.fxClock);
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
   const stripeConfig = options.stripeConfig ?? loadStripeConfig();
+  assertMobileTopUpConfigurationCoherence(mobileTopUpConfig, stripeConfig);
   const dtOneConfig = loadDtOneConfig();
   const dingConfig = loadDingConfig();
   // Inspect configuration itself, not the public status object's constant labels.
@@ -962,25 +963,24 @@ export function createApp(options: CreateAppOptions = {}) {
     databaseEnabled ? new PrismaMobileTopUpRepository(prisma) : new MemoryMobileTopUpRepository()
   );
   const mobileTopUpProvider = options.mobileTopUpProvider ?? new GlobalRechargeProviderRouter(mobileTopUpConfig.enabled ? [
-    ['RELOADLY', new ReloadlySandboxTopUpProvider(mobileTopUpConfig)],
+    ['RELOADLY', mobileTopUpConfig.environment === 'production'
+      ? new ReloadlyProductionTopUpProvider(mobileTopUpConfig)
+      : new ReloadlySandboxTopUpProvider(mobileTopUpConfig)],
     ...(dtOneConfig.enabled ? [['DTONE', new DtOnePreproductionProvider(dtOneConfig)] as ['DTONE', MobileTopUpProvider]] : []),
     ...(dingConfig.enabled ? [['DING', new DingUatProvider(dingConfig)] as ['DING', MobileTopUpProvider]] : []),
-  ] : []);
+  ] : [], topUpRuntimeEnvironment(mobileTopUpConfig));
   const mobileTopUpPaymentProvider =
     options.mobileTopUpPaymentProvider ?? new MockMobileTopUpPaymentProvider();
 
   const mobileTopUpStripeProvider =
     options.mobileTopUpStripeProvider ??
     (stripeConfig.enabled
-      ? new StripeSandboxPaymentProvider(stripeConfig)
+      ? new StripeHostedCheckoutProvider(stripeConfig)
       : undefined);
 
-  if (
-    mobileTopUpConfig.paymentMode === 'stripe_sandbox' &&
-    !mobileTopUpStripeProvider
-  ) {
+  if (mobileTopUpConfig.paymentMode !== 'mock' && !mobileTopUpStripeProvider) {
     throw new Error(
-      'MOBILE_TOPUP_PAYMENT_MODE=stripe_sandbox requires complete Stripe Sandbox configuration',
+      `MOBILE_TOPUP_PAYMENT_MODE=${mobileTopUpConfig.paymentMode} requires complete Stripe configuration`,
     );
   }
 

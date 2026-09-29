@@ -15,6 +15,10 @@ It does not connect Dwolla directly to Haiti payout. Do not enable real-money tr
 until provider contracts, credentials, corridor authorization, KYC/AML controls,
 reconciliation, legal review, and operational approval are complete.
 
+Mobile recharge also remains sandbox-only by default. Production-capable recharge
+configuration is fail-closed and requires explicit live-gate approval variables;
+do not enable those variables until a separate launch approval is issued.
+
 ## Security, compliance, and risk controls
 
 The API now enforces account locks, independent funding/payout restrictions, backend

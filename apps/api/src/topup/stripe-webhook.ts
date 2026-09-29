@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { MobileTopUpError } from './types.js';
+import type { MobileTopUpRuntimeEnvironment } from './types.js';
 import type { StripeConfig } from './stripe-config.js';
 import type { MobileTopUpService } from './service.js';
 
@@ -22,6 +23,7 @@ export type StripeEventType =
 export interface VerifiedStripeEvent {
   readonly [verifiedEvent]: true;
   eventId: string;
+  environment: MobileTopUpRuntimeEnvironment;
   transactionId: string;
   paymentId: string;
   checkoutSessionId: string;
@@ -59,6 +61,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
 
   const parsed = z.object({
     id: z.string().min(1).max(200),
+    livemode: z.boolean(),
     type: z.enum([
       'payment_intent.succeeded',
       'payment_intent.payment_failed',
@@ -107,6 +110,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
   return {
     [verifiedEvent]: true,
     eventId: parsed.data.id,
+    environment: parsed.data.livemode ? 'PRODUCTION' : 'SANDBOX',
     type: parsed.data.type as StripeEventType,
     transactionId,
     paymentId: paymentIntentId ?? object.id,

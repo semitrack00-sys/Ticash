@@ -108,6 +108,23 @@ describe('stripe config loading', () => {
     expect(config).toMatchObject({ enabled: true, environment: 'production', testMode: false });
   });
 
+  it('accepts a restricted live secret key for stripe_live mode', () => {
+    const config = loadStripeConfig({
+      ...completeLiveStripeEnv,
+      MOBILE_TOPUP_PAYMENT_MODE: 'stripe_live',
+      STRIPE_LIVE_SECRET_KEY: 'rk_live_fixture_restricted',
+    });
+    expect(config).toMatchObject({ enabled: true, environment: 'production', testMode: false });
+  });
+
+  it('rejects a restricted test key in production', () => {
+    expect(() => loadStripeConfig({
+      ...completeLiveStripeEnv,
+      MOBILE_TOPUP_PAYMENT_MODE: 'stripe_live',
+      STRIPE_LIVE_SECRET_KEY: 'rk_test_wrong',
+    })).toThrow(/key prefixes/);
+  });
+
   it('rejects live mode with sandbox environment and sandbox mode with production environment', () => {
     expect(() => loadStripeConfig({
       ...completeStripeEnv,

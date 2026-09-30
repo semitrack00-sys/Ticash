@@ -75,11 +75,28 @@ class MobileTopUpService {
     );
   }
 
-  Future<List<MobileTopUpProduct>> products(String countryCode, int operatorId) async {
+  Future<List<MobileTopUpProduct>> products(
+    String countryCode,
+    int operatorId, {
+    String? classification,
+  }) async {
+    final normalizedClassification = classification?.trim().toUpperCase();
+    if (normalizedClassification != null &&
+        !const {'AIRTIME', 'DATA', 'BUNDLE'}.contains(normalizedClassification)) {
+      throw ArgumentError.value(
+        classification,
+        'classification',
+        'Expected AIRTIME, DATA, or BUNDLE.',
+      );
+    }
     final data =
         (await _dio.get(
               '$_base/operators/$operatorId/products',
-              queryParameters: {'country': _countryCode(countryCode)},
+              queryParameters: {
+                'country': _countryCode(countryCode),
+                if (normalizedClassification != null)
+                  'classification': normalizedClassification,
+              },
             )).data
             as Map<String, dynamic>;
     return (data['products'] as List)

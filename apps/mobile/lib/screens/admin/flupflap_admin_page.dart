@@ -20,7 +20,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     ('FlupFlap Customers', 'customers', 'recharge.customers.view'),
     ('Countries', 'countries', 'recharge.providers.view'),
     ('Operators', 'operators', 'recharge.providers.view'),
-    ('Products', 'products', 'recharge.providers.view'),
+    ('Internet Plans', 'products', 'recharge.providers.view'),
     ('Providers', 'providers', 'recharge.providers.view'),
     ('Pending / Failures', 'pending-failures', 'recharge.transactions.view'),
     ('Refunds', 'refunds', 'recharge.refunds'),
@@ -188,7 +188,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Global airtime, data, bundles and provider operations',
+                      'Global airtime, internet plans, bundles and provider operations',
                       style: TextStyle(color: Color(0xFFDDE7FF)),
                     ),
                   ],
@@ -249,7 +249,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                 ),
               TextButton(
                 onPressed: () => setState(load),
-                child: const Text('Load provider catalog'),
+                child: Text(section == 'products' ? 'Load internet plans' : 'Load operators'),
               ),
             ],
           ),
@@ -289,6 +289,10 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                     const Text(
                       'Live configuration and manual refund changes require the reviewed provider workflow. This screen never marks a payment refunded.',
                     ),
+                  if (section == 'products' && rows is List) ...[
+                    _ProductCatalogSummary(rows: rows.cast<Map>()),
+                    const SizedBox(height: 12),
+                  ],
                   if (rows is List) ...[
                     if (rows.isEmpty) const Text('No records.'),
                     for (final row in rows)
@@ -378,6 +382,43 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 }
 
+
+
+class _ProductCatalogSummary extends StatelessWidget {
+  const _ProductCatalogSummary({required this.rows});
+  final List<Map> rows;
+
+  String _text(Map row) => [
+    row['type'], row['kind'], row['productType'], row['name'], row['description'],
+  ].whereType<Object>().join(' ').toUpperCase();
+
+  @override
+  Widget build(BuildContext context) {
+    final internetPlans = rows.where((row) {
+      final text = _text(row);
+      return text.contains('DATA') || text.contains('INTERNET') || text.contains('BUNDLE');
+    }).length;
+    final airtime = rows.length - internetPlans;
+    return Container(
+      key: const Key('flupflap-product-catalog-summary'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Wrap(
+        spacing: 24,
+        runSpacing: 8,
+        children: [
+          Text('Internet Plans: $internetPlans', style: const TextStyle(fontWeight: FontWeight.w900)),
+          Text('Airtime: $airtime', style: const TextStyle(fontWeight: FontWeight.w800)),
+          Text('Provider products: ${rows.length}', style: const TextStyle(color: AppTheme.muted)),
+        ],
+      ),
+    );
+  }
+}
 
 Color _sectionTint(String section) => switch (section) {
   'transactions' => const Color(0xFFF8FAFC),

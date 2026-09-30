@@ -12,10 +12,10 @@ export function isApprovedRechargeAmountMinorUnits(cents: number): boolean {
   return approvedFeeGrid.has(cents);
 }
 
-export function normalizeRechargeAmountMinorUnits(amountUsd: number): number {
+export function normalizeRechargeAmountMinorUnits(amountUsd: number, minimumCents = 500): number {
   const cents = Math.round(amountUsd * 100);
-  if (!Number.isFinite(amountUsd) || Math.abs(amountUsd * 100 - cents) > 1e-7 || cents < 500 || cents > 10000) {
-    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Recharge amount must be between $5.00 and $100.00 USD, rounded to cents', 400);
+  if (!Number.isFinite(amountUsd) || Math.abs(amountUsd * 100 - cents) > 1e-7 || cents < minimumCents || cents > 10000) {
+    throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', `Recharge amount must be between $${(minimumCents / 100).toFixed(2)} and $100.00 USD, rounded to cents`, 400);
   }
   return cents;
 }
@@ -30,5 +30,24 @@ export function lookupRechargeFeeMinorUnits(cents: number): number {
 export function approvedRechargePrice(amountUsd: number) {
   const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd);
   const feeMinorUnits = lookupRechargeFeeMinorUnits(amountMinorUnits);
+  return { amountMinorUnits, feeMinorUnits, totalMinorUnits: amountMinorUnits + feeMinorUnits };
+}
+
+// Final FlupFlap AIRTIME fees, inclusive bounds in integer cents.
+// Applied only when creating a new applicable quote; never reprice stored records.
+const flupFlapAirtimeFeeTiers = [
+  [100, 999, 139],
+  [1000, 1999, 179],
+  [2000, 2999, 249],
+  [3000, 3999, 299],
+  [4000, 4999, 349],
+  [5000, 7499, 399],
+  [7500, 10000, 499],
+] as const;
+
+export function flupFlapAirtimePrice(amountUsd: number) {
+  const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd, 100);
+  const tier = flupFlapAirtimeFeeTiers.find(([minimum, maximum]) => amountMinorUnits >= minimum && amountMinorUnits <= maximum)!;
+  const feeMinorUnits = tier[2];
   return { amountMinorUnits, feeMinorUnits, totalMinorUnits: amountMinorUnits + feeMinorUnits };
 }

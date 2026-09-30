@@ -16,7 +16,8 @@ import type {
 } from './types.js';
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
-import { approvedRechargePrice } from './recharge-fee-grid.js';
+import { approvedRechargePrice, flupFlapAirtimePrice } from './recharge-fee-grid.js';
+import { flupFlapCustomerId } from '../flupflap/owner.js';
 import { reloadlyProducts, normalizeProduct, assertSameProduct, assertProductAmount } from './product-catalog.js';
 import type { StripeHostedCheckoutProvider } from './stripe-provider.js';
 import { assertVerifiedStripeEvent, type VerifiedStripeEvent } from './stripe-webhook.js';
@@ -236,7 +237,7 @@ export class MobileTopUpService {
     return operator;
   }
 
-  async products(countryCode: string, operatorId: number, classification?: 'AIRTIME' | 'DATA' | 'BUNDLE') {
+  async products(countryCode: string, operatorId: number, classification?: 'AIRTIME' | 'DATA' | 'BUNDLE', userId?: string) {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operator = await this.provider.getOperator(operatorId);
@@ -262,7 +263,7 @@ export class MobileTopUpService {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
     }
     const products = rawProducts.map(product => normalizeProduct({ ...product, provider: owner }))
-      .filter(product => product.price >= 5 && product.price <= 100 && (!classification || product.classification === classification));
+      .filter(product => product.price >= (userId && flupFlapCustomerId(userId) && product.classification === 'AIRTIME' ? 1 : 5) && product.price <= 100 && (!classification || product.classification === classification));
     if (new Set(products.map(p => p.id)).size !== products.length) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Duplicate provider product identity', 502);
     return { operator: { ...operator, provider: owner }, products };
   }
@@ -325,7 +326,7 @@ export class MobileTopUpService {
     this.assertEnabled();
     const countryCode = normalizeTopUpCountryCode(input.countryCode);
     const phone = normalizeTopUpPhone(input.phone, countryCode);
-    const { operator, products } = await this.products(countryCode, input.operatorId);
+    const { operator, products } = await this.products(countryCode, input.operatorId, undefined, userId);
 
     const product = input.productId ? products.find(item => item.id === input.productId)
       : products.find(item => item.amountType === 'RANGE' && item.classification === 'AIRTIME');
@@ -343,12 +344,13 @@ export class MobileTopUpService {
     } else if (input.amount !== undefined) {
       throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
-    assertProductAmount(product, amount);
+    const flupFlapAirtime = Boolean(flupFlapCustomerId(userId)) && product.classification === 'AIRTIME';
+    assertProductAmount(product, amount, flupFlapAirtime ? 100 : 500);
     const receiverQuote = validateReceiverQuote(this.provider.quoteReceiverValue
       ? await this.provider.quoteReceiverValue(product, amount)
       : productReceiverQuote(product, amount), product, amount);
     receiverQuote.preferredLanguage = operator.preferredLanguage;
-    const pricing = approvedRechargePrice(amount);
+    const pricing = flupFlapAirtime ? flupFlapAirtimePrice(amount) : approvedRechargePrice(amount);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
       userId,
@@ -382,7 +384,7 @@ export class MobileTopUpService {
   }
 
   private async revalidateQuoteProduct(quote: MobileTopUpQuoteRecord | MobileTopUpTransactionRecord) {
-    const { products } = await this.products(quote.countryCode, quote.operatorId);
+    const { products } = await this.products(quote.countryCode, quote.operatorId, undefined, quote.userId);
     const current = products.find(p => p.id === quote.productId);
     if (!current || current.provider !== quote.provider || current.providerProductId !== quote.providerProductId ||
         current.kind !== quote.kind || current.priceCurrency !== quote.providerCurrency ||
@@ -392,7 +394,7 @@ export class MobileTopUpService {
     // Legacy records lack a benefits snapshot; never fulfill unreviewed legacy data plans.
     if (!quote.productSnapshot && current.classification !== 'AIRTIME') throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'This plan requires a new quote', 400);
     if (quote.productSnapshot) assertSameProduct(quote.productSnapshot, current);
-    assertProductAmount(current, quote.providerAmount);
+    assertProductAmount(current, quote.providerAmount, flupFlapCustomerId(quote.userId) && current.classification === 'AIRTIME' ? 100 : 500);
   }
 
   private requestHash(userId: string, quoteId: string, recipientId?: string) {

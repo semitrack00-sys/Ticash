@@ -32,8 +32,8 @@ export function assertSameProduct(expected: MobileTopUpProduct, current: MobileT
   }
 }
 // Validate normalized provider metadata, never client-supplied amount rules.
-export function assertProductAmount(product: MobileTopUpProduct, amount: number) {
-  const minor = normalizeRechargeAmountMinorUnits(amount);
+export function assertProductAmount(product: MobileTopUpProduct, amount: number, minimumCents = 500) {
+  const minor = normalizeRechargeAmountMinorUnits(amount, minimumCents);
   if (product.amountType === 'FIXED') {
     if (amount !== product.price) throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     return;

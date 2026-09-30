@@ -1,0 +1,117 @@
+import { randomUUID } from 'node:crypto';
+import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApp, resetStore } from '../src/app.js';
+import { flupFlapOwner } from '../src/flupflap/owner.js';
+import { MemoryMobileTopUpRepository } from '../src/topup/repository.js';
+import { MobileTopUpService } from '../src/topup/service.js';
+import { StripeHostedCheckoutProvider } from '../src/topup/stripe-provider.js';
+import type { StripeConfig } from '../src/topup/stripe-config.js';
+import { MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpOperator, type MobileTopUpProvider } from '../src/topup/types.js';
+
+const cases = [[1,139],[9.99,139],[10,179],[19.99,179],[20,249],[29.99,249],[30,299],[39.99,299],
+  [40,349],[49.99,349],[50,399],[74.99,399],[75,499],[100,499],[5,139],[15,179],[25,249],[35,299],[45,349],[60,399],[90,499]];
+const config: MobileTopUpConfig = { enabled:true, environment:'sandbox', paymentMode:'stripe_sandbox',
+  productionEnabled:false, approvedForLiveUse:false, billingCurrency:'USD', quoteTtlSeconds:300,
+  authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com' };
+const operator: MobileTopUpOperator = { id:77, name:'Fixture carrier', countryCode:'JM', status:true, bundle:false,
+  denominationType:'FIXED', senderCurrencyCode:'USD', destinationCurrencyCode:'JMD', fixedAmounts:cases.map(([a])=>a),
+  localFixedAmounts:cases.map(([a])=>Number((a*130).toFixed(2))), fixedAmountsPlanNames:{}, localFixedAmountsPlanNames:{} };
+const owner = flupFlapOwner('00000000-0000-4000-8000-000000000001');
+const input = (amount: number) => ({ countryCode:'JM', phone:'+18765551234', operatorId:77, productId:`reloadly:JM:77:airtime:${amount.toFixed(2)}` });
+function fixture(production = false) {
+  const repository = new MemoryMobileTopUpRepository();
+  const submit = vi.fn(async () => ({ transactionId:'fixture-delivery', status:'SUCCESSFUL', requestedAmount:5,
+    requestedAmountCurrencyCode:'USD', deliveredAmount:650, deliveredAmountCurrencyCode:'JMD' }));
+  const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}], listOperators:async()=>[operator],
+    getOperator:async()=>operator, detectOperator:async()=>operator, submitTopUp:submit, getTopUpStatus:submit };
+  const sessionId = production ? 'cs_live_local_fixture' : 'cs_test_local_fixture';
+  const transport = vi.fn(async () => new Response(JSON.stringify({id:sessionId,url:`https://checkout.stripe.com/c/pay/${sessionId}`}), {status:200}));
+  // Dummy credentials and intercepted transport only. No provider network access.
+  const stripeConfig: StripeConfig = {enabled:true, environment:production?'production':'sandbox', testMode:!production,
+    secretKey:production?'sk_live_local_fixture':'sk_test_local_fixture', publicKey:production?'pk_live_local_fixture':'pk_test_local_fixture',
+    webhookSecret:'whsec_local_fixture', successUrl:'https://flupflap.com/success', failureUrl:'https://flupflap.com/failure'};
+  const stripe = new StripeHostedCheckoutProvider(stripeConfig,transport);
+  const runtime: MobileTopUpConfig = production ? {...config,environment:'production',paymentMode:'stripe_live',productionEnabled:true,
+    approvedForLiveUse:true,appApprovedForLiveUse:true,liveMoneyEnabled:true,liveRechargeEnabled:true} : config;
+  const service = new MobileTopUpService(runtime,provider,new MockMobileTopUpPaymentProvider(),repository,async()=>{},undefined,stripe);
+  return {service,repository,provider,submit,transport,stripe,stripeConfig};
+}
+beforeEach(()=>{resetStore();vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('Real network forbidden');}));});
+afterEach(()=>vi.unstubAllGlobals());
+
+describe('new FlupFlap airtime quotes',()=>{
+  it.each(cases)('production $%s keeps principal/delivery and charges exactly %s cents fee',async(amount,fee)=>{
+    const f=fixture(true);const q=await f.service.createQuote(owner,input(amount));
+    expect(q).toMatchObject({providerAmount:amount,providerCurrency:'USD',feeUsd:fee/100,totalChargeUsd:(Math.round(amount*100)+fee)/100,
+      deliveredValue:Number((amount*130).toFixed(2)),deliveredCurrency:'JMD',receiverQuote:{amount:Number((amount*130).toFixed(2)),currency:'JMD',senderAmount:amount}});
+    const session=await f.service.createPaymentSession(owner,{quoteId:q.id},'fee-'+randomUUID(),'US');
+    expect(session.amountMinor).toBe(Math.round(amount*100)+fee);
+    const args=f.transport.mock.calls[0] as unknown as [string,RequestInit];
+    const body=new URLSearchParams(String(args[1].body));
+    expect(body.get('line_items[0][price_data][unit_amount]')).toBe(String(Math.round(amount*100)+fee));
+    expect(body.get('line_items[0][price_data][currency]')).toBe('usd');
+    expect(f.submit).not.toHaveBeenCalled();
+    expect((await f.repository.getQuote(owner,q.id))?.receiverQuote).toEqual(q.receiverQuote);
+  });
+  it('uses the same FlupFlap schedule in sandbox without changing TiCash prices',async()=>{
+    const f=fixture();
+    expect(await f.service.createQuote(owner,input(5))).toMatchObject({feeUsd:1.39,totalChargeUsd:6.39});
+    expect(await f.service.createQuote('ticash-customer',input(5))).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});
+    await expect(f.service.createQuote('ticash-customer',input(1))).rejects.toMatchObject({code:'TOPUP_PRODUCT_UNAVAILABLE'});
+  });
+  it.each(['DATA','BUNDLE'] as const)('does not change FlupFlap %s pricing',async classification=>{
+    const f=fixture();
+    f.provider.listProducts=async()=>[{id:'reloadly:JM:77:plan',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification,kind:'DATA',
+      name:'Provider plan',price:12,priceCurrency:'USD',amountType:'FIXED',deliveredCurrency:'JMD',deliveredValue:100}];
+    const product=(await f.service.products('JM',77,undefined,owner)).products[0];
+    expect(await f.service.createQuote(owner,{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.25,totalChargeUsd:13.25});
+  });
+  it('respects exact fixed products and provider range/min/max/increment rules',async()=>{
+    const f=fixture();
+    await expect(f.service.createQuote(owner,input(12))).rejects.toMatchObject({code:'TOPUP_PRODUCT_UNAVAILABLE'});
+    await expect(f.service.createQuote(owner,{...input(5),amount:1})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
+    f.provider.getOperator=async()=>({...operator,denominationType:'RANGE',minAmount:1,maxAmount:20});
+    f.provider.listProducts=async()=>[{id:'reloadly:JM:77:airtime:range',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification:'AIRTIME',kind:'AIRTIME',
+      name:'Provider range',price:1,priceCurrency:'USD',amountType:'RANGE',minimumAmount:1,maximumAmount:20,amountIncrement:0.25,deliveredCurrency:'JMD'}];
+    f.provider.quoteReceiverValue=async(p,amount)=>({amount:amount*130,currency:'JMD',senderAmount:amount,senderCurrency:p.priceCurrency,source:'RELOADLY_FX',quotedAt:new Date().toISOString()});
+    const range={...input(1),productId:'reloadly:JM:77:airtime:range'};
+    expect(await f.service.createQuote(owner,{...range,amount:1})).toMatchObject({providerAmount:1,feeUsd:1.39,totalChargeUsd:2.39});
+    expect(await f.service.createQuote(owner,{...range,amount:15.25})).toMatchObject({providerAmount:15.25,feeUsd:1.79,totalChargeUsd:17.04});
+    for(const amount of [0.99,20.25,100.01,1.01,1.001]) await expect(f.service.createQuote(owner,{...range,amount})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
+    const q=await f.service.createQuote(owner,{...range,amount:5});
+    const prior=f.provider.listProducts;
+    f.provider.listProducts=async(c,id)=>(await prior(c,id))!.map(p=>({...p,amountIncrement:0.5}));
+    await expect(f.service.createPaymentSession(owner,{quoteId:q.id},'changed-snapshot','US')).rejects.toMatchObject({code:'TOPUP_QUOTE_CHANGED'});
+  });
+  it('preserves an old reviewed quote, Stripe replay, completed receipt and history without repricing',async()=>{
+    const f=fixture();const fresh=await f.service.createQuote(owner,input(5));
+    const old=await f.repository.createQuote({...fresh,feeUsd:0.99,totalChargeUsd:5.99});
+    expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:599});
+    await f.repository.transitionPayment((await f.repository.getTransactionByIdempotency(owner,'historical-session'))!.id,['SESSION_CREATED'],{paymentStatus:'CAPTURED',status:'DELIVERED',deliveredValue:650});
+    const before=structuredClone(await f.repository.listTransactions(owner));
+    expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:599});
+    await f.service.createQuote(owner,input(5));
+    expect(await f.repository.listTransactions(owner)).toEqual(before);
+    expect(await f.repository.getQuote(owner,old.id)).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});
+    const posts=f.transport.mock.calls.filter(call=>(call as unknown as [string,RequestInit])[1].method==='POST');
+    expect(posts).toHaveLength(1);expect(f.submit).not.toHaveBeenCalled();
+  });
+  it('API accepts provider-backed $1, rejects client fees/totals and preserves guest separation',async()=>{
+    const f=fixture();const app=createApp({flupFlapConfig:{enabled:true,accessSecret:'test-flupflap-identity-secret-at-least-32-characters'},
+      mobileTopUpConfig:config,mobileTopUpProvider:f.provider,mobileTopUpStripeProvider:f.stripe,stripeConfig:f.stripeConfig});
+    const guest=await request(app).post('/api/flupflap/auth/guest').send({}).expect(201);
+    const root='/api/flupflap/mobile-topups';const token=guest.body.accessToken;
+    for(const field of ['fee','feeUsd','totalChargeUsd','providerAmount','paymentStatus']) {
+      await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send({...input(1),[field]:0}).expect(400);
+    }
+    const q=(await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send(input(1)).expect(201)).body.quote;
+    expect(q).toMatchObject({providerAmount:1,feeUsd:1.39,totalChargeUsd:2.39});
+    for(const field of ['fee','feeUsd','totalChargeUsd','amountMinor']) await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'})
+      .set('Idempotency-Key','api-fee-session').send({quoteId:q.id,billingCountry:'US',[field]:0}).expect(400);
+    await request(app).patch('/api/flupflap/auth/me').auth(token,{type:'bearer'}).send({countryCode:'US'}).expect(403);
+    expect((await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'}).set('Idempotency-Key','api-fee-session')
+      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(239);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+});

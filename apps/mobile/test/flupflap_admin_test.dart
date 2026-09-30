@@ -38,15 +38,6 @@ class AdminFixture implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) {}
-
-  testWidgets('FlupFlap admin keeps Internet Plans as a stable navigation section', (tester) async {
-    final adapter = AdminFixture();
-    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = adapter;
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(dio: dio, session: const AdminSession(role: 'ADMIN', permissions: {'recharge.view', 'recharge.providers.view'}, environment: 'SANDBOX')))));
-    await tester.pumpAndSettle();
-    expect(find.text('Internet Plans'), findsOneWidget);
-    expect(find.text('Products'), findsNothing);
-  });
 }
 
 void main() {
@@ -104,6 +95,31 @@ void main() {
         true,
       );
       expect(find.text('Refunds'), findsNothing);
+    },
+  );
+  testWidgets(
+    'FlupFlap admin keeps Internet Plans as a stable navigation section',
+    (tester) async {
+      final adapter = AdminFixture();
+      final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))
+        ..httpClientAdapter = adapter;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FlupFlapAdminPage(
+              dio: dio,
+              session: const AdminSession(
+                role: 'ADMIN',
+                permissions: {'recharge.view', 'recharge.providers.view'},
+                environment: 'SANDBOX',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Internet Plans'), findsOneWidget);
+      expect(find.text('Products'), findsNothing);
     },
   );
 }

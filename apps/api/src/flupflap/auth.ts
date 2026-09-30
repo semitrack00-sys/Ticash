@@ -114,7 +114,7 @@ export function createFlupFlapIdentity(options: {
     if (!cookies(req.header('cookie'))[webRefreshCookie]) { next(); return; }
     const origin=req.header('origin');
     const allowed=new Set(['https://flupflap.com','https://www.flupflap.com',...((process.env.CORS_ALLOWED_ORIGINS ?? '')+','+(process.env.CORS_ORIGIN ?? '')).split(',').map(v=>v.trim()).filter(Boolean)]);
-    const local=process.env.NODE_ENV!=='production' && /^https?:\\/\\/(?:localhost|127\\.0\\.0\\.1)(?::\\d+)?$/.test(origin ?? '');
+    const local=process.env.NODE_ENV!=='production' && /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin ?? '');
     if (!origin || (!local && !allowed.has(origin))) { res.status(403).json({code:'ORIGIN_DENIED',error:'Request origin is not allowed'}); return; }
     next();
   };

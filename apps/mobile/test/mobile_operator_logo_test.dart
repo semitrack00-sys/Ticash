@@ -52,7 +52,10 @@ class _FakeRechargeService extends MobileTopUpService {
   }
 
   @override
-  Future<List<MobileTopUpOperator>> operators(String countryCode) async =>
+  Future<List<MobileTopUpOperator>> operators(
+    String countryCode, {
+    String? provider,
+  }) async =>
       const [_first, _second];
   @override
   Future<List<MobileTopUpProduct>> products(

@@ -84,6 +84,46 @@ flutter build apk --release
 flutter build ios --release --no-codesign
 ```
 
+### Render administrator static site
+
+The administrator uses this existing Flutter app and its existing backend role
+checks. Hosting the web bundle does not grant administrator access.
+
+Use these settings for the existing `ticash-admin` **Static Site**:
+
+- Branch: `main` after the build-process PR is reviewed and merged.
+- Root directory: repository root (leave blank).
+- Build command: `bash scripts/render-admin-build.sh`
+- Publish directory: `apps/mobile/build/web`
+- `SKIP_INSTALL_DEPS=true` avoids installing the unrelated root Node workspaces.
+
+The script pins Flutter **3.47.1** (Dart **3.13.1**) to its exact Git revision,
+uses `flutter pub get --enforce-lockfile`, builds only this app with
+`flutter build web --release`, and requires a nonempty `build/web/index.html`.
+Every command failure stops the build. The SDK is cloned into a versioned
+directory under `${XDG_CACHE_HOME:-/tmp}/ticash-build`, or an existing
+`FLUTTER_ROOT` can be used only when its revision matches. It never upgrades
+Flutter. A partial or mismatched SDK cache fails explicitly; clear that SDK
+cache before retrying instead of bypassing the revision check.
+
+The only compile-time values passed to the browser are public configuration:
+`API_BASE_URL=https://ticash-api.onrender.com/api` and `APP_ENV=production`.
+No `.env` file, API key, provider secret, or administrator credential is bundled.
+`APP_ENV` is supplied as build metadata; backend authorization remains the
+source of truth. This script does not change Render settings or trigger deploys.
+
+The `Render admin web` workflow runs analyze, tests, and this same build script
+on Linux. For local validation with the same pinned SDK, from `apps/mobile`:
+
+```bash
+flutter pub get --enforce-lockfile
+flutter analyze
+flutter test
+flutter build web --release --no-pub \
+  --dart-define=API_BASE_URL=https://ticash-api.onrender.com/api \
+  --dart-define=APP_ENV=production
+```
+
 ### Android signing
 
 Copy `android/key.properties.example` to `android/key.properties` and fill

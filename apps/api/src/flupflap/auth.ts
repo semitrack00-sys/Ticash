@@ -110,7 +110,15 @@ export function createFlupFlapIdentity(options: {
     if(!updated){res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with these credentials'});return;}
     const session=await issue(updated); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.json(session);
   });
-  router.post('/refresh', refreshLimited, async (req,res) => {
+  const requireAllowedWebOrigin: RequestHandler = (req,res,next) => {
+    if (!cookies(req.header('cookie'))[webRefreshCookie]) { next(); return; }
+    const origin=req.header('origin');
+    const allowed=new Set(['https://flupflap.com','https://www.flupflap.com',...((process.env.CORS_ALLOWED_ORIGINS ?? '')+','+(process.env.CORS_ORIGIN ?? '')).split(',').map(v=>v.trim()).filter(Boolean)]);
+    const local=process.env.NODE_ENV!=='production' && /^https?:\\/\\/(?:localhost|127\\.0\\.0\\.1)(?::\\d+)?$/.test(origin ?? '');
+    if (!origin || (!local && !allowed.has(origin))) { res.status(403).json({code:'ORIGIN_DENIED',error:'Request origin is not allowed'}); return; }
+    next();
+  };
+  router.post('/refresh', refreshLimited, requireAllowedWebOrigin, async (req,res) => {
     const cookieToken=cookies(req.header('cookie'))[webRefreshCookie];
     const input = z.object({refreshToken:token.optional()}).strict().parse(req.body ?? {});
     const supplied=input.refreshToken ?? cookieToken;

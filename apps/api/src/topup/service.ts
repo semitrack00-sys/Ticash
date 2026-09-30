@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import type {
   MobileTopUpConfig,
+  MobileTopUpCountry,
   MobileTopUpCheckoutResumeDto,
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
@@ -173,7 +174,7 @@ export class MobileTopUpService {
           this.countriesCache.staleUntil > Date.now() &&
           this.countriesCache.value.length > 0 &&
           error instanceof MobileTopUpError &&
-          (error.code === 'RELOADLY_UNAVAILABLE' || error.status >= 500)) {
+          (error.code === 'RELOADLY_UNAVAILABLE' || error.statusCode >= 500)) {
         console.warn('Mobile recharge country catalog refresh failed; serving last known validated catalog');
         return this.countriesCache.value;
       }

@@ -134,6 +134,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     0 => _OverviewPage(
       data: data,
       onRefresh: () => ref.invalidate(adminWorkspaceProvider),
+      onOpenFlupFlap: () => setState(() => _section = 5),
     ),
     1 => _ReviewPage(
       data: data,
@@ -182,9 +183,14 @@ class _PageShell extends StatelessWidget {
 }
 
 class _OverviewPage extends StatelessWidget {
-  const _OverviewPage({required this.data, required this.onRefresh});
+  const _OverviewPage({
+    required this.data,
+    required this.onRefresh,
+    required this.onOpenFlupFlap,
+  });
   final AdminWorkspace data;
   final VoidCallback onRefresh;
+  final VoidCallback onOpenFlupFlap;
   @override
   Widget build(BuildContext context) {
     const metrics = [
@@ -208,6 +214,27 @@ class _OverviewPage extends StatelessWidget {
           '${data.session.role.replaceAll('_', ' ')} · real database metrics',
       children: [
         const _SafetyBanner(),
+        const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const CircleAvatar(
+              child: Icon(Icons.phone_android),
+            ),
+            title: const Text(
+              'FlupFlap Admin',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: const Text(
+              'Recharge dashboard, transactions, customers, countries, operators, products, providers, refunds, financials, reports, settings and audit.',
+            ),
+            trailing: FilledButton.tonalIcon(
+              onPressed: onOpenFlupFlap,
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Open'),
+            ),
+            onTap: onOpenFlupFlap,
+          ),
+        ),
         const SizedBox(height: 16),
         LayoutBuilder(
           builder: (context, constraints) {

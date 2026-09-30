@@ -83,6 +83,7 @@ class MobileTopUpAvailability {
     required this.productionEnabled,
     required this.approvedForLiveUse,
     required this.liveRechargeEnabled,
+    this.providers = const [],
   });
   final bool enabled;
   final String environment;
@@ -90,6 +91,7 @@ class MobileTopUpAvailability {
   final bool productionEnabled;
   final bool approvedForLiveUse;
   final bool liveRechargeEnabled;
+  final List<String> providers;
 
   bool get isGenuinelyLive =>
       environment.toUpperCase() == 'PRODUCTION' &&
@@ -108,6 +110,9 @@ class MobileTopUpAvailability {
         productionEnabled: json['productionEnabled'] as bool? ?? false,
         approvedForLiveUse: json['approvedForLiveUse'] as bool? ?? false,
         liveRechargeEnabled: json['liveRechargeEnabled'] as bool? ?? false,
+        providers: (json['providers'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .toList(),
       );
 }
 
@@ -147,12 +152,14 @@ class MobileTopUpOperator {
     required this.name,
     required this.countryCode,
     required this.bundle,
+    this.provider,
     this.logoUrl,
   });
   final int id;
   final String name;
   final String countryCode;
   final bool bundle;
+  final String? provider;
   final String? logoUrl;
   factory MobileTopUpOperator.fromJson(Map<String, dynamic> json) =>
       MobileTopUpOperator(
@@ -160,6 +167,7 @@ class MobileTopUpOperator {
         name: json['name'] as String,
         countryCode: _countryCodeFromJson(json),
         bundle: json['bundle'] as bool? ?? false,
+        provider: json['provider'] as String?,
         logoUrl: parseLogoUrl(json['logoUrl']),
       );
 }

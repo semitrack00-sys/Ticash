@@ -9,6 +9,7 @@ import type {
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
   MobileTopUpProvider,
+  MobileTopUpProviderName,
   MobileTopUpRuntimeEnvironment,
   MobileTopUpStatus,
   ProviderTopUpResult,
@@ -200,7 +201,7 @@ export class MobileTopUpService {
     return countries;
   }
 
-  async listOperators(countryCode: string) {
+  async listOperators(countryCode: string, preferredProvider?: MobileTopUpProviderName) {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operators = await this.provider.listOperators(normalizedCountry);
@@ -214,14 +215,14 @@ export class MobileTopUpService {
         502,
       );
     }
-    return operators.filter((item) => item.status);
+    return operators.filter((item) => item.status && (!preferredProvider || item.provider === preferredProvider));
   }
 
-  async detectOperator(countryCode: string, phone: string) {
+  async detectOperator(countryCode: string, phone: string, preferredProvider?: MobileTopUpProviderName) {
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const normalizedPhone = normalizeTopUpPhone(phone, normalizedCountry);
-    const operator = await this.provider.detectOperator(normalizedPhone, normalizedCountry);
+    const operator = await this.provider.detectOperator(normalizedPhone, normalizedCountry, preferredProvider);
     if (normalizeTopUpCountryCode(operator.countryCode) !== normalizedCountry) {
       throw new MobileTopUpError(
         'TOPUP_OPERATOR_COUNTRY_MISMATCH',

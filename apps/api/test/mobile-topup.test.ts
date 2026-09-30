@@ -561,6 +561,28 @@ describe('Worldwide mobile recharge sandbox API', () => {
     expect(response.body.code).toBe('MOBILE_TOPUP_DISABLED');
   });
 
+  it('serves the last validated country catalog during a transient provider outage', async () => {
+    const provider = new TestProvider();
+    provider.countries = [{ code: 'HT', name: 'Haiti' }];
+    const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: provider });
+    const headers = await auth(app, 'countries-stale-cache');
+    const first = await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
+    expect(first.body.countries).toEqual([{ code: 'HT', name: 'Haiti', callingCode: '+509' }]);
+
+    provider.listCountries = async () => {
+      throw new MobileTopUpError('RELOADLY_UNAVAILABLE', 'Mobile recharge is unavailable', 502);
+    };
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 61_000);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const response = await request(app).get('/api/mobile-topups/countries').set(headers).expect(200);
+      expect(response.body.countries).toEqual(first.body.countries);
+      expect(warning).toHaveBeenCalledWith('Mobile recharge country catalog refresh failed; serving last known validated catalog');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('returns the expected error shape when provider-backed countries are unavailable', async () => {
     const provider = new TestProvider();
     provider.listCountries = async () => {

@@ -30,9 +30,9 @@ const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const webRefreshCookie = 'flupflap_refresh';
 function cookies(header?: string) { return Object.fromEntries((header ?? '').split(';').map(v=>v.trim()).filter(Boolean).map(v=>{const i=v.indexOf('=');return i<0?[v,'']:[v.slice(0,i),decodeURIComponent(v.slice(i+1))];})); }
 function setWebRefreshCookie(res: express.Response, value: string, expiresAt: Date) {
-  res.cookie(webRefreshCookie, value, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:'lax', path:'/api/flupflap/auth', expires:expiresAt });
+  res.cookie(webRefreshCookie, value, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:process.env.NODE_ENV==='production'?'none':'lax', path:'/api/flupflap/auth', expires:expiresAt });
 }
-function clearWebRefreshCookie(res: express.Response) { res.clearCookie(webRefreshCookie, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:'lax', path:'/api/flupflap/auth' }); }
+function clearWebRefreshCookie(res: express.Response) { res.clearCookie(webRefreshCookie, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:process.env.NODE_ENV==='production'?'none':'lax', path:'/api/flupflap/auth' }); }
 
 export function createFlupFlapIdentity(options: {
   config: FlupFlapConfig; repository: FlupFlapIdentityRepository;
@@ -77,6 +77,7 @@ export function createFlupFlapIdentity(options: {
   };
   router.use(available);
   const limited = rateLimit({ windowMs:15*60_000, limit:20, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many requests. Try again later.'} });
+  const refreshLimited = rateLimit({ windowMs:15*60_000, limit:120, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many session refresh requests. Try again later.'} });
   const guestLimited = rateLimit({ windowMs:15*60_000, limit:5, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many guest sessions. Try again later.'} });
   router.post('/register', limited, async (req,res) => {
     const input = z.object({email,password,countryCode:z.string().regex(/^[A-Z]{2}$/).optional()}).strict().parse(req.body);
@@ -109,11 +110,11 @@ export function createFlupFlapIdentity(options: {
     if(!updated){res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with these credentials'});return;}
     const session=await issue(updated); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.json(session);
   });
-  router.post('/refresh', limited, async (req,res) => {
+  router.post('/refresh', refreshLimited, async (req,res) => {
     const cookieToken=cookies(req.header('cookie'))[webRefreshCookie];
     const input = z.object({refreshToken:token.optional()}).strict().parse(req.body ?? {});
     const supplied=input.refreshToken ?? cookieToken;
-    if (!supplied || !token.safeParse(supplied).success) { clearWebRefreshCookie(res); res.status(401).json({code:'INVALID_REFRESH_TOKEN',error:'Sign in again'}); return; }
+    if (!supplied || !token.safeParse(supplied).success) { res.status(401).json({code:'INVALID_REFRESH_TOKEN',error:'Sign in again'}); return; }
     const session = await repo.consumeSession(hash(supplied));
     const c = session ? await repo.customer(session.customerId) : null;
     if (!session || session.expiresAt <= new Date() || !active(c) || session.authVersion !== c!.authVersion || (c!.guestExpiresAt && options.guestError())) {res.status(401).json({code:'INVALID_REFRESH_TOKEN',error:'Sign in again'});return;}

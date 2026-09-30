@@ -869,3 +869,16 @@ model RechargeNotification {
   deliveredAt DateTime?
   @@index([status, createdAt])
 }
+
+// Last successfully validated provider country catalog. This is browsing metadata only;
+// it never authorizes pricing, payment, operator selection, or recharge fulfillment.
+model MobileTopUpCountryCatalogCache {
+  key         String   @id
+  countries   Json
+  validatedAt DateTime
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([expiresAt])
+}

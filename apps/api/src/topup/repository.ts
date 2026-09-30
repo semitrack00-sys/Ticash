@@ -94,6 +94,8 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
 }
 
 export interface MobileTopUpRepository extends ReceiverNotificationStore {
+  getCountryCatalogCache?(key: string): Promise<{ value: unknown; validatedAt: string; expiresAt: string } | undefined>;
+  saveCountryCatalogCache?(key: string, value: unknown, validatedAt: string, expiresAt: string): Promise<void>;
   listRecipients(userId: string): Promise<SavedTopUpRecipientRecord[]>;
   saveRecipient(input: Omit<SavedTopUpRecipientRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<SavedTopUpRecipientRecord>;
   updateRecipientLastUsed(userId: string, id: string, productId: string, productName: string): Promise<void>;
@@ -430,6 +432,21 @@ function transactionFromDb(record: {
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async getCountryCatalogCache(key: string) {
+    const record = await this.prisma.mobileTopUpCountryCatalogCache.findUnique({ where: { key } });
+    if (!record) return undefined;
+    return { value: record.countries, validatedAt: record.validatedAt.toISOString(), expiresAt: record.expiresAt.toISOString() };
+  }
+
+  async saveCountryCatalogCache(key: string, value: unknown, validatedAt: string, expiresAt: string) {
+    const countries = JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+    await this.prisma.mobileTopUpCountryCatalogCache.upsert({
+      where: { key },
+      update: { countries, validatedAt: new Date(validatedAt), expiresAt: new Date(expiresAt) },
+      create: { key, countries, validatedAt: new Date(validatedAt), expiresAt: new Date(expiresAt) },
+    });
+  }
 
   async listRetryableNotificationIds(limit: number) {
     const rows = await this.prisma.rechargeNotification.findMany({ where: { transaction: { status: 'DELIVERED', receiverValueConfirmed: true }, OR: [

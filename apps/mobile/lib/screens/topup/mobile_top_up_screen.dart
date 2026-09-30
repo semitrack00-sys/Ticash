@@ -26,6 +26,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   MobileTopUpProduct? _product;
   List<MobileTopUpOperator> _operators = const [];
   List<MobileTopUpProduct> _products = const [];
+  String _productFilter = 'ALL';
   MobileTopUpQuote? _quote;
   MobileTopUpTransaction? _receipt;
   String? _receiptLogoUrl;
@@ -197,6 +198,31 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     _countryCode = value;
     _clearRechargeState(clearPhone: true, clearNickname: true);
   });
+
+  bool _matchesProductFilter(MobileTopUpProduct product) => switch (_productFilter) {
+    'AIRTIME' => product.kind == MobileTopUpKind.airtime,
+    'DATA' => product.kind == MobileTopUpKind.data,
+    'BUNDLE' => product.kind == MobileTopUpKind.bundle,
+    _ => true,
+  };
+
+  String _productTypeLabel(MobileTopUpProduct product) => switch (product.kind) {
+    MobileTopUpKind.airtime => 'Prepaid airtime',
+    MobileTopUpKind.data => 'Internet / data plan',
+    MobileTopUpKind.bundle => 'Combo bundle',
+  };
+
+  String _productDetails(MobileTopUpProduct product) {
+    final details = <String>[_productTypeLabel(product)];
+    if (product.benefits.isNotEmpty) details.add(product.benefits.join(' · '));
+    if (product.validityLabel != null) {
+      details.add('Valid ${product.validityLabel}');
+    }
+    if (product.description != null && product.description!.trim().isNotEmpty) {
+      details.add(product.description!.trim());
+    }
+    return details.join('\n');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -492,24 +518,59 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           ),
           const SizedBox(height: 18),
           Text(
-            'Available airtime & plans',
+            'Airtime & Internet Plans',
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
-          if (_products.isEmpty)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'ALL', label: Text('All')),
+                ButtonSegment(
+                  value: 'AIRTIME',
+                  icon: Icon(Icons.phone_android),
+                  label: Text('Airtime'),
+                ),
+                ButtonSegment(
+                  value: 'DATA',
+                  icon: Icon(Icons.wifi),
+                  label: Text('Internet Data'),
+                ),
+                ButtonSegment(
+                  value: 'BUNDLE',
+                  icon: Icon(Icons.all_inclusive),
+                  label: Text('Bundles'),
+                ),
+              ],
+              selected: {_productFilter},
+              onSelectionChanged: (value) => setState(() {
+                _productFilter = value.first;
+                if (_product != null && !_matchesProductFilter(_product!)) {
+                  _product = null;
+                  _quote = null;
+                }
+              }),
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_products.where(_matchesProductFilter).isEmpty)
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(18),
                 child: Text(
-                  'No products are currently returned by the provider.',
+                  'No plans in this category are currently returned by the provider.',
                 ),
               ),
             ),
-          ..._products.map(
+          ..._products.where(_matchesProductFilter).map(
             (item) => Card(
               child: ListTile(
+                isThreeLine: item.benefits.isNotEmpty ||
+                    item.validityLabel != null ||
+                    (item.description?.isNotEmpty ?? false),
                 selected: _product?.id == item.id,
                 onTap: () => setState(() {
                   _product = item;
@@ -519,11 +580,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                   item.name,
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                subtitle: Text(
-                  item.kind == MobileTopUpKind.data
-                      ? 'Internet / data plan'
-                      : item.kind == MobileTopUpKind.bundle ? 'Combo plan' : 'Prepaid airtime',
-                ),
+                subtitle: Text(_productDetails(item)),
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -577,7 +634,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           TextField(
             controller: _nickname,
             decoration: const InputDecoration(
-              labelText: 'Save recipient nickname (optional)',
+              labelText: 'Save family member / recipient nickname (optional)',
               prefixIcon: Icon(Icons.bookmark_outline),
             ),
           ),

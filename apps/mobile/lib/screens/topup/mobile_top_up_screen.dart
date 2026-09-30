@@ -436,6 +436,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             ),
             DropdownButtonFormField<String>(
               key: ValueKey('provider-$_providerSelection-${status.providers.join('-')}'),
+              isExpanded: true,
               initialValue: _providerSelection == 'AUTO' ||
                       status.providers.contains(_providerSelection)
                   ? _providerSelection
@@ -449,7 +450,11 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
               items: [
                 const DropdownMenuItem(
                   value: 'AUTO',
-                  child: Text('Automatic · Best available'),
+                  child: Text(
+                    'Automatic · Best available',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 ...status.providers.map(
                   (provider) => DropdownMenuItem(
@@ -461,6 +466,8 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                         'DING' => 'Ding Connect',
                         _ => provider,
                       },
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),

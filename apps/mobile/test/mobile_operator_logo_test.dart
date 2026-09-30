@@ -57,8 +57,9 @@ class _FakeRechargeService extends MobileTopUpService {
   @override
   Future<List<MobileTopUpProduct>> products(
     String countryCode,
-    int operatorId,
-  ) async => const [
+    int operatorId, {
+    String? classification,
+  }) async => const [
     MobileTopUpProduct(
       id: 'fixture-product',
       operatorId: 255,

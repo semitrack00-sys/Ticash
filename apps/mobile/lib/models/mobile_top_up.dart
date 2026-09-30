@@ -177,6 +177,9 @@ class MobileTopUpProduct {
     this.deliveredValue,
     this.minimumAmount,
     this.maximumAmount,
+    this.description,
+    this.benefits = const [],
+    this.validityLabel,
   });
   final String id;
   final int operatorId;
@@ -189,11 +192,36 @@ class MobileTopUpProduct {
   final String amountType;
   final double? minimumAmount;
   final double? maximumAmount;
+  final String? description;
+  final List<String> benefits;
+  final String? validityLabel;
+
+  static List<String> _benefits(dynamic value) {
+    if (value is! List) return const [];
+    return value.whereType<Map>().map((item) {
+      final type = item['type']?.toString() ?? '';
+      final amount = item['amount'];
+      final unit = item['unit']?.toString().replaceAll('_', ' ') ?? '';
+      if (amount == -1) return 'Unlimited $type';
+      return '$amount $unit ${type.toLowerCase()}'.trim();
+    }).where((item) => item.isNotEmpty).toList();
+  }
+
+  static String? _validity(dynamic value) {
+    if (value is! Map) return null;
+    final quantity = value['quantity'];
+    final unit = value['unit']?.toString().toLowerCase();
+    if (quantity == null || unit == null) return null;
+    if (quantity == -1) return 'No fixed expiry';
+    final suffix = quantity == 1 ? unit : '${unit}s';
+    return '$quantity $suffix';
+  }
+
   factory MobileTopUpProduct.fromJson(Map<String, dynamic> json) =>
       MobileTopUpProduct(
         id: json['id'] as String,
         operatorId: (json['operatorId'] as num).toInt(),
-        kind: _kind(json['kind']),
+        kind: _kind(json['classification'] ?? json['kind']),
         name: json['name'] as String,
         price: (json['price'] as num).toDouble(),
         priceCurrency: json['priceCurrency'] as String,
@@ -202,6 +230,9 @@ class MobileTopUpProduct {
         amountType: json['amountType'] as String,
         minimumAmount: (json['minimumAmount'] as num?)?.toDouble(),
         maximumAmount: (json['maximumAmount'] as num?)?.toDouble(),
+        description: json['description'] as String?,
+        benefits: _benefits(json['benefits']),
+        validityLabel: _validity(json['validity']),
       );
 }
 

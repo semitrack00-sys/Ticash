@@ -15,6 +15,7 @@ function asyncRoute(handler: (req: AuthRequest, res: Response) => Promise<unknow
 }
 
 const recipientSchema = z.object({
+  language: z.enum(['en', 'ht', 'es', 'pt', 'fr', 'sw']).optional(),
   nickname: z.string().trim().min(1).max(80),
   phone: topUpPhoneShape,
   countryCode: topUpCountryCodeShape,

@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'receiver_value_summary.dart';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -678,11 +679,9 @@ class _ReviewCard extends StatelessWidget {
             '\$${quote.totalChargeUsd.toStringAsFixed(2)} USD',
             strong: true,
           ),
-          if (quote.deliveredValue != null)
-            _line(
-              'Expected delivered value',
-              '${quote.deliveredValue!.toStringAsFixed(2)} ${quote.deliveredCurrency}',
-            ),
+          ReceiverValueSummary(amount: quote.deliveredValue, currency: quote.deliveredCurrency),
+          if (quote.receiverQuote != null)
+            Text('Provider value as of ${quote.receiverQuote!['quotedAt']}'),
           const SizedBox(height: 8),
           Text(
             'Quote expires ${quote.expiresAt.toLocal()}',
@@ -784,6 +783,15 @@ class _Receipt extends StatelessWidget {
                 _ReviewCard._line('Phone', transaction.phone),
                 _ReviewCard._operatorLine(transaction.operatorName, logoUrl),
                 _ReviewCard._line('Product', transaction.productName),
+                ReceiverValueSummary(
+                  amount: transaction.deliveredValue,
+                  currency: transaction.deliveredCurrency,
+                  isReceipt: true,
+                  confirmed: delivered,
+                  quotedAmount: transaction.receiverQuote?['amount'] as num?,
+                  quotedCurrency: transaction.receiverQuote?['currency'] as String?,
+                  discrepancy: transaction.receiverDiscrepancy,
+                ),
                 _ReviewCard._line(
                   'Price',
                   '${transaction.providerAmount.toStringAsFixed(2)} ${transaction.providerCurrency}',
@@ -875,7 +883,7 @@ class _History extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         subtitle: Text(
-                          '${item.countryCode ?? 'Unknown'} · ${item.phone} · ${item.status.name.toUpperCase()}',
+                          '${item.countryCode ?? 'Unknown'} · ${item.phone} · ${item.status.name.toUpperCase()}\nReceiver: ${item.status == MobileTopUpStatus.delivered && item.deliveredValue != null ? '${item.deliveredValue} ${item.deliveredCurrency}' : 'Awaiting provider confirmation'}',
                         ),
                         trailing: TextButton(
                           onPressed: () => onRepeat(item),

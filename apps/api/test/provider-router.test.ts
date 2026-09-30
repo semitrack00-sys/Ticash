@@ -15,7 +15,7 @@ function fixture(provider: MobileTopUpProviderName, codes: string[]): MobileTopU
     detectOperator: vi.fn(async () => ({ ...op, provider })),
     submitTopUp: vi.fn(async input => ({ transactionId: '123', status: 'SUCCESSFUL', requestedAmount: input.amount, requestedAmountCurrencyCode: 'USD' })),
     getTopUpStatus: vi.fn(async () => ({ transactionId: '123', status: 'SUCCESSFUL', requestedAmount: 5, requestedAmountCurrencyCode: 'USD' })),
-    ...(provider === 'DTONE' ? { listProducts: vi.fn(async (country: string, id: number) => [{ id: `dtone:${country}:${encodeOperatorId('DTONE', id)}:product:56876`, provider, providerProductId: '56876', countryCode: country, operatorId: id, kind: 'AIRTIME' as const, name: 'Exact product', price: 5, priceCurrency: 'USD', deliveredCurrency: 'JMD', amountType: 'FIXED' as const }]) } : {}) };
+    ...(provider === 'DTONE' ? { listProducts: vi.fn(async (country: string, id: number) => [{ id: `dtone:${country}:${encodeOperatorId('DTONE', id)}:product:56876`, provider, providerProductId: '56876', countryCode: country, operatorId: id, kind: 'AIRTIME' as const, name: 'Exact product', price: 5, priceCurrency: 'USD', deliveredValue: 800, deliveredCurrency: 'JMD', amountType: 'FIXED' as const }]) } : {}) };
 }
 beforeEach(() => { resetStore(); vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected real network request'); })); });
 afterEach(() => vi.unstubAllGlobals());

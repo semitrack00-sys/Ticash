@@ -40,7 +40,10 @@ const quoteInputFor = (amount: number) => ({ countryCode:'JM', phone:'+187655512
 const rangeOperator = { ...operator, denominationType: 'RANGE' as const, fixedAmounts: [], localFixedAmounts: [], minAmount: 5, maxAmount: 100 };
 function fixture(payment: MobileTopUpPaymentProvider = new MockMobileTopUpPaymentProvider(), overrideOperator: MobileTopUpOperator = operator) {
   const submit = vi.fn(async () => ({transactionId:'reloadly-fixture',status:'PROCESSING',requestedAmount:5,requestedAmountCurrencyCode:'USD'}));
-  const provider: MobileTopUpProvider = { listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[overrideOperator],
+  const provider: MobileTopUpProvider = {
+    quoteReceiverValue: async (p, amount) => ({ amount: p.deliveredValue ?? amount * 130, currency: p.deliveredCurrency,
+      senderAmount: amount, senderCurrency: p.priceCurrency, source: 'RELOADLY_FX', quotedAt: new Date().toISOString() }),
+    listCountries:async()=>[{code:'JM',name:'Jamaica'}],listOperators:async()=>[overrideOperator],
     getOperator:async()=>overrideOperator,detectOperator:async()=>overrideOperator,submitTopUp:submit,
     getTopUpStatus:async()=>({transactionId:'reloadly-fixture',status:'SUCCESSFUL',requestedAmount:5,requestedAmountCurrencyCode:'USD'}) };
   const repository = new MemoryMobileTopUpRepository();const audit=vi.fn(async()=>{});
@@ -769,6 +772,7 @@ describe('Stripe sandbox flow',()=>{
       .expect(200);
 
     expect(response.body).toEqual({ transaction: {
+      countryCode: 'JM', receiverQuote: quote.receiverQuote, deliveredValue: null, deliveredCurrency: null, receiverDiscrepancy: false,
       status: 'PENDING', testMode: true, recipientPhone: quote.recipientPhone,
       operatorName: quote.operatorName, productName: quote.productName,
       providerAmount: 5, providerCurrency: 'USD', feeUsd: 0.99, totalChargeUsd: 5.99,
@@ -862,7 +866,7 @@ describe('Stripe sandbox flow',()=>{
       mobileTopUpRepository: f.repository,
       mobileTopUpStripeProvider: f.stripeProvider });
     const record = (await f.repository.getTransactionById(session.transactionId))!;
-    const allowed = ['status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
+    const allowed = ['countryCode', 'receiverQuote', 'deliveredValue', 'deliveredCurrency', 'receiverDiscrepancy', 'status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
     for (const path of ['/api/mobile-topups/checkout-resume', '/api/flupflap/mobile-topups/checkout-resume']) {
       const response = await request(app).post(path).send({ resumeToken }).expect(200);
       expect(Object.keys(response.body.transaction).sort()).toEqual([...allowed].sort());
@@ -1028,6 +1032,20 @@ describe('Stripe sandbox flow',()=>{
       await f.service.acceptVerifiedPaymentEvent(event);
       await f.service.acceptVerifiedPaymentEvent(f.event(type, {}, 'evt_binding_second_delivery'));
       expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe('AUTHORIZED');
+      expect(f.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('duplicate signed paid webhooks create one actual-value notification after provider success', async () => {
+      const f = await checkout();
+      f.submit.mockResolvedValue({ transactionId: 'reloadly-fixture', status: 'SUCCESSFUL', requestedAmount: 5,
+        requestedAmountCurrencyCode: 'USD', deliveredAmount: 805, deliveredAmountCurrencyCode: 'JMD' } as never);
+      const event = f.event();
+      await f.service.acceptVerifiedPaymentEvent(event);
+      const first = await f.repository.getNotification(f.session.transactionId);
+      expect(first).toMatchObject({ amount: 805, currency: 'JMD', status: 'PENDING', attempts: 0 });
+      await f.service.acceptVerifiedPaymentEvent(event);
+      await f.service.acceptVerifiedPaymentEvent(f.event('checkout.session.completed', {}, 'evt_notification_replay'));
+      expect(await f.repository.getNotification(f.session.transactionId)).toEqual(first);
       expect(f.submit).toHaveBeenCalledTimes(1);
     });
 

@@ -15,7 +15,7 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
 }) {
  const router=express.Router();router.use(options.authenticate,options.permission('recharge.view'));
  const protect=(p:AdminPermission)=>options.permission(p);
- const publicTransaction=(t:MobileTopUpTransactionRecord)=>({id:t.id,customerId:flupFlapCustomerId(t.userId),countryCode:t.countryCode,operatorName:t.operatorName,productName:t.productName,provider:t.provider,status:t.status,paymentStatus:t.paymentStatus,amountUsd:t.providerAmount,feeUsd:t.feeUsd,totalUsd:t.totalChargeUsd,createdAt:t.createdAt});
+ const publicTransaction=(t:MobileTopUpTransactionRecord)=>({id:t.id,customerId:flupFlapCustomerId(t.userId),countryCode:t.countryCode,operatorName:t.operatorName,productName:t.productName,provider:t.provider,status:t.status,paymentStatus:t.paymentStatus,amountUsd:t.providerAmount,feeUsd:t.feeUsd,totalUsd:t.totalChargeUsd,createdAt:t.createdAt,receiverQuote:t.receiverQuote,deliveredValue:t.deliveredValue,deliveredCurrency:t.deliveredCurrency,receiverDiscrepancy:t.receiverDiscrepancy});
  const page=z.coerce.number().int().min(0).max(100000).default(0);
  router.get('/dashboard',async(_req,res)=>res.json({domain:'FLUPFLAP',...options.service.availability()}));
  router.get('/customers',protect('recharge.customers.view'),async(_req,res)=>res.json({customers:(await options.identities.listCustomers()).map(c=>({...publicFlupFlapCustomer(c),rechargeRestricted:c.rechargeRestricted})),limit:100}));
@@ -29,7 +29,7 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
   router.get('/'+path,protect(permission),async(req,res)=>{
    const offset=page.parse(req.query.offset);const all=await options.recharge.listFlupFlapTransactions(offset);
    const rows=all.filter(t=>path==='pending-failures'?['PENDING','PROCESSING','FAILED'].includes(t.status):path==='refunds'?/REFUND|VOID|RECOVERY/.test(t.paymentStatus)||t.status==='REFUNDED':true);
-   res.json({transactions:rows.map(publicTransaction),offset,limit:100,nextOffset:all.length===100?offset+100:null,scope:'PAGE',authoritativeState:'PAYMENT_AND_RECHARGE_PROVIDERS'});
+   res.json({transactions:await Promise.all(rows.map(async t=>({...publicTransaction(t),notification:await options.service.notificationStatus(t.id)}))),offset,limit:100,nextOffset:all.length===100?offset+100:null,scope:'PAGE',authoritativeState:'PAYMENT_AND_RECHARGE_PROVIDERS'});
   });
  }
  router.post('/transactions/:id/reconcile',protect('recharge.reconciliation'),async(req:AdminRequest,res)=>{
@@ -39,6 +39,14 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
   const result=await options.service.getTransaction(t.userId,id,true);
   await options.audit(req.userId,'FLUPFLAP_RECONCILED','MobileTopUpTransaction',id);
   res.json({transaction:result});
+ });
+ router.post('/transactions/:id/receiver-notification/retry',protect('recharge.operations'),async(req:AdminRequest,res)=>{
+  const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.body??{});
+  const t=await options.recharge.getTransactionById(id);
+  if(!t || !flupFlapCustomerId(t.userId) || t.status!=='DELIVERED'){res.status(404).json({code:'DELIVERED_TOPUP_NOT_FOUND'});return;}
+  const notification=await options.service.retryReceiverNotification(id);
+  await options.audit(req.userId,'RECEIVER_SMS_RETRY','MobileTopUpTransaction',id);
+  res.json({notification});
  });
  router.get('/countries',protect('recharge.providers.view'),async(_req,res)=>res.json({countries:await options.service.listCountries()}));
  router.get('/operators',protect('recharge.providers.view'),async(req,res)=>res.json({operators:await options.service.listOperators(z.string().regex(/^[A-Z]{2}$/).parse(req.query.country))}));

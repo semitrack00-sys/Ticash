@@ -255,6 +255,7 @@ class MobileTopUpQuote {
     required this.totalChargeUsd,
     required this.expiresAt,
     this.deliveredValue,
+    this.receiverQuote,
   });
   final String id;
   final String phone;
@@ -267,6 +268,7 @@ class MobileTopUpQuote {
   final double providerAmount;
   final String providerCurrency;
   final double? deliveredValue;
+  final Map<String, dynamic>? receiverQuote;
   final String deliveredCurrency;
   final double feeUsd;
   final double totalChargeUsd;
@@ -288,6 +290,9 @@ class MobileTopUpQuote {
         kind: _kind(json['kind']),
         providerAmount: (json['providerAmount'] as num).toDouble(),
         providerCurrency: json['providerCurrency'] as String,
+        receiverQuote: json['receiverQuote'] == null
+            ? null
+            : Map<String, dynamic>.from(json['receiverQuote'] as Map),
         deliveredValue: (json['deliveredValue'] as num?)?.toDouble(),
         deliveredCurrency: json['deliveredCurrency'] as String,
         feeUsd: (json['feeUsd'] as num).toDouble(),
@@ -314,6 +319,8 @@ class MobileTopUpTransaction {
     required this.createdAt,
     this.deliveredValue,
     this.providerTransactionId,
+    this.receiverQuote,
+    this.receiverDiscrepancy = false,
     this.failureCode,
   });
   final String id;
@@ -332,6 +339,8 @@ class MobileTopUpTransaction {
   final bool testMode;
   final DateTime createdAt;
   final String? providerTransactionId;
+  final Map<String, dynamic>? receiverQuote;
+  final bool receiverDiscrepancy;
   final String? failureCode;
   factory MobileTopUpTransaction.fromJson(Map<String, dynamic> json) =>
       MobileTopUpTransaction(
@@ -358,6 +367,10 @@ class MobileTopUpTransaction {
         ),
         testMode: json['testMode'] as bool? ?? true,
         createdAt: DateTime.parse(json['createdAt'] as String),
+        receiverQuote: json['receiverQuote'] == null
+            ? null
+            : Map<String, dynamic>.from(json['receiverQuote'] as Map),
+        receiverDiscrepancy: json['receiverDiscrepancy'] == true,
         providerTransactionId: json['providerTransactionId'] as String?,
         failureCode: json['failureCode'] as String?,
       );

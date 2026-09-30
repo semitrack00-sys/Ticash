@@ -536,6 +536,7 @@ model LedgerEntry {
 }
 
 model MobileTopUpRecipient {
+  language String?
   provider        MobileTopUpProviderName?
   id              String                   @id @default(uuid())
   userId          String?
@@ -560,6 +561,7 @@ model MobileTopUpRecipient {
 }
 
 model MobileTopUpQuote {
+  receiverQuote Json?
   productSnapshot       Json?
   providerProductId     String?
   id                    String                   @id @default(uuid())
@@ -575,7 +577,7 @@ model MobileTopUpQuote {
   kind                  MobileTopUpKind
   providerAmount        Decimal                  @db.Decimal(18, 2)
   providerCurrency      String
-  deliveredValue        Decimal?                 @db.Decimal(18, 2)
+  deliveredValue        Decimal?                 @db.Decimal(24, 8)
   deliveredCurrency     String
   feeUsd                Decimal                  @db.Decimal(18, 2)
   totalChargeUsd        Decimal                  @db.Decimal(18, 2)
@@ -593,6 +595,11 @@ model MobileTopUpQuote {
 }
 
 model MobileTopUpTransaction {
+  receiverQuote Json?
+  receiverValueConfirmed Boolean @default(false)
+  receiverDiscrepancy Boolean @default(false)
+  receiverLanguage String?
+  notification RechargeNotification?
   productSnapshot       Json?
   providerProductId     String?
   id                    String                    @id @default(uuid())
@@ -630,7 +637,7 @@ model MobileTopUpTransaction {
   kind                  MobileTopUpKind
   providerAmount        Decimal                   @db.Decimal(18, 2)
   providerCurrency      String
-  deliveredValue        Decimal?                  @db.Decimal(18, 2)
+  deliveredValue        Decimal?                  @db.Decimal(24, 8)
   deliveredCurrency     String
   feeUsd                Decimal                   @db.Decimal(18, 2)
   totalChargeUsd        Decimal                   @db.Decimal(18, 2)
@@ -840,4 +847,25 @@ model FlupFlapPasswordResetToken {
   createdAt DateTime @default(now())
   customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   @@index([customerId])
+}
+
+// Independent notification outbox; never authorizes or settles a payment.
+model RechargeNotification {
+  transactionId String @id
+  transaction MobileTopUpTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  phone String
+  country String
+  language String
+  amount Decimal @db.Decimal(24, 8)
+  currency String
+  status String @default("PENDING")
+  providerMessageId String?
+  attempts Int @default(0)
+  lastErrorCategory String?
+  claimedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sentAt DateTime?
+  deliveredAt DateTime?
+  @@index([status, createdAt])
 }

@@ -184,7 +184,9 @@ void main() {
         findsWidgets,
       );
       expect(find.text('\$8.50 USD'), findsOneWidget);
-      await tester.ensureVisible(find.text('Confirm sandbox recharge'));
+      // Receiver-value disclosure makes the review taller; build the lazily listed action by scrolling.
+      await tester.scrollUntilVisible(find.text('Confirm sandbox recharge'), 200,
+        scrollable: find.byWidgetPredicate((widget) => widget is Scrollable && widget.axisDirection == AxisDirection.down).first);
       await tester.tap(find.text('Confirm sandbox recharge'));
       await tester.pumpAndSettle();
       expect(find.text('Recharge delivered'), findsOneWidget);

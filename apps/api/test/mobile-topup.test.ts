@@ -7,6 +7,7 @@ import type {
   MobileTopUpCountry,
   MobileTopUpOperator,
   MobileTopUpProvider,
+  MobileTopUpProduct,
   ProviderTopUpResult,
 } from '../src/topup/types.js';
 import { MobileTopUpError } from '../src/topup/types.js';
@@ -104,6 +105,10 @@ class TestProvider implements MobileTopUpProvider {
 
   async listCountries() { return this.countries; }
   async listOperators(countryCode: string) { return this.operatorsByCountry.get(countryCode) ?? []; }
+  async quoteReceiverValue(p: MobileTopUpProduct, amount: number) {
+    return { amount: p.deliveredValue ?? amount * 130, currency: p.deliveredCurrency,
+      senderAmount: amount, senderCurrency: p.priceCurrency, source: 'RELOADLY_FX' as const, quotedAt: new Date().toISOString() };
+  }
   async detectOperator(_phone: string, countryCode: string) {
     return this.detectedByCountry.get(countryCode) ?? jamaicaOperator;
   }
@@ -536,6 +541,12 @@ describe('Worldwide mobile recharge sandbox API', () => {
   it('does not trust fee/total values supplied by the customer', async () => {
     const app = createApp({ mobileTopUpConfig: config, mobileTopUpProvider: new TestProvider() });
     const headers = await auth(app, 'fee-tamper');
+    for (const override of [{ deliveredValue: 99999 }, { deliveredCurrency: 'USD' }, { receiverValueConfirmed: true },
+      { receiverQuote: { amount: 99999, currency: 'USD' } }]) {
+      await request(app).post('/api/mobile-topups/quotes').set(headers).send({
+        countryCode: 'JM', phone: '+18765551234', operatorId: 77, productId: 'reloadly:JM:77:airtime:5.00', ...override,
+      }).expect(400);
+    }
     await request(app).post('/api/mobile-topups/quotes').set(headers).send({
       countryCode: 'HT', phone: '+50937050210', operatorId: 99, productId: 'reloadly:HT:99:data:5.00', feeUsd: 0, totalChargeUsd: 5,
     }).expect(400);

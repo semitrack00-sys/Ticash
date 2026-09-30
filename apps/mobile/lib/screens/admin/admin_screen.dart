@@ -194,19 +194,19 @@ class _OverviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const metrics = [
-      ('totalCustomers', 'Customers', Icons.people_outline),
-      ('kycPending', 'KYC pending', Icons.hourglass_top),
-      ('kycApproved', 'KYC approved', Icons.verified_user_outlined),
-      ('kycDeclined', 'KYC declined', Icons.person_off_outlined),
-      ('kycReview', 'KYC review', Icons.badge_outlined),
-      ('transfersToday', 'Transfers today', Icons.today_outlined),
-      ('transfersProcessing', 'Processing', Icons.sync),
-      ('completedTransfers', 'Completed', Icons.check_circle_outline),
-      ('failedTransfers', 'Failed', Icons.error_outline),
-      ('complianceReviews', 'Compliance queue', Icons.fact_check_outlined),
-      ('fundingFailures', 'Funding failures', Icons.account_balance_outlined),
-      ('payoutFailures', 'Payout failures', Icons.mobile_friendly_outlined),
-      ('reconciliationDiscrepancies', 'Discrepancies', Icons.rule_outlined),
+      ('totalCustomers', 'Customers', Icons.people_outline, Color(0xFF2563EB)),
+      ('kycPending', 'KYC pending', Icons.hourglass_top, Color(0xFFF59E0B)),
+      ('kycApproved', 'KYC approved', Icons.verified_user_outlined, Color(0xFF059669)),
+      ('kycDeclined', 'KYC declined', Icons.person_off_outlined, Color(0xFFDC2626)),
+      ('kycReview', 'KYC review', Icons.badge_outlined, Color(0xFF7C3AED)),
+      ('transfersToday', 'Transfers today', Icons.today_outlined, Color(0xFF0891B2)),
+      ('transfersProcessing', 'Processing', Icons.sync, Color(0xFFEA580C)),
+      ('completedTransfers', 'Completed', Icons.check_circle_outline, Color(0xFF16A34A)),
+      ('failedTransfers', 'Failed', Icons.error_outline, Color(0xFFE11D48)),
+      ('complianceReviews', 'Compliance queue', Icons.fact_check_outlined, Color(0xFF9333EA)),
+      ('fundingFailures', 'Funding failures', Icons.account_balance_outlined, Color(0xFFB45309)),
+      ('payoutFailures', 'Payout failures', Icons.mobile_friendly_outlined, Color(0xFFBE123C)),
+      ('reconciliationDiscrepancies', 'Discrepancies', Icons.rule_outlined, Color(0xFF4F46E5)),
     ];
     return _PageShell(
       title: 'Operations overview',
@@ -256,12 +256,15 @@ class _OverviewPage extends StatelessWidget {
                       label: item.$2,
                       value: data.overview.metrics[item.$1] ?? 0,
                       icon: item.$3,
+                      color: item.$4,
                     ),
                   )
                   .toList(),
             );
           },
         ),
+        const SizedBox(height: 24),
+        _OperationsDiagram(metrics: data.overview.metrics),
         const SizedBox(height: 24),
         _SectionHeader(
           title: 'Customer accounts',
@@ -1120,34 +1123,135 @@ class _ControlsPage extends StatelessWidget {
 }
 
 class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value, required this.icon});
+  const _Metric({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
   final String label;
   final num value;
   final IconData icon;
+  final Color color;
+
   @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Icon(icon, color: AppTheme.navy),
-          Text(
-            value.toStringAsFixed(0),
-            style: Theme.of(
-              context,
-            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: color.withValues(alpha: .22)),
+      boxShadow: [
+        BoxShadow(
+          color: color.withValues(alpha: .08),
+          blurRadius: 18,
+          offset: const Offset(0, 6),
+        ),
+      ],
+    ),
+    padding: const EdgeInsets.all(15),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .12),
+            borderRadius: BorderRadius.circular(12),
           ),
-          Text(
-            label,
-            maxLines: 2,
-            style: const TextStyle(color: AppTheme.muted),
+          child: Icon(icon, color: color, size: 21),
+        ),
+        Text(
+          value.toStringAsFixed(0),
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: AppTheme.ink,
           ),
-        ],
-      ),
+        ),
+        Text(
+          label,
+          maxLines: 2,
+          style: const TextStyle(
+            color: AppTheme.muted,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     ),
   );
+}
+
+class _OperationsDiagram extends StatelessWidget {
+  const _OperationsDiagram({required this.metrics});
+  final Map<String, num> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <(String, num, Color)>[
+      ('KYC approved', metrics['kycApproved'] ?? 0, const Color(0xFF059669)),
+      ('KYC pending / review', (metrics['kycPending'] ?? 0) + (metrics['kycReview'] ?? 0), const Color(0xFFF59E0B)),
+      ('Transfers completed', metrics['completedTransfers'] ?? 0, const Color(0xFF2563EB)),
+      ('Transfers processing', metrics['transfersProcessing'] ?? 0, const Color(0xFFEA580C)),
+      ('Transfers failed', metrics['failedTransfers'] ?? 0, const Color(0xFFE11D48)),
+    ];
+    final maxValue = rows.fold<num>(1, (max, row) => row.$2 > max ? row.$2 : max);
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.bar_chart_rounded, color: Color(0xFF2563EB)),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Operations diagram', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                    Text('Current database activity by operational state', style: TextStyle(color: AppTheme.muted)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          for (final row in rows) ...[
+            Row(
+              children: [
+                Expanded(child: Text(row.$1, style: const TextStyle(fontWeight: FontWeight.w700))),
+                Text(row.$2.toStringAsFixed(0), style: TextStyle(color: row.$3, fontWeight: FontWeight.w900)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 10,
+                value: maxValue == 0 ? 0 : (row.$2 / maxValue).clamp(0, 1).toDouble(),
+                backgroundColor: row.$3.withValues(alpha: .10),
+                valueColor: AlwaysStoppedAnimation<Color>(row.$3),
+              ),
+            ),
+            const SizedBox(height: 13),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _SafetyBanner extends StatelessWidget {

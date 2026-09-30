@@ -1,3 +1,5 @@
+import { productReceiverQuote, validateReceiverQuote, validReceiverValue } from './receiver-value.js';
+import { receiverLanguage, receiverLanguages, ReceiverNotificationService } from './receiver-notification.js';
 import { decodeOperatorId } from './provider-identity.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
@@ -267,6 +269,7 @@ export class MobileTopUpService {
   listRecipients(userId: string) { return this.repository.listRecipients(userId); }
 
   async saveRecipient(userId: string, input: {
+    language?: string;
     nickname: string;
     phone: string;
     countryCode: string;
@@ -296,6 +299,7 @@ export class MobileTopUpService {
     const record = await this.repository.saveRecipient({
       userId,
       nickname: input.nickname.trim().slice(0, 80),
+      language: input.language && receiverLanguages.includes(input.language as typeof receiverLanguages[number]) ? input.language : undefined,
       phone,
       countryCode,
       operatorId,
@@ -339,6 +343,10 @@ export class MobileTopUpService {
       throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
     assertProductAmount(product, amount);
+    const receiverQuote = validateReceiverQuote(this.provider.quoteReceiverValue
+      ? await this.provider.quoteReceiverValue(product, amount)
+      : productReceiverQuote(product, amount), product, amount);
+    receiverQuote.preferredLanguage = operator.preferredLanguage;
     const pricing = approvedRechargePrice(amount);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
@@ -355,8 +363,9 @@ export class MobileTopUpService {
       kind: product.kind,
       providerAmount: pricing.amountMinorUnits / 100,
       providerCurrency: product.priceCurrency,
-      deliveredValue: product.deliveredValue,
-      deliveredCurrency: product.deliveredCurrency,
+      receiverQuote,
+      deliveredValue: receiverQuote.amount,
+      deliveredCurrency: receiverQuote.currency,
       feeUsd: pricing.feeMinorUnits / 100,
       totalChargeUsd: pricing.totalMinorUnits / 100,
       testMode: this.isTestMode(),
@@ -443,6 +452,9 @@ export class MobileTopUpService {
     const transactionId = randomUUID();
     const transaction: MobileTopUpTransactionRecord = {
       ...quoteSnapshot,
+      // The immutable quote retains the promised value. Actual delivery is unknown until provider success.
+      deliveredValue: undefined,
+      receiverLanguage: receiverLanguage(quote.countryCode, savedRecipient?.language, quote.receiverQuote?.preferredLanguage),
       id: transactionId,
       quoteId: quote.id,
       recipientId: savedRecipient?.id,
@@ -645,6 +657,11 @@ export class MobileTopUpService {
     // Construct the public DTO explicitly so new repository fields cannot leak by default.
     return {
       status: record.status,
+      countryCode: record.countryCode,
+      receiverQuote: record.receiverQuote ?? null,
+      deliveredValue: record.status === 'DELIVERED' ? record.deliveredValue ?? null : null,
+      deliveredCurrency: record.status === 'DELIVERED' && record.deliveredValue !== undefined ? record.deliveredCurrency : null,
+      receiverDiscrepancy: record.receiverDiscrepancy ?? false,
       testMode: record.testMode,
       recipientPhone: record.recipientPhone,
       operatorName: record.operatorName,
@@ -818,14 +835,21 @@ export class MobileTopUpService {
 
   private async applyProviderResult(id: string, result: ProviderTopUpResult) {
     const status = mapProviderStatus(result.status);
+    const original = await this.repository.getTransactionById(id);
+    if (!original || (original.providerTransactionId && original.providerTransactionId !== result.transactionId)) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Provider transaction identity mismatch', 502);
+    }
+    const confirmedValue = status === 'DELIVERED' && validReceiverValue(result.deliveredAmount, result.deliveredAmountCurrencyCode);
+    const receiverDiscrepancy = status === 'DELIVERED' && (!confirmedValue || !original.receiverQuote ||
+      original.receiverQuote.amount !== result.deliveredAmount || original.receiverQuote.currency !== result.deliveredAmountCurrencyCode);
     const timestamp = this.clock().toISOString();
     const updated = await this.repository.updateTransaction(id, {
       providerTransactionId: result.transactionId,
       ...(result.operatorTransactionId ? { operatorTransactionId: result.operatorTransactionId } : {}),
       providerStatus: result.rawStatus ?? result.status,
       status,
-      ...(result.deliveredAmount !== undefined ? { deliveredValue: result.deliveredAmount } : {}),
-      ...(result.deliveredAmountCurrencyCode ? { deliveredCurrency: result.deliveredAmountCurrencyCode } : {}),
+      ...(confirmedValue ? { receiverValueConfirmed: true, deliveredValue: result.deliveredAmount, deliveredCurrency: result.deliveredAmountCurrencyCode } : {}),
+      ...(status === 'DELIVERED' ? { receiverDiscrepancy } : {}),
       ...(status === 'DELIVERED' ? { deliveredAt: timestamp } : {}),
       ...(status === 'FAILED' ? { failedAt: timestamp } : {}),
       ...(status === 'REFUNDED' ? { refundedAt: timestamp } : {}),
@@ -845,6 +869,19 @@ export class MobileTopUpService {
       return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, record.provider ?? decodeOperatorId(record.operatorId).provider));
     }
     return record;
+  }
+
+  async notificationStatus(id: string) {
+    const record = await this.repository.getNotification(id);
+    if (!record) return null;
+    const { status, attempts, lastErrorCategory, sentAt, deliveredAt } = record;
+    return { status, attempts, lastErrorCategory, sentAt, deliveredAt };
+  }
+
+  async retryReceiverNotification(id: string) {
+    // Only called through staff permission-protected routes. It cannot choose a phone or message.
+    await new ReceiverNotificationService(this.repository).retry(id);
+    return this.notificationStatus(id);
   }
 
   async listTransactions(userId: string) {

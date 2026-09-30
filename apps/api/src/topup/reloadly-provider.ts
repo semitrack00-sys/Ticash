@@ -1,5 +1,7 @@
+import { productReceiverQuote, validateReceiverQuote } from './receiver-value.js';
 import { reloadlyProducts, assertSameProduct } from './product-catalog.js';
 import type {
+  MobileTopUpProduct,
   MobileTopUpConfig,
   MobileTopUpCountry,
   MobileTopUpOperator,
@@ -151,7 +153,11 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
     senderCurrencyCode: String(raw.senderCurrencyCode ?? '').toUpperCase(),
     destinationCurrencyCode: String(raw.destinationCurrencyCode ?? '').toUpperCase(),
     fixedAmounts: numericList(raw.fixedAmounts),
-    localFixedAmounts: numericList(raw.localFixedAmounts),
+    localFixedAmounts: Array.isArray(raw.localFixedAmounts) &&
+      raw.localFixedAmounts.length === (Array.isArray(raw.fixedAmounts) ? raw.fixedAmounts.length : 0) &&
+      raw.localFixedAmounts.every(value => typeof value === 'number' && Number.isFinite(value) && value > 0) &&
+      Array.isArray(raw.fixedAmounts) && raw.fixedAmounts.every(value => typeof value === 'number' && Number.isFinite(value) && value > 0)
+      ? raw.localFixedAmounts as number[] : [],
     fixedAmountsPlanNames: stringMap(raw.fixedAmountsPlanNames),
     localFixedAmountsPlanNames: stringMap(raw.localFixedAmountsPlanNames),
     minAmount: Number.isFinite(minAmount) && minAmount > 0 ? minAmount : undefined,
@@ -376,6 +382,19 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
     const operator = await this.getOperator(id);
     if (operator.id !== id || operator.countryCode !== country || !operator.status) throw new MobileTopUpError('TOPUP_OPERATOR_COUNTRY_MISMATCH', 'Operator is unavailable for this destination', 400);
     return reloadlyProducts(operator);
+  }
+
+  async quoteReceiverValue(product: MobileTopUpProduct, amount: number) {
+    if (product.amountType === 'FIXED' && product.deliveredValue !== undefined) return productReceiverQuote(product, amount);
+    // Read-only provider calculation: fxRate is the receiving value for this requested amount,
+    // not a multiplier (Reloadly FX endpoint contract).
+    const body = await this.request('operators/fx-rate', {
+      method: 'POST', body: JSON.stringify({ operatorId: product.operatorId, amount }),
+    });
+    if (body.id !== product.operatorId) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'FX operator mismatch', 502);
+    return validateReceiverQuote({ amount: body.fxRate as number, currency: body.currencyCode as string,
+      senderAmount: amount, senderCurrency: product.priceCurrency, source: 'RELOADLY_FX',
+      quotedAt: new Date().toISOString() }, product, amount);
   }
 
   async submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult> {

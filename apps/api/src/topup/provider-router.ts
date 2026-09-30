@@ -1,3 +1,5 @@
+import { productReceiverQuote } from './receiver-value.js';
+import type { MobileTopUpProduct } from './types.js';
 import { isSupportedCountry } from 'libphonenumber-js';
 import { classifyReloadlyFailure, safeProviderErrorCode } from './reloadly-provider.js';
 import { decodeOperatorId, encodeOperatorId, decodeTransactionReference, encodeTransactionReference } from './provider-identity.js';
@@ -127,6 +129,13 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Provider returned mismatched products', 502);
     }
     return products.map(item => ({ ...item, operatorId: id }));
+  }
+  async quoteReceiverValue(product: MobileTopUpProduct, amount: number) {
+    const { provider, rawId } = decodeOperatorId(product.operatorId);
+    const owner = this.owning(provider);
+    return owner.quoteReceiverValue
+      ? owner.quoteReceiverValue({ ...product, operatorId: rawId }, amount)
+      : productReceiverQuote(product, amount);
   }
   async submitTopUp(input: ProviderTopUpRequest) {
     const { provider, rawId } = decodeOperatorId(input.operatorId);

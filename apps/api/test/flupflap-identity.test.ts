@@ -101,6 +101,10 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   await request(app).get('/api/admin/flupflap/dashboard').set(headers(legacy.accessToken)).expect(403);
   const admin=(await request(app).post('/api/auth/login').send({email:'admin@ticash.local',password:'AdminPass123!'}).expect(200)).body;
   const ah=headers(admin.accessToken);
+  const notificationPath='/api/admin/flupflap/transactions/00000000-0000-4000-8000-000000000001/receiver-notification/retry';
+  await request(app).post(notificationPath).set(headers(flup.accessToken)).send({}).expect(401);
+  await request(app).post(notificationPath).set(headers(legacy.accessToken)).send({}).expect(403);
+  await request(app).post(notificationPath).set(ah).send({to:'+15555555555',message:'arbitrary'}).expect(400);
   const customers=(await request(app).get('/api/admin/flupflap/customers').set(ah).expect(200)).body.customers;
   expect(customers.map((c:{id:string})=>c.id)).toEqual([flup.user.id]);
   expect(JSON.stringify(customers)).not.toContain('passwordHash');

@@ -114,6 +114,26 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     }
   }
 
+  Future<void> retryNotification(Map row) async {
+    try {
+      await client.post(
+        '/admin/flupflap/transactions/${row['id']}/receiver-notification/retry',
+        data: <String, dynamic>{},
+      );
+      if (mounted) setState(load);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Notification retry unavailable. Recharge status is unchanged.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   String value(dynamic input) {
     if (input == null) return '—';
     if (input is List) return input.map(value).join(', ');
@@ -235,6 +255,20 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                             children: [
                               for (final e in (row as Map).entries)
                                 SelectableText('${e.key}: ${value(e.value)}'),
+                              if (section == 'transactions' &&
+                                  row['status'] == 'DELIVERED' &&
+                                  widget.session.can('recharge.operations') &&
+                                  row['notification'] is Map &&
+                                  [
+                                    'SMS_NOT_CONFIGURED',
+                                    'PROVIDER_REJECTED',
+                                  ].contains(
+                                    row['notification']['lastErrorCategory'],
+                                  ))
+                                TextButton(
+                                  onPressed: () => retryNotification(row),
+                                  child: const Text('Retry receiver SMS'),
+                                ),
                               if (section == 'customers' &&
                                   widget.session.can('recharge.operations'))
                                 TextButton(

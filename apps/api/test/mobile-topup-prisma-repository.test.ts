@@ -98,6 +98,39 @@ describe('payment foundation persistence', () => {
     expect(recipient).toMatchObject({ provider, operatorId });
     expect(upsert.mock.calls[0]![0]).toMatchObject({ create: { provider, operatorId }, update: { provider, operatorId } });
   });
+  it('atomically persists confirmed receiver value and one outbox row without rewriting its quote', async () => {
+    const receiverQuote = { amount: 800, currency: 'JMD', senderAmount: 5, senderCurrency: 'USD', source: 'PROVIDER_PRODUCT', quotedAt: timestamp.toISOString() };
+    const actual = { ...row, status: 'DELIVERED', providerTransactionId: 'provider-ref', deliveredAt: timestamp,
+      deliveredValue: new Prisma.Decimal(805), receiverValueConfirmed: true, receiverQuote, receiverDiscrepancy: true };
+    const updateMany = vi.fn(async () => ({ count: 1 })); const upsert = vi.fn();
+    const transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn({
+      mobileTopUpTransaction: { updateMany, findUniqueOrThrow: async () => actual }, rechargeNotification: { upsert },
+    }));
+    const repository = new PrismaMobileTopUpRepository({ $transaction: transaction } as never);
+    const value = await repository.updateTransaction('transaction', { status: 'DELIVERED', receiverValueConfirmed: true,
+      deliveredValue: 805, deliveredCurrency: 'JMD', receiverDiscrepancy: true, deliveredAt: timestamp.toISOString() });
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(updateMany.mock.calls[0]![0]).toMatchObject({ where: { id: 'transaction', OR: [{ deliveredAt: null }, { receiverValueConfirmed: false }] } });
+    expect(value.receiverQuote).toEqual(receiverQuote);
+    expect(value.deliveredValue).toBe(805);
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { transactionId: 'transaction' }, update: {},
+      create: expect.objectContaining({ amount: 805, currency: 'JMD', status: 'PENDING' }) }));
+  });
+  it('never presents a legacy quoted value as provider-confirmed delivery', async () => {
+    const repository = new PrismaMobileTopUpRepository({ mobileTopUpTransaction: {
+      findUnique: async () => ({ ...row, status: 'DELIVERED', deliveredValue: new Prisma.Decimal(800) }),
+    } } as never);
+    expect((await repository.getTransactionById('transaction'))?.deliveredValue).toBeUndefined();
+  });
+  it('uses a conditional database claim to exclude delivered and ambiguous SMS retries', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const repository = new PrismaMobileTopUpRepository({ rechargeNotification: { updateMany } } as never);
+    expect(await repository.claimNotification('transaction', timestamp.toISOString())).toBe(true);
+    expect(updateMany.mock.calls[0]![0]).toMatchObject({ where: { transactionId: 'transaction', OR: [
+      { status: 'PENDING', claimedAt: null },
+      { status: 'FAILED', lastErrorCategory: { in: ['SMS_NOT_CONFIGURED', 'PROVIDER_REJECTED'] } },
+    ] }, data: { attempts: { increment: 1 }, claimedAt: timestamp, status: 'PENDING' } });
+  });
   it('reads legacy NULL metadata without relabeling existing payment records', async () => {
     const repository=new PrismaMobileTopUpRepository({mobileTopUpTransaction:{findUnique:vi.fn(async()=>row)}} as never);
     expect(await repository.getTransactionById('transaction')).toMatchObject({paymentStatus:'AUTHORIZED',paymentAuthorizationId:'old-authorization',paymentProvider:undefined,paymentMethod:undefined,totalChargeUsd:5.99});

@@ -1,3 +1,5 @@
+import type { ReceiverQuote } from './receiver-value.js';
+import { notificationFor, retryableNotification, type ReceiverNotification, type ReceiverNotificationStore } from './receiver-notification.js';
 import { ownerData, ownerWhere, ownerFromDb, recipientOwnerKey, transactionOwnerKey } from '../flupflap/owner.js';
 import { decodeOperatorId } from './provider-identity.js';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +17,7 @@ import type {
 import { MobileTopUpError } from './types.js';
 
 export interface SavedTopUpRecipientRecord {
+  language?: string;
   provider?: MobileTopUpProviderName;
   id: string;
   userId: string;
@@ -30,6 +33,7 @@ export interface SavedTopUpRecipientRecord {
 }
 
 export interface MobileTopUpQuoteRecord {
+  receiverQuote?: ReceiverQuote;
   productSnapshot?: MobileTopUpProduct;
   provider?: MobileTopUpProviderName;
   providerProductId?: string;
@@ -55,6 +59,9 @@ export interface MobileTopUpQuoteRecord {
 }
 
 export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecord, 'expiresAt' | 'consumedAt'> {
+  receiverValueConfirmed?: boolean;
+  receiverDiscrepancy?: boolean;
+  receiverLanguage?: string;
   quoteId: string;
   recipientId?: string;
   providerTransactionId?: string;
@@ -86,7 +93,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   refundedAt?: string;
 }
 
-export interface MobileTopUpRepository {
+export interface MobileTopUpRepository extends ReceiverNotificationStore {
   listRecipients(userId: string): Promise<SavedTopUpRecipientRecord[]>;
   saveRecipient(input: Omit<SavedTopUpRecipientRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<SavedTopUpRecipientRecord>;
   updateRecipientLastUsed(userId: string, id: string, productId: string, productName: string): Promise<void>;
@@ -111,13 +118,14 @@ export interface MobileTopUpRepository {
 }
 
 export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
-    'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
+    'receiverValueConfirmed' | 'receiverDiscrepancy' | 'providerTransactionId' | 'operatorTransactionId' | 'status' | 'paymentStatus' |
     'paymentAuthorizationId' | 'providerStatus' | 'failureCode' | 'deliveredValue' |
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
   'paymentProvider' |
   'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
       'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
 
+const notifications = new Map<string, ReceiverNotification>();
 const recipients = new Map<string, SavedTopUpRecipientRecord>();
 const quotes = new Map<string, MobileTopUpQuoteRecord>();
 const transactions = new Map<string, MobileTopUpTransactionRecord>();
@@ -125,6 +133,7 @@ const ledgerReferences = new Set<string>();
 const paymentEvents = new Map<string, { payloadHash: string; transactionId: string; processed: boolean }>();
 
 export function resetMobileTopUpStore(): void {
+  notifications.clear();
   recipients.clear();
   quotes.clear();
   transactions.clear();
@@ -135,6 +144,21 @@ export function resetMobileTopUpStore(): void {
 function now(): string { return new Date().toISOString(); }
 
 export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
+  async listRetryableNotificationIds(limit: number) {
+    return [...notifications.values()].filter(retryableNotification).slice(0, limit).map(n => n.transactionId);
+  }
+  async getNotification(id: string) { return notifications.get(id); }
+  async claimNotification(id: string, when: string) {
+    const record = notifications.get(id);
+    const transaction = transactions.get(id);
+    if (!record || !retryableNotification(record) || transaction?.status !== 'DELIVERED' || !transaction.receiverValueConfirmed) return false;
+    notifications.set(id, { ...record, status: 'PENDING', claimedAt: when, attempts: record.attempts + 1, lastErrorCategory: undefined });
+    return true;
+  }
+  async finishNotification(id: string, update: Parameters<ReceiverNotificationStore['finishNotification']>[1]) {
+    const record = notifications.get(id);
+    if (record) notifications.set(id, { ...record, ...update, updatedAt: now() });
+  }
   async getTransactionById(id: string) { return transactions.get(id); }
 
   async getTransactionByCheckoutResumeTokenHash(tokenHash: string) {
@@ -267,8 +291,11 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   async updateTransaction(id: string, input: TransactionUpdate) {
     const record = transactions.get(id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+    if (record.status === 'DELIVERED' && record.receiverValueConfirmed && input.status === 'DELIVERED') return record;
     const updated = { ...record, ...input, updatedAt: now() };
     transactions.set(id, updated);
+    const notification = notificationFor(updated);
+    if (notification && !notifications.has(id)) notifications.set(id, notification);
     return updated;
   }
 
@@ -286,6 +313,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 }
 
 function quoteFromDb(record: {
+  receiverQuote?: Prisma.JsonValue | null;
   productSnapshot?: Prisma.JsonValue | null;
   provider?: MobileTopUpProviderName; providerProductId?: string | null;
   id: string; userId: string | null; flupFlapCustomerId?: string | null; countryCode: string; recipientPhone: string; operatorId: number; operatorName: string;
@@ -297,6 +325,7 @@ function quoteFromDb(record: {
     id: record.id,
     provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
     providerProductId: record.providerProductId ?? undefined,
+    receiverQuote: record.receiverQuote ? record.receiverQuote as unknown as ReceiverQuote : undefined,
     productSnapshot: record.productSnapshot ? record.productSnapshot as unknown as MobileTopUpProduct : undefined,
     userId: ownerFromDb(record),
     countryCode: record.countryCode,
@@ -320,6 +349,7 @@ function quoteFromDb(record: {
 }
 
 function transactionFromDb(record: {
+  receiverQuote?: Prisma.JsonValue | null;
   productSnapshot?: Prisma.JsonValue | null;
   provider?: MobileTopUpProviderName; providerProductId?: string | null;
   id: string; userId: string | null; flupFlapCustomerId?: string | null; recipientId: string | null; quoteId: string; providerTransactionId: string | null;
@@ -336,6 +366,9 @@ function transactionFromDb(record: {
   paymentSessionId?: string | null; paymentProviderTransactionId?: string | null;
   checkoutResumeTokenHash?: string | null; checkoutResumeTokenExpiresAt?: Date | null;
   paymentStartedAt?: Date | null; fulfillmentStartedAt?: Date | null; recoveryStartedAt?: Date | null;
+  receiverValueConfirmed?: boolean;
+  receiverDiscrepancy?: boolean;
+  receiverLanguage?: string | null;
   paymentRecoveryCode?: string | null;
 }): MobileTopUpTransactionRecord {
   const paymentProvider = record.paymentProvider ?? undefined;
@@ -343,6 +376,7 @@ function transactionFromDb(record: {
     id: record.id,
     provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
     providerProductId: record.providerProductId ?? undefined,
+    receiverQuote: record.receiverQuote ? record.receiverQuote as unknown as ReceiverQuote : undefined,
     productSnapshot: record.productSnapshot ? record.productSnapshot as unknown as MobileTopUpProduct : undefined,
     userId: ownerFromDb(record),
     quoteId: record.quoteId,
@@ -366,6 +400,9 @@ function transactionFromDb(record: {
     paymentStartedAt: record.paymentStartedAt?.toISOString(),
     fulfillmentStartedAt: record.fulfillmentStartedAt?.toISOString(),
     recoveryStartedAt: record.recoveryStartedAt?.toISOString(),
+    receiverValueConfirmed: record.receiverValueConfirmed ?? false,
+    receiverDiscrepancy: record.receiverDiscrepancy ?? false,
+    receiverLanguage: record.receiverLanguage ?? undefined,
     paymentRecoveryCode: record.paymentRecoveryCode ?? undefined,
     countryCode: record.countryCode,
     recipientPhone: record.recipientPhone,
@@ -376,7 +413,7 @@ function transactionFromDb(record: {
     kind: record.kind,
     providerAmount: Number(record.providerAmount),
     providerCurrency: record.providerCurrency,
-    deliveredValue: record.deliveredValue == null ? undefined : Number(record.deliveredValue),
+    deliveredValue: record.receiverValueConfirmed && record.deliveredValue != null ? Number(record.deliveredValue) : undefined,
     deliveredCurrency: record.deliveredCurrency,
     feeUsd: Number(record.feeUsd),
     totalChargeUsd: Number(record.totalChargeUsd),
@@ -393,6 +430,36 @@ function transactionFromDb(record: {
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async listRetryableNotificationIds(limit: number) {
+    const rows = await this.prisma.rechargeNotification.findMany({ where: { transaction: { status: 'DELIVERED', receiverValueConfirmed: true }, OR: [
+      { status: 'PENDING', claimedAt: null },
+      { status: 'FAILED', lastErrorCategory: { in: ['SMS_NOT_CONFIGURED', 'PROVIDER_REJECTED'] } },
+    ] }, orderBy: { createdAt: 'asc' }, take: limit, select: { transactionId: true } });
+    return rows.map(row => row.transactionId);
+  }
+  async getNotification(id: string): Promise<ReceiverNotification | undefined> {
+    const row = await this.prisma.rechargeNotification.findUnique({ where: { transactionId: id } });
+    if (!row) return undefined;
+    return { ...row, amount: Number(row.amount), status: row.status as ReceiverNotification['status'],
+      providerMessageId: row.providerMessageId ?? undefined, lastErrorCategory: row.lastErrorCategory ?? undefined,
+      claimedAt: row.claimedAt?.toISOString(), createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      sentAt: row.sentAt?.toISOString(), deliveredAt: row.deliveredAt?.toISOString() };
+  }
+  async claimNotification(id: string, when: string) {
+    const result = await this.prisma.rechargeNotification.updateMany({ where: { transactionId: id, transaction: { status: 'DELIVERED', receiverValueConfirmed: true }, OR: [
+      { status: 'PENDING', claimedAt: null },
+      { status: 'FAILED', lastErrorCategory: { in: ['SMS_NOT_CONFIGURED', 'PROVIDER_REJECTED'] } },
+    ] }, data: { status: 'PENDING', claimedAt: new Date(when), attempts: { increment: 1 }, lastErrorCategory: null } });
+    return result.count === 1;
+  }
+  async finishNotification(id: string, update: Parameters<ReceiverNotificationStore['finishNotification']>[1]) {
+    await this.prisma.rechargeNotification.update({ where: { transactionId: id }, data: {
+      ...update, lastErrorCategory: update.lastErrorCategory ?? null,
+      sentAt: update.sentAt ? new Date(update.sentAt) : undefined,
+      deliveredAt: update.deliveredAt ? new Date(update.deliveredAt) : undefined,
+    } });
+  }
 
   async getTransactionById(id: string) {
     const record = await this.prisma.mobileTopUpTransaction.findUnique({ where: { id } });
@@ -449,6 +516,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     const records = await this.prisma.mobileTopUpRecipient.findMany({ where: ownerWhere(userId), orderBy: { updatedAt: 'desc' } });
     return records.map((item) => ({
       ...item,
+      language: item.language ?? undefined,
       userId: ownerFromDb(item),
       countryCode: item.countryCode,
       provider: item.provider ?? undefined,
@@ -469,6 +537,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     });
     return {
       ...record,
+      language: record.language ?? undefined,
       userId: ownerFromDb(record),
       countryCode: record.countryCode,
       provider: record.provider ?? undefined,
@@ -489,6 +558,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     const record = await this.prisma.mobileTopUpQuote.create({ data: {
       ...input,
       ...ownerData(input.userId),
+      receiverQuote: input.receiverQuote ? JSON.parse(JSON.stringify(input.receiverQuote)) as Prisma.InputJsonValue : undefined,
       productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
       provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
       testMode: input.testMode,
@@ -525,7 +595,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
         return tx.mobileTopUpTransaction.create({ data: {
           ...input,
       ...ownerData(input.userId),
-          productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
+          receiverQuote: input.receiverQuote ? JSON.parse(JSON.stringify(input.receiverQuote)) as Prisma.InputJsonValue : undefined,
+      productSnapshot: input.productSnapshot ? JSON.parse(JSON.stringify(input.productSnapshot)) as Prisma.InputJsonValue : undefined,
           provider: input.provider ?? decodeOperatorId(input.operatorId).provider,
           testMode: input.testMode,
           paymentStartedAt: input.paymentStartedAt ? new Date(input.paymentStartedAt) : null,
@@ -579,8 +650,19 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async updateTransaction(id: string, input: TransactionUpdate) {
-    const record = await this.prisma.mobileTopUpTransaction.update({ where: { id }, data: transactionUpdateData(input) });
-    return transactionFromDb(record);
+    return this.prisma.$transaction(async tx => {
+      if (input.status === 'DELIVERED') {
+        await tx.mobileTopUpTransaction.updateMany({ where: { id, OR: [{ deliveredAt: null }, { receiverValueConfirmed: false }] }, data: transactionUpdateData(input) });
+      } else {
+        await tx.mobileTopUpTransaction.update({ where: { id }, data: transactionUpdateData(input) });
+      }
+      const record = transactionFromDb(await tx.mobileTopUpTransaction.findUniqueOrThrow({ where: { id } }));
+      const notification = notificationFor(record);
+      if (notification) await tx.rechargeNotification.upsert({ where: { transactionId: id }, update: {}, create: {
+        ...notification, createdAt: new Date(notification.createdAt), updatedAt: new Date(notification.updatedAt),
+      } });
+      return record;
+    });
   }
 
   async postDeliveredLedger(record: MobileTopUpTransactionRecord) {

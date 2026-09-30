@@ -1,3 +1,4 @@
+import type { ReceiverQuote } from './receiver-value.js';
 export type MobileTopUpProviderName = 'RELOADLY' | 'DTONE' | 'DING';
 export type MobileTopUpEnvironment = 'sandbox' | 'production';
 export type MobileTopUpRuntimeEnvironment = 'SANDBOX' | 'PRODUCTION';
@@ -35,6 +36,11 @@ export interface HostedCheckoutSessionContract extends HostedCheckoutSessionBase
 
 // Public capability response: explicit customer-facing fields, never an internal record.
 export interface MobileTopUpCheckoutResumeDto {
+  countryCode: string;
+  receiverQuote: ReceiverQuote | null;
+  deliveredValue: number | null;
+  deliveredCurrency: string | null;
+  receiverDiscrepancy: boolean;
   status: MobileTopUpStatus;
   testMode: boolean;
   recipientPhone: string;
@@ -95,6 +101,7 @@ export interface MobileTopUpDestination extends MobileTopUpCountry {
 }
 
 export interface MobileTopUpOperator {
+  preferredLanguage?: string;
   logoUrl?: string;
   provider?: MobileTopUpProviderName;
   id: number;
@@ -177,6 +184,7 @@ export interface ProviderCoverage {
 }
 
 export interface MobileTopUpProvider {
+  quoteReceiverValue?(product: MobileTopUpProduct, amount: number): Promise<ReceiverQuote>;
   readonly name?: MobileTopUpProviderName;
   readonly providerNames?: MobileTopUpProviderName[];
   coverage?(): Promise<ProviderCoverage>;
@@ -224,6 +232,7 @@ export class MockMobileTopUpPaymentProvider implements MobileTopUpPaymentProvide
 }
 
 export interface MobileTopUpQuoteRecord {
+  receiverQuote?: ReceiverQuote;
   productSnapshot?: MobileTopUpProduct;
   provider?: MobileTopUpProviderName;
   providerProductId?: string;
@@ -249,6 +258,9 @@ export interface MobileTopUpQuoteRecord {
 }
 
 export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecord, 'expiresAt' | 'consumedAt'> {
+  receiverValueConfirmed?: boolean;
+  receiverDiscrepancy?: boolean;
+  receiverLanguage?: string;
   quoteId: string;
   recipientId?: string;
   providerTransactionId?: string;

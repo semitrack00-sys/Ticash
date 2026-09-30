@@ -1359,7 +1359,10 @@ export function createApp(options: CreateAppOptions = {}) {
           ? storedUserFromDb((await prisma.user.findUnique({ where: { email: input.email } }))!)
           : undefined
       : [...users.values()].find((candidate) => candidate.email === input.email);
-    if (!isProduction && !user && input.email === adminEmail && input.password === adminPassword) {
+    // Bootstrap the configured administrator into persistent storage on first
+    // successful credential use. Production requires the database so the account
+    // is durable; subsequent logins use the stored bcrypt hash like every other user.
+    if ((!isProduction || databaseEnabled) && !user && input.email === adminEmail && input.password === adminPassword) {
       user = {
         id: randomUUID(), email: adminEmail, firstName: 'TiCash', lastName: 'Admin',
         kycStatus: 'APPROVED', role: 'ADMIN', createdAt: new Date().toISOString(),

@@ -15,6 +15,15 @@
   <title>TiCash</title>
 </head>
 <body>
+  <script>
+    // The dedicated Render administrator host must always enter the staff
+    // authentication flow. Do this before Flutter starts so a fresh browser,
+    // expired session, or direct root visit cannot land on the customer shell.
+    if (window.location.hostname === 'ticash-admin.onrender.com' &&
+        !window.location.hash) {
+      window.history.replaceState(null, '', '/#/login');
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

@@ -190,10 +190,11 @@ void main() {
       ),
     );
 
-    final operators = await service.operators('jm');
+    final operators = await service.operators('jm', provider: 'DTONE');
     final detected = await service.detectOperator(
       countryCode: 'jm',
       phone: '+18765551234',
+      provider: 'DTONE',
     );
     await service.products('jm', 77);
     final recipient = await service.saveRecipient(
@@ -217,13 +218,14 @@ void main() {
     expect(getCalls, [
       {
         'path': '/mobile-topups/operators',
-        'queryParameters': {'country': 'JM'},
+        'queryParameters': {'country': 'JM', 'provider': 'DTONE'},
       },
       {
         'path': '/mobile-topups/operators/detect',
         'queryParameters': {
           'country': 'JM',
           'phone': '+18765551234',
+          'provider': 'DTONE',
         },
       },
       {

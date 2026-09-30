@@ -107,13 +107,15 @@ export function createMobileTopUpRouter(options: {
 
   router.get('/operators', ...protectedRoute, asyncRoute(async (req, res) => {
     const countryCode = topUpCountryCodeShape.parse(req.query.country);
-    res.json({ operators: await options.service.listOperators(countryCode) });
+    const provider = z.enum(['RELOADLY', 'DTONE', 'DING']).optional().parse(req.query.provider);
+    res.json({ operators: await options.service.listOperators(countryCode, provider) });
   }));
 
   router.get('/operators/detect', ...protectedRoute, asyncRoute(async (req, res) => {
     const countryCode = topUpCountryCodeShape.parse(req.query.country);
     const phone = topUpPhoneShape.parse(req.query.phone);
-    res.json({ operator: await options.service.detectOperator(countryCode, phone) });
+    const provider = z.enum(['RELOADLY', 'DTONE', 'DING']).optional().parse(req.query.provider);
+    res.json({ operator: await options.service.detectOperator(countryCode, phone, provider) });
   }));
 
   router.get('/operators/:id/products', ...protectedRoute, asyncRoute(async (req, res) => {

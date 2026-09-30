@@ -14,7 +14,7 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
   ) {
     if (new Set(entries.map(([name]) => name)).size !== entries.length) throw new Error('Duplicate recharge provider');
     this.providers = new Map(entries);
-    this.providerNames = (['RELOADLY', 'DTONE', 'DING'] as const).filter(name => this.providers.has(name));
+    this.providerNames = (['DTONE', 'RELOADLY', 'DING'] as const).filter(name => this.providers.has(name));
   }
   private owning(name: MobileTopUpProviderName) {
     const provider = this.providers.get(name);
@@ -105,8 +105,10 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
     if (results.every(result => result.status === 'rejected')) throw new MobileTopUpError('TOPUP_PROVIDERS_UNAVAILABLE', 'No recharge operator catalog is available', 502);
     return [...new Map(results.flatMap(result => result.status === 'fulfilled' ? result.value : []).map(op => [op.id, op])).values()].sort((a, b) => a.id - b.id);
   }
-  async detectOperator(phone: string, country: string) {
-    for (const name of this.providerNames) {
+  async detectOperator(phone: string, country: string, preferredProvider?: MobileTopUpProviderName) {
+    const candidates = preferredProvider ? [preferredProvider] : this.providerNames;
+    for (const name of candidates) {
+      if (!this.providers.has(name)) continue;
       try { const op = this.operator(name, await this.owning(name).detectOperator(phone, country), country); if (op.status) return op; }
       catch { /* Discovery only: retain manual selection if lookup is unavailable. */ }
     }

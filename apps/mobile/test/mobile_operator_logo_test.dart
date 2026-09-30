@@ -46,13 +46,17 @@ class _FakeRechargeService extends MobileTopUpService {
   Future<MobileTopUpOperator> detectOperator({
     required String countryCode,
     required String phone,
+    String? provider,
   }) async {
     if (manual) throw StateError('Select manually');
     return _first;
   }
 
   @override
-  Future<List<MobileTopUpOperator>> operators(String countryCode) async =>
+  Future<List<MobileTopUpOperator>> operators(
+    String countryCode, {
+    String? provider,
+  }) async =>
       const [_first, _second];
   @override
   Future<List<MobileTopUpProduct>> products(

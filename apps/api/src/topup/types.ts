@@ -191,7 +191,7 @@ export interface MobileTopUpProvider {
   listProducts?(countryCode: string, operatorId: number): Promise<MobileTopUpProduct[] | undefined>;
   listCountries(): Promise<MobileTopUpCountry[]>;
   listOperators(countryCode: string): Promise<MobileTopUpOperator[]>;
-  detectOperator(phone: string, countryCode: string): Promise<MobileTopUpOperator>;
+  detectOperator(phone: string, countryCode: string, preferredProvider?: MobileTopUpProviderName): Promise<MobileTopUpOperator>;
   getOperator(operatorId: number): Promise<MobileTopUpOperator>;
   submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult>;
   getTopUpStatus(transactionId: string, provider?: MobileTopUpProviderName): Promise<ProviderTopUpResult>;

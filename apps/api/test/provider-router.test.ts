@@ -81,9 +81,10 @@ describe('provider catalog routing', () => {
     const router = new GlobalRechargeProviderRouter([['DTONE', dtone], ['RELOADLY', reloadly]]);
     expect((await router.listOperators('JM')).map(o => o.id)).toEqual([255, 700000255]);
     await router.getOperator(700000255); expect(dtone.getOperator).toHaveBeenCalledWith(255); expect(reloadly.getOperator).not.toHaveBeenCalled();
-    expect((await router.detectOperator('+18765551234', 'JM')).provider).toBe('RELOADLY');
-    vi.mocked(reloadly.detectOperator).mockRejectedValue(new Error());
     expect((await router.detectOperator('+18765551234', 'JM')).provider).toBe('DTONE');
+    expect((await router.detectOperator('+18765551234', 'JM', 'RELOADLY')).provider).toBe('RELOADLY');
+    vi.mocked(dtone.detectOperator).mockRejectedValue(new Error());
+    expect((await router.detectOperator('+18765551234', 'JM')).provider).toBe('RELOADLY');
   });
   it('does not mix operators from the wrong country or silently accept changed lookup IDs', async () => {
     const provider = fixture('RELOADLY', ['JM']); vi.mocked(provider.listOperators).mockResolvedValue([{ ...op, countryCode: 'HT' }]);

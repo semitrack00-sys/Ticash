@@ -27,6 +27,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   List<MobileTopUpOperator> _operators = const [];
   List<MobileTopUpProduct> _products = const [];
   String _productFilter = 'ALL';
+  String _providerSelection = 'AUTO';
   MobileTopUpQuote? _quote;
   MobileTopUpTransaction? _receipt;
   String? _receiptLogoUrl;
@@ -106,16 +107,21 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
 
   Future<void> _detect(String countryCode) => _run(() async {
     final service = ref.read(mobileTopUpServiceProvider);
+    final preferredProvider = _providerSelection == 'AUTO' ? null : _providerSelection;
     List<MobileTopUpOperator> operators;
     MobileTopUpOperator selected;
     try {
       selected = await service.detectOperator(
         countryCode: countryCode,
         phone: _phone.text,
+        provider: preferredProvider,
       );
       operators = [selected];
     } catch (_) {
-      final items = await service.operators(countryCode);
+      final items = await service.operators(
+        countryCode,
+        provider: preferredProvider,
+      );
       if (items.isEmpty) rethrow;
       operators = items;
       selected = items.first;
@@ -321,7 +327,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                         }
                       },
                     )
-                  : _recharge(),
+                  : _recharge(status),
             ),
           ),
         ],
@@ -329,7 +335,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     );
   }
 
-  Widget _recharge() {
+  Widget _recharge(MobileTopUpAvailability status) {
     if (_receipt != null) {
       return _Receipt(
         transaction: _receipt!,
@@ -429,6 +435,53 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                     ),
             ),
             DropdownButtonFormField<String>(
+              key: ValueKey('provider-$_providerSelection-${status.providers.join('-')}'),
+              isExpanded: true,
+              initialValue: _providerSelection == 'AUTO' ||
+                      status.providers.contains(_providerSelection)
+                  ? _providerSelection
+                  : 'AUTO',
+              decoration: const InputDecoration(
+                labelText: 'Recharge provider',
+                helperText:
+                    'Automatic uses the best available provider. You can choose a specific provider.',
+                prefixIcon: Icon(Icons.hub_outlined),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: 'AUTO',
+                  child: Text(
+                    'Automatic · Best available',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                ...status.providers.map(
+                  (provider) => DropdownMenuItem(
+                    value: provider,
+                    child: Text(
+                      switch (provider) {
+                        'DTONE' => 'DT One',
+                        'RELOADLY' => 'Reloadly',
+                        'DING' => 'Ding Connect',
+                        _ => provider,
+                      },
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                if (value == null || value == _providerSelection) return;
+                setState(() {
+                  _providerSelection = value;
+                  _clearRechargeState();
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
               key: ValueKey(selectedCountryCode),
               initialValue: selectedCountryCode,
               decoration: const InputDecoration(
@@ -514,7 +567,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           _InfoRow(
             leading: MobileOperatorLogo(logoUrl: _operator!.logoUrl),
             label: 'Detected operator',
-            value: _operator!.name,
+            value: _operator!.provider == null
+                ? _operator!.name
+                : '${_operator!.name} · ${_operator!.provider == 'DTONE' ? 'DT One' : _operator!.provider == 'DING' ? 'Ding Connect' : 'Reloadly'}',
           ),
           const SizedBox(height: 18),
           Text(

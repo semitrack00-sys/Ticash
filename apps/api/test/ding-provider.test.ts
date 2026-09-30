@@ -241,7 +241,7 @@ describe('Ding router integration', () => {
     const s = service(); const dtone = { ...s.reloadly, name: 'DTONE' as const, listCountries: vi.fn(async () => [{ code: 'MX', name: 'Mexico' }]) };
     const ding = { ...s.reloadly, name: 'DING' as const, listCountries: vi.fn(async () => [{ code: 'JM', name: 'Jamaica' }, { code: 'MX', name: 'Mexico' }, { code: 'NG', name: 'Nigeria' }]) };
     const router = new GlobalRechargeProviderRouter([['DING', ding], ['DTONE', dtone], ['RELOADLY', s.reloadly]]);
-    expect(router.providerNames).toEqual(['RELOADLY', 'DTONE', 'DING']);
+    expect(router.providerNames).toEqual(['DTONE', 'RELOADLY', 'DING']);
     expect(await router.coverage()).toMatchObject({ uniqueCountries: 4, overlapCountries: ['JM', 'MX'], reloadlyOnlyCountries: ['HT'], dtoneOnlyCountries: [], dingOnlyCountries: ['NG'], providerOverlaps: { RELOADLY_DING: ['JM'], DTONE_DING: ['MX'] } });
     vi.mocked(ding.listCountries).mockRejectedValue(new Error('fixture-secret'));
     expect(await router.coverage()).toMatchObject({ uniqueCountries: 3, overlapCountries: [], providers: [{ provider: 'RELOADLY' }, { provider: 'DTONE' }, { provider: 'DING', enabled: true, countries: 0, reason: 'PROVIDER_UNAVAILABLE' }] });

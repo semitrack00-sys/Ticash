@@ -27,6 +27,12 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const email = z.email().max(254).transform(value => value.trim().toLowerCase());
 const password = z.string().min(8).max(128).refine(value => Buffer.byteLength(value, 'utf8') <= 72);
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const webRefreshCookie = 'flupflap_refresh';
+function cookies(header?: string) { return Object.fromEntries((header ?? '').split(';').map(v=>v.trim()).filter(Boolean).map(v=>{const i=v.indexOf('=');return i<0?[v,'']:[v.slice(0,i),decodeURIComponent(v.slice(i+1))];})); }
+function setWebRefreshCookie(res: express.Response, value: string, expiresAt: Date) {
+  res.cookie(webRefreshCookie, value, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:'lax', path:'/api/flupflap/auth', expires:expiresAt });
+}
+function clearWebRefreshCookie(res: express.Response) { res.clearCookie(webRefreshCookie, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:'lax', path:'/api/flupflap/auth' }); }
 
 export function createFlupFlapIdentity(options: {
   config: FlupFlapConfig; repository: FlupFlapIdentityRepository;
@@ -49,7 +55,7 @@ export function createFlupFlapIdentity(options: {
     const accessToken = jwt.sign({ sub:c.id, type:'access', domain:'FLUPFLAP', sid:s.id, v:c.authVersion }, config.accessSecret!, {
       algorithm:'HS256', issuer:'flupflap-api', audience:'flupflap-customer', expiresIn:Math.max(1,Math.min(900,Math.floor((expiry.getTime()-Date.now())/1000))) });
     await options.audit(flupFlapOwner(c.id),'FLUPFLAP_SESSION_CREATED','FlupFlapCustomer',c.id);
-    return { accessToken, refreshToken, user:publicFlupFlapCustomer(c), guest:Boolean(c.guestExpiresAt) };
+    return { accessToken, refreshToken, user:publicFlupFlapCustomer(c), guest:Boolean(c.guestExpiresAt), refreshExpiresAt:expiry };
   }
   const authenticate: RequestHandler = async (request,res,next) => {
     const req = request as AuthRequest;
@@ -76,7 +82,7 @@ export function createFlupFlapIdentity(options: {
     const input = z.object({email,password,countryCode:z.string().regex(/^[A-Z]{2}$/).optional()}).strict().parse(req.body);
     try {
       const c = await repo.create({email:input.email,passwordHash:await bcrypt.hash(input.password,12),countryCode:input.countryCode});
-      res.status(201).json(await issue(c));
+      const session=await issue(c); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.status(201).json(session);
     } catch(error) {
       if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {res.status(409).json({code:'REGISTRATION_UNAVAILABLE',error:'Unable to create this account. Try signing in or resetting your password.'});return;}
       throw error;
@@ -85,7 +91,7 @@ export function createFlupFlapIdentity(options: {
   router.post('/guest', guestLimited, async (req,res) => {
     z.object({}).strict().parse(req.body ?? {});
     const error = options.guestError(); if (error) {res.status(403).json(error);return;}
-    res.status(201).json(await issue(await repo.create({guestExpiresAt:new Date(Date.now()+3600_000)})));
+    const session=await issue(await repo.create({guestExpiresAt:new Date(Date.now()+3600_000)})); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.status(201).json(session);
   });
   router.post('/login', limited, async (req,res) => {
     const input = z.object({email,password}).strict().parse(req.body);
@@ -101,16 +107,19 @@ export function createFlupFlapIdentity(options: {
     }
     const updated = await repo.completeLogin(c!.id,c!.passwordHash!,c!.authVersion);
     if(!updated){res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with these credentials'});return;}
-    res.json(await issue(updated));
+    const session=await issue(updated); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.json(session);
   });
   router.post('/refresh', limited, async (req,res) => {
-    const input = z.object({refreshToken:token}).strict().parse(req.body);
-    const session = await repo.consumeSession(hash(input.refreshToken));
+    const cookieToken=cookies(req.header('cookie'))[webRefreshCookie];
+    const input = z.object({refreshToken:token.optional()}).strict().parse(req.body ?? {});
+    const supplied=input.refreshToken ?? cookieToken;
+    if (!supplied || !token.safeParse(supplied).success) { clearWebRefreshCookie(res); res.status(401).json({code:'INVALID_REFRESH_TOKEN',error:'Sign in again'}); return; }
+    const session = await repo.consumeSession(hash(supplied));
     const c = session ? await repo.customer(session.customerId) : null;
     if (!session || session.expiresAt <= new Date() || !active(c) || session.authVersion !== c!.authVersion || (c!.guestExpiresAt && options.guestError())) {res.status(401).json({code:'INVALID_REFRESH_TOKEN',error:'Sign in again'});return;}
-    res.json(await issue(c!));
+    const next=await issue(c!); setWebRefreshCookie(res,next.refreshToken,next.refreshExpiresAt); res.json(next);
   });
-  router.post('/logout', authenticate, async (req,res) => {await repo.revoke((req as AuthRequest).flupFlapSessionId!);await options.audit((req as AuthRequest).userId,'FLUPFLAP_LOGOUT','Security');res.status(204).end();});
+  router.post('/logout', authenticate, async (req,res) => {clearWebRefreshCookie(res);await repo.revoke((req as AuthRequest).flupFlapSessionId!);await options.audit((req as AuthRequest).userId,'FLUPFLAP_LOGOUT','Security');res.status(204).end();});
   router.get('/me',authenticate,(req,res)=>{res.json({user:publicFlupFlapCustomer((req as AuthRequest).flupFlapCustomer!)});});
   router.patch('/me',authenticate,async(req,res)=>{
     const c=(req as AuthRequest).flupFlapCustomer!;

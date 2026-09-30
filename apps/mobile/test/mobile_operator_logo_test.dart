@@ -46,6 +46,7 @@ class _FakeRechargeService extends MobileTopUpService {
   Future<MobileTopUpOperator> detectOperator({
     required String countryCode,
     required String phone,
+    String? provider,
   }) async {
     if (manual) throw StateError('Select manually');
     return _first;

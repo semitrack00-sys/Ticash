@@ -178,6 +178,21 @@ export class MobileTopUpService {
         console.warn('Mobile recharge country catalog refresh failed; serving last known validated catalog');
         return this.countriesCache.value;
       }
+      if (error instanceof MobileTopUpError &&
+          (error.code === 'RELOADLY_UNAVAILABLE' || error.statusCode >= 500) &&
+          this.repository.getCountryCatalogCache) {
+        const persisted = await this.repository.getCountryCatalogCache(cacheKey).catch(() => undefined);
+        if (persisted && new Date(persisted.expiresAt).getTime() > Date.now() && Array.isArray(persisted.value)) {
+          const value = persisted.value as MobileTopUpDestination[];
+          const valid = value.length > 0 && value.every(country => country && typeof country.code === 'string' && /^[A-Z]{2}$/.test(country.code) &&
+            typeof country.name === 'string' && country.name.length > 0 && typeof country.callingCode === 'string' && /^\\+\\d{1,4}$/.test(country.callingCode));
+          if (valid) {
+            this.countriesCache = { key: cacheKey, value, expiresAt: 0, staleUntil: new Date(persisted.expiresAt).getTime() };
+            console.warn('Mobile recharge country catalog refresh failed; serving persisted last known validated catalog');
+            return value;
+          }
+        }
+      }
       throw error;
     }
     if (!Array.isArray(providerCountries)) {
@@ -210,12 +225,21 @@ export class MobileTopUpService {
       throw new MobileTopUpError('UNSUPPORTED_CALLING_CODE', 'No provider destinations have supported calling-code metadata', 502);
     }
     const countries = [...supported.values()].sort((left, right) => left.name.localeCompare(right.name));
+    const validatedAt = Date.now();
     this.countriesCache = {
       key: cacheKey,
       value: countries,
-      expiresAt: Date.now() + countryCatalogCacheTtlMs,
-      staleUntil: Date.now() + countryCatalogStaleTtlMs,
+      expiresAt: validatedAt + countryCatalogCacheTtlMs,
+      staleUntil: validatedAt + countryCatalogStaleTtlMs,
     };
+    if (countries.length > 0 && this.repository.saveCountryCatalogCache) {
+      await this.repository.saveCountryCatalogCache(
+        cacheKey,
+        countries,
+        new Date(validatedAt).toISOString(),
+        new Date(validatedAt + countryCatalogStaleTtlMs).toISOString(),
+      ).catch(() => console.warn('Mobile recharge validated country catalog could not be persisted'));
+    }
     return countries;
   }
 

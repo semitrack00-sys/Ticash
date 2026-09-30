@@ -52,7 +52,10 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
   }
 
   const expected = createHmac('sha256', secret).update(`${timestamp}.${raw.toString('utf8')}`).digest();
-  if (!timingSafeEqual(expected, Buffer.from(expectedSignature, 'hex'))) {
+  const provided = /^[A-Fa-f0-9]{64}$/.test(expectedSignature)
+    ? Buffer.from(expectedSignature, 'hex')
+    : undefined;
+  if (!provided || provided.length !== expected.length || !timingSafeEqual(expected, provided)) {
     throw new MobileTopUpError('INVALID_WEBHOOK_SIGNATURE', 'Invalid webhook signature', 401);
   }
 

@@ -29,7 +29,8 @@ const quoteSchema = z.object({
   operatorId: z.number().int().positive().max(2_147_483_647),
   productId: z.string().min(1).max(240).optional(),
   catalogVersion: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  amount: z.number().finite().min(5).max(100).multipleOf(0.01).optional(),
+  // The service applies the identity/product-specific minimum after catalog validation.
+  amount: z.number().finite().min(1).max(100).multipleOf(0.01).optional(),
 }).strict().refine((value) => Boolean(value.productId || value.amount !== undefined), {
   message: 'Either productId or amount must be supplied',
   path: ['productId'],
@@ -122,7 +123,7 @@ export function createMobileTopUpRouter(options: {
     const operatorId = z.coerce.number().int().positive().max(2_147_483_647).parse(req.params.id);
     const countryCode = topUpCountryCodeShape.parse(req.query.country);
     const classification = z.enum(['AIRTIME', 'DATA', 'BUNDLE']).optional().parse(req.query.classification);
-    res.json(await options.service.products(countryCode, operatorId, classification));
+    res.json(await options.service.products(countryCode, operatorId, classification, req.userId!));
   }));
 
   router.get('/recipients', ...protectedRoute, asyncRoute(async (req, res) => {

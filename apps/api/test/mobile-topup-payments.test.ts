@@ -572,15 +572,15 @@ describe('Stripe sandbox flow',()=>{
     const before = await f.identities.customer(guest.user.id);
     expect(before?.countryCode).toBeNull();
     const quote = await f.quote(guest.accessToken);
-    expect(quote).toMatchObject({ countryCode: 'HT', providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
+    expect(quote).toMatchObject({ countryCode: 'HT', providerAmount: 5, feeUsd: 1.39, totalChargeUsd: 6.39 });
     const response = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry }).expect(201);
-    expect(response.body).toMatchObject({ provider: 'STRIPE', environment: 'SANDBOX', testMode: true, amountMinor: 599, currency: 'USD' });
+    expect(response.body).toMatchObject({ provider: 'STRIPE', environment: 'SANDBOX', testMode: true, amountMinor: 639, currency: 'USD' });
     const payload = new URLSearchParams(transportRequest(f.transport).body);
     const resumeToken = new URL(payload.get('success_url')!).searchParams.get('checkoutResumeToken')!;
     expect(response.body).not.toHaveProperty('checkoutResumeToken');
     expect(response.text).not.toContain(resumeToken);
     expect(payload.get('metadata[billingCountry]')).toBe('US');
-    expect(payload.get('line_items[0][price_data][unit_amount]')).toBe('599');
+    expect(payload.get('line_items[0][price_data][unit_amount]')).toBe('639');
     expect(payload.get('line_items[0][price_data][currency]')).toBe('usd');
     expect(await f.identities.customer(guest.user.id)).toEqual(before);
     const profile = await request(f.app).get('/api/flupflap/auth/me').auth(guest.accessToken, { type: 'bearer' }).expect(200);
@@ -617,7 +617,7 @@ describe('Stripe sandbox flow',()=>{
     }
     expect(f.transport).not.toHaveBeenCalled();
     const response = await f.session(customer.accessToken, { quoteId: quote.id }).expect(201);
-    expect(response.body).toMatchObject({ provider: 'STRIPE', amountMinor: 599 });
+    expect(response.body).toMatchObject({ provider: 'STRIPE', amountMinor: 639 });
     expect(new URLSearchParams(transportRequest(f.transport).body).get('metadata[billingCountry]')).toBe('US');
     expect(await f.identities.customer(customer.user.id)).toEqual(before);
     expect(f.submit).not.toHaveBeenCalled();
@@ -656,7 +656,7 @@ describe('Stripe sandbox flow',()=>{
     }
     expect(f.transport).not.toHaveBeenCalled();
     expect(await f.repository.listTransactions(flupFlapOwner(guest.user.id))).toHaveLength(0);
-    expect((await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201)).body.amountMinor).toBe(599);
+    expect((await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201)).body.amountMinor).toBe(639);
     expect(f.submit).not.toHaveBeenCalled();
   });
 

@@ -8,8 +8,8 @@
         android:label="FlupFlap"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:icon="@drawable/flupflap_icon"
-        android:roundIcon="@drawable/flupflap_icon"
+        android:icon="@mipmap/flupflap_launcher"
+        android:roundIcon="@mipmap/flupflap_launcher"
         android:name="${applicationName}">
         <activity
             android:name=".MainActivity"

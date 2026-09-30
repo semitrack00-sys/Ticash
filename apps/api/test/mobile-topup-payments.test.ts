@@ -990,6 +990,10 @@ describe('Stripe sandbox flow',()=>{
 
     expect(() => verifyStripeEvent(raw, undefined, stripeEnv.STRIPE_WEBHOOK_SECRET)).toThrow();
     expect(() => verifyStripeEvent(raw, signed, 'wrong-secret')).toThrow();
+    expect(() => verifyStripeEvent(raw, `t=${Math.floor(Date.now() / 1000)},v1=zz`, stripeEnv.STRIPE_WEBHOOK_SECRET))
+      .toThrow(expect.objectContaining({ code: 'INVALID_WEBHOOK_SIGNATURE' }));
+    expect(() => verifyStripeEvent(raw, `t=${Math.floor(Date.now() / 1000)},v1=00`, stripeEnv.STRIPE_WEBHOOK_SECRET))
+      .toThrow(expect.objectContaining({ code: 'INVALID_WEBHOOK_SIGNATURE' }));
     expect(verifyStripeEvent(raw, signed, stripeEnv.STRIPE_WEBHOOK_SECRET)).toMatchObject({
       eventId: 'evt_test_stripe_1',
       paymentId: 'pi_fixture_123',

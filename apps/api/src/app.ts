@@ -1022,16 +1022,35 @@ export function createApp(options: CreateAppOptions = {}) {
     };
   };
   app.disable('x-powered-by');
-  app.use(helmet());
-  app.post('/api/webhooks/stripe', express.raw({ type: 'application/json', limit: '128kb' }),
+  app.set('etag', false);
+  app.use(helmet({
+    referrerPolicy: { policy: 'no-referrer' },
+    hsts: isProduction ? { maxAge: 63_072_000, includeSubDomains: true } : false,
+  }));
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  });
+  const webhookLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 600,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Too many webhook requests. Please try again later.', code: 'RATE_LIMITED' },
+  });
+  app.post('/api/webhooks/stripe', webhookLimiter, express.raw({ type: 'application/json', limit: '128kb' }),
     createStripeWebhookHandler(stripeConfig, mobileTopUpService));
   app.post(
     '/api/webhooks/dwolla',
+    webhookLimiter,
     express.raw({ type: 'application/json', limit: '256kb' }),
     createDwollaWebhookHandler(fundingService),
   );
   app.post(
     '/api/webhooks/didit',
+    webhookLimiter,
     express.raw({ type: 'application/json', limit: '256kb' }),
     createDiditWebhookHandler(kycService),
   );

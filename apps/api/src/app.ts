@@ -1067,6 +1067,7 @@ export function createApp(options: CreateAppOptions = {}) {
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
+    credentials: true,
     optionsSuccessStatus: 204,
   }));
   app.use(express.json({ limit: '128kb' }));

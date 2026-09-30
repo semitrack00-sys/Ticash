@@ -18,6 +18,7 @@ import { z, ZodError } from 'zod';
 import type { PublicUser, Recipient, Transfer } from '@ticash/shared';
 import type { Prisma } from '@prisma/client';
 import { databaseEnabled, prisma } from './database.js';
+import { analyticsWindow, readAdminAnalytics } from './admin-analytics.js';
 import { loadPayoutConfig, payoutAdapterFor, publicPayoutMethods, PayoutError, type PayoutConfig } from './payout-adapters.js';
 import { loadFundingConfig } from './funding/config.js';
 import { DwollaRestFundingProvider } from './funding/dwolla-provider.js';
@@ -1993,6 +1994,26 @@ export function createApp(options: CreateAppOptions = {}) {
   app.get('/api/admin/session', authenticate, permission('admin.view'), async (req: AuthRequest, res) => {
     res.json({ role: req.staffRole, permissions: req.permissions, environment: isProduction ? 'PRODUCTION' : 'SANDBOX' });
   });
+
+  for (const [path, domain, reportPermission] of [
+    ['/api/admin/analytics', 'TICASH', 'ledger.view'],
+    ['/api/admin/flupflap/analytics', 'FLUPFLAP', 'recharge.reports'],
+  ] as const) {
+    app.get(path, authenticate, permission('admin.view'), permission(reportPermission), async (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      let window;
+      try { window = analyticsWindow(req.query); } catch {
+        return res.status(400).json({ code: 'INVALID_ANALYTICS_PERIOD' });
+      }
+      // Never substitute demonstration or capped memory records for database analytics.
+      if (!databaseEnabled) return res.status(503).json({ code: 'ANALYTICS_UNAVAILABLE' });
+      try {
+        return res.json(await readAdminAnalytics(query => prisma.$queryRaw(query), domain, window));
+      } catch {
+        return res.status(503).json({ code: 'ANALYTICS_UNAVAILABLE' });
+      }
+    });
+  }
 
   app.get('/api/admin/overview', authenticate, permission('admin.view'), async (_req, res) => {
     if (databaseEnabled) {

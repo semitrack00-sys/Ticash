@@ -9,6 +9,8 @@ import '../../models/transfer.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/admin_service.dart';
 import '../../widgets/app_navigation_bar.dart';
+import '../../widgets/admin_analytics_panel.dart';
+import '../../services/admin_analytics_service.dart';
 
 final adminWorkspaceProvider = FutureProvider<AdminWorkspace>(
   (ref) => AdminService().workspace(),
@@ -215,6 +217,12 @@ class _OverviewPage extends StatelessWidget {
       children: [
         const _SafetyBanner(),
         const SizedBox(height: 16),
+        if (data.session.can('ledger.view')) ...[
+          const AdminAnalyticsPanel(business: AnalyticsBusiness.ticash),
+          const SizedBox(height: 24),
+          const Text('Operational monitoring · all-time unless stated', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 16),
+        ],
         Card(
           child: ListTile(
             leading: const CircleAvatar(

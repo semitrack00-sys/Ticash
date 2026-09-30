@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../config/theme.dart';
 import '../../services/api_client.dart';
 import '../../services/admin_service.dart';
+import '../../services/admin_analytics_service.dart';
+import '../../widgets/admin_analytics_panel.dart';
 
 /// A section of the existing Operations workspace, authenticated as TiCash staff.
 class FlupFlapAdminPage extends StatefulWidget {
@@ -278,6 +280,10 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (section == 'dashboard' && widget.session.can('recharge.reports')) ...[
+                    AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio),
+                    const SizedBox(height: 18),
+                  ],
                   if (section == 'dashboard')
                     _FlupFlapStatusDiagram(data: data),
                   if (section == 'dashboard') const SizedBox(height: 18),

@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import type {
   MobileTopUpConfig,
+  MobileTopUpCountry,
   MobileTopUpCheckoutResumeDto,
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
@@ -42,6 +43,7 @@ type AuditRecorder = (
 ) => Promise<void>;
 
 const countryCatalogCacheTtlMs = 60_000;
+const countryCatalogStaleTtlMs = 24 * 60 * 60_000;
 
 export const productsFromOperator = reloadlyProducts;
 
@@ -55,7 +57,7 @@ function mapProviderStatus(value: string): MobileTopUpStatus {
 }
 
 export class MobileTopUpService {
-  private countriesCache?: { expiresAt: number; value: MobileTopUpDestination[]; key: string };
+  private countriesCache?: { expiresAt: number; staleUntil: number; value: MobileTopUpDestination[]; key: string };
   private readonly config: MobileTopUpConfig;
   private readonly provider: MobileTopUpProvider;
   private readonly paymentProvider: MobileTopUpPaymentProvider;
@@ -163,7 +165,21 @@ export class MobileTopUpService {
         this.countriesCache.expiresAt > Date.now()) {
       return this.countriesCache.value;
     }
-    const providerCountries = await this.provider.listCountries();
+    let providerCountries: MobileTopUpCountry[];
+    try {
+      providerCountries = await this.provider.listCountries();
+    } catch (error) {
+      if (this.countriesCache &&
+          this.countriesCache.key === cacheKey &&
+          this.countriesCache.staleUntil > Date.now() &&
+          this.countriesCache.value.length > 0 &&
+          error instanceof MobileTopUpError &&
+          (error.code === 'RELOADLY_UNAVAILABLE' || error.statusCode >= 500)) {
+        console.warn('Mobile recharge country catalog refresh failed; serving last known validated catalog');
+        return this.countriesCache.value;
+      }
+      throw error;
+    }
     if (!Array.isArray(providerCountries)) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid country catalog', 502);
     }
@@ -198,6 +214,7 @@ export class MobileTopUpService {
       key: cacheKey,
       value: countries,
       expiresAt: Date.now() + countryCatalogCacheTtlMs,
+      staleUntil: Date.now() + countryCatalogStaleTtlMs,
     };
     return countries;
   }

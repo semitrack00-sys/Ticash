@@ -1,0 +1,79 @@
+name: Build FlupFlap Android artifacts
+
+on:
+  push:
+    branches:
+      - codex/flupflap-android-artifacts
+    paths:
+      - 'apps/flupflap/**'
+      - 'apps/mobile/**'
+      - '.github/workflows/flupflap-android-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build FlupFlap APK and AAB
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install icon tooling
+        run: python -m pip install --disable-pip-version-check pillow==11.3.0
+
+      - name: Generate FlupFlap launcher icons from official logo
+        run: python tool/generate_launcher_icons.py
+
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze FlupFlap
+        run: flutter analyze
+
+      - name: Run FlupFlap tests
+        run: flutter test
+
+      - name: Build QA APK
+        run: >
+          flutter build apk --debug
+          --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+
+      - name: Build QA Android App Bundle
+        run: >
+          flutter build appbundle --debug
+          --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+
+      - name: Stage named artifacts
+        shell: bash
+        run: |
+          mkdir -p build/release-artifacts
+          cp build/app/outputs/flutter-apk/app-debug.apk build/release-artifacts/FlupFlap-0.1.0-build1-QA.apk
+          cp build/app/outputs/bundle/debug/app-debug.aab build/release-artifacts/FlupFlap-0.1.0-build1-QA.aab
+          cp build/branding/flupflap-play-icon-512.png build/release-artifacts/FlupFlap-play-icon-512.png
+          sha256sum build/release-artifacts/* > build/release-artifacts/SHA256SUMS.txt
+
+      - name: Upload FlupFlap Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-android-qa
+          path: apps/flupflap/build/release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14

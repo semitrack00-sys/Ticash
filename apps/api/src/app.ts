@@ -162,7 +162,7 @@ const productionWebOrigins = [
   'https://flupflap.com',
   'https://www.flupflap.com',
 ] as const;
-const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@ticash.local';
+const adminEmail = (process.env.ADMIN_EMAIL ?? 'admin@ticash.local').trim().toLowerCase();
 const adminPassword = process.env.ADMIN_PASSWORD ?? 'AdminPass123!';
 const demoEmail = process.env.DEMO_EMAIL ?? 'demo@ticash.local';
 const demoPassword = process.env.DEMO_PASSWORD ?? 'DemoPass123!';
@@ -1076,6 +1076,13 @@ export function createApp(options: CreateAppOptions = {}) {
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     skipSuccessfulRequests: true,
+    // The exact configured administrator credential may need to perform the
+    // one-time persistent bootstrap after earlier failed attempts exhausted the
+    // source-IP limiter. Wrong credentials are never exempt.
+    skip: (req) => databaseEnabled &&
+      typeof req.body?.email === 'string' &&
+      req.body.email.trim().toLowerCase() === adminEmail &&
+      req.body?.password === adminPassword,
     message: { error: 'Too many authentication attempts. Please try again later.', code: 'RATE_LIMITED' },
   });
 
@@ -1353,16 +1360,19 @@ export function createApp(options: CreateAppOptions = {}) {
     // fingerprint protects the account across rotating source IPs; the route limiter
     // independently protects each source IP.
     const identityHash = securityIdentityHash(input.email, undefined, accessSecret);
-    await loginState.assertAllowed(identityHash);
+    const configuredAdminCredential =
+      input.email === adminEmail && input.password === adminPassword;
     let user = databaseEnabled
       ? (await prisma.user.findUnique({ where: { email: input.email } }))
           ? storedUserFromDb((await prisma.user.findUnique({ where: { email: input.email } }))!)
           : undefined
       : [...users.values()].find((candidate) => candidate.email === input.email);
-    // Bootstrap the configured administrator into persistent storage on first
-    // successful credential use. Production requires the database so the account
-    // is durable; subsequent logins use the stored bcrypt hash like every other user.
-    if ((!isProduction || databaseEnabled) && !user && input.email === adminEmail && input.password === adminPassword) {
+
+    // The exact configured credential may bootstrap the initial durable admin even
+    // if earlier failed attempts temporarily locked this identity. This exception
+    // applies only while the account does not exist; all persisted accounts use
+    // the normal lockout path below.
+    if (!user && configuredAdminCredential && (!isProduction || databaseEnabled)) {
       user = {
         id: randomUUID(), email: adminEmail, firstName: 'TiCash', lastName: 'Admin',
         kycStatus: 'APPROVED', role: 'ADMIN', createdAt: new Date().toISOString(),
@@ -1377,6 +1387,9 @@ export function createApp(options: CreateAppOptions = {}) {
           },
         }));
       } else users.set(user.id, user);
+      await loginState.clear(identityHash);
+    } else {
+      await loginState.assertAllowed(identityHash);
     }
     if (!isProduction && !user && input.email === demoEmail && input.password === demoPassword) {
       user = {

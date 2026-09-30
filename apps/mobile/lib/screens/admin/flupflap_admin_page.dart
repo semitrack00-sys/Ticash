@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import '../../config/theme.dart';
 import '../../services/api_client.dart';
 import '../../services/admin_service.dart';
 
@@ -155,12 +156,46 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(
-          'FlupFlap Recharge',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const Text(
-          'Separate FlupFlap customers · shared recharge engine · sandbox controls',
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0F172A), Color(0xFF1D4ED8), Color(0xFF7C3AED)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: const Row(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundColor: Color(0x22FFFFFF),
+                child: Icon(Icons.bolt_rounded, color: Colors.white, size: 28),
+              ),
+              SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'FlupFlap Recharge',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Global airtime, data, bundles and provider operations',
+                      style: TextStyle(color: Color(0xFFDDE7FF)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 16),
         Wrap(
@@ -170,6 +205,13 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
               if (widget.session.can(s.$3))
                 ChoiceChip(
                   label: Text(s.$1),
+                  selectedColor: const Color(0xFFDDE7FF),
+                  backgroundColor: const Color(0xFFF8FAFC),
+                  side: const BorderSide(color: Color(0xFFE2E8F0)),
+                  labelStyle: TextStyle(
+                    color: section == s.$2 ? const Color(0xFF1D4ED8) : AppTheme.ink,
+                    fontWeight: section == s.$2 ? FontWeight.w800 : FontWeight.w600,
+                  ),
                   selected: section == s.$2,
                   onSelected: (_) => setState(() {
                     section = s.$2;
@@ -236,6 +278,9 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (section == 'dashboard')
+                    _FlupFlapStatusDiagram(data: data),
+                  if (section == 'dashboard') const SizedBox(height: 18),
                   if (data['scope'] == 'PAGE')
                     const Text(
                       'Values below cover this page only; these are not lifetime financial totals.',
@@ -248,6 +293,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                     if (rows.isEmpty) const Text('No records.'),
                     for (final row in rows)
                       Card(
+                        color: _sectionTint(section),
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Column(
@@ -328,6 +374,153 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
             },
           ),
       ],
+    );
+  }
+}
+
+
+Color _sectionTint(String section) => switch (section) {
+  'transactions' => const Color(0xFFF8FAFC),
+  'customers' => const Color(0xFFF5F3FF),
+  'countries' || 'operators' || 'products' || 'providers' => const Color(0xFFEFF6FF),
+  'pending-failures' => const Color(0xFFFFF7ED),
+  'refunds' => const Color(0xFFFFF1F2),
+  'financials' || 'reports' => const Color(0xFFECFDF5),
+  'settings' => const Color(0xFFF8FAFC),
+  'audit' => const Color(0xFFF5F3FF),
+  _ => Colors.white,
+};
+
+class _FlupFlapStatusDiagram extends StatelessWidget {
+  const _FlupFlapStatusDiagram({required this.data});
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <(String, bool, Color, IconData)>[
+      (
+        'Recharge service',
+        data['enabled'] == true,
+        const Color(0xFF2563EB),
+        Icons.power_settings_new,
+      ),
+      (
+        'Production enabled',
+        data['productionEnabled'] == true,
+        const Color(0xFF7C3AED),
+        Icons.public,
+      ),
+      (
+        'Approved for live use',
+        data['approvedForLiveUse'] == true,
+        const Color(0xFF059669),
+        Icons.verified_user_outlined,
+      ),
+      (
+        'Live recharge',
+        data['liveRechargeEnabled'] == true,
+        const Color(0xFF16A34A),
+        Icons.bolt,
+      ),
+      (
+        'Recurring recharge',
+        data['recurringRechargeEnabled'] == true,
+        const Color(0xFFF59E0B),
+        Icons.autorenew,
+      ),
+    ];
+
+    final enabledCount = rows.where((row) => row.$2).length;
+    final readiness = enabledCount / rows.length;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D0F172A),
+            blurRadius: 22,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Platform readiness diagram',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${data['providerMode'] ?? 'UNKNOWN'} provider mode · ${data['environment'] ?? 'UNKNOWN'} · ${data['paymentMode'] ?? 'UNKNOWN'}',
+            style: const TextStyle(color: AppTheme.muted),
+          ),
+          const SizedBox(height: 18),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 12,
+              value: readiness,
+              backgroundColor: const Color(0xFFE2E8F0),
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$enabledCount of ${rows.length} operational gates enabled',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final columns = width > 850 ? 5 : width > 520 ? 3 : 2;
+              final itemWidth = (width - ((columns - 1) * 10)) / columns;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final row in rows)
+                    SizedBox(
+                      width: itemWidth,
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: row.$3.withValues(alpha: .08),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: row.$3.withValues(alpha: .20)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(row.$4, color: row.$3),
+                            const SizedBox(height: 12),
+                            Text(
+                              row.$1,
+                              style: const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              row.$2 ? 'Enabled' : 'Not enabled',
+                              style: TextStyle(
+                                color: row.$2 ? const Color(0xFF059669) : AppTheme.muted,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

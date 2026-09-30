@@ -1251,6 +1251,7 @@ class _OperationsDiagram extends StatelessWidget {
         ],
       ),
     );
+  }
 }
 
 class _SafetyBanner extends StatelessWidget {

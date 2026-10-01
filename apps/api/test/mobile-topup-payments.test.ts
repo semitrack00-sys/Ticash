@@ -997,6 +997,51 @@ describe('Stripe sandbox flow',()=>{
     expect(refund.body).not.toContain('{');
   });
 
+  it('automatically converts a stale void into a refund when Stripe shows the payment was captured', async () => {
+    const future = new Date(Date.now() + 60_000);
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
+      .mockResolvedValueOnce(stripeResponse({
+        id: 'pi_captured_recovery', status: 'succeeded', amount: 599, amount_received: 599,
+        amount_capturable: 0, currency: 'usd',
+        latest_charge: { id: 'ch_captured_recovery', refunded: false, amount_refunded: 0 },
+      }))
+      .mockResolvedValueOnce(stripeResponse({ id: 're_captured_recovery', status: 'pending' }))
+      .mockResolvedValueOnce(stripeResponse({
+        id: 'pi_captured_recovery', status: 'succeeded', amount: 599, amount_received: 599,
+        amount_capturable: 0, currency: 'usd',
+        latest_charge: { id: 'ch_captured_recovery', refunded: true, amount_refunded: 599 },
+      }));
+    const f = stripeFixture(transport, { clock: () => future });
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-captured-recovery', 'US');
+    await f.repository.updateTransaction(session.transactionId, {
+      status: 'FAILED',
+      paymentStatus: 'VOID_PENDING',
+      paymentProviderTransactionId: 'pi_captured_recovery',
+      paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
+      failureCode: 'TOPUP_REJECTED',
+    });
+
+    await expect(f.service.reconcilePendingPaymentRecoveries()).resolves.toMatchObject({ scanned: 1, pending: 1, errors: 0 });
+    expect(await f.repository.getTransactionById(session.transactionId)).toMatchObject({
+      status: 'FAILED',
+      paymentStatus: 'REFUND_PENDING',
+      paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
+    });
+    expect(transportRequest(transport, 1).url).toContain('/v1/payment_intents/pi_captured_recovery?expand[]=latest_charge');
+    expect(transportRequest(transport, 2).url).toBe('https://api.stripe.com/v1/refunds');
+    expect(transportRequest(transport, 2).body).toContain('payment_intent=pi_captured_recovery');
+    expect(transport.mock.calls.some(([url]) => String(url).includes('/cancel'))).toBe(false);
+
+    await expect(f.service.reconcilePendingPaymentRecoveries()).resolves.toMatchObject({ scanned: 1, resolved: 1, errors: 0 });
+    expect(await f.repository.getTransactionById(session.transactionId)).toMatchObject({
+      status: 'FAILED',
+      paymentStatus: 'REFUNDED',
+      paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+    });
+  });
+
   it('requires a verified Stripe signature and rejects invalid payloads before fulfillment', async () => {
     const f = stripeFixture();
     const quote = await f.service.createQuote('customer', quoteInput);
@@ -1052,13 +1097,13 @@ describe('Stripe sandbox flow',()=>{
       return { ...f, session, event };
     }
 
-    it.each(['checkout.session.completed', 'checkout.session.async_payment_succeeded'])('%s + paid authorizes once, including duplicate events', async type => {
+    it.each(['checkout.session.completed', 'checkout.session.async_payment_succeeded'])('%s + paid records captured payment once, including duplicate events', async type => {
       const f = await checkout();
       const event = f.event(type);
       await f.service.acceptVerifiedPaymentEvent(event);
       await f.service.acceptVerifiedPaymentEvent(event);
       await f.service.acceptVerifiedPaymentEvent(f.event(type, {}, 'evt_binding_second_delivery'));
-      expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe('AUTHORIZED');
+      expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe('CAPTURED');
       expect(f.submit).toHaveBeenCalledTimes(1);
     });
 

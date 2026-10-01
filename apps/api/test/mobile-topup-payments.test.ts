@@ -1036,7 +1036,7 @@ describe('Stripe sandbox flow',()=>{
   });
 
   it('repairs legacy VOID_PENDING to refund when Stripe already captured the payment', async () => {
-    let now = new Date('2026-10-01T18:00:00.000Z');
+    let now = new Date();
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
       .mockResolvedValueOnce(stripeResponse({
@@ -1073,7 +1073,7 @@ describe('Stripe sandbox flow',()=>{
   });
 
   it('keeps VOID_PENDING as a void when Stripe has not captured the authorization', async () => {
-    let now = new Date('2026-10-01T18:00:00.000Z');
+    let now = new Date();
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
       .mockResolvedValueOnce(stripeResponse({
@@ -1102,7 +1102,7 @@ describe('Stripe sandbox flow',()=>{
   });
 
   it('does not guess void versus refund when Stripe status lookup is unresolved', async () => {
-    let now = new Date('2026-10-01T18:00:00.000Z');
+    let now = new Date();
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
       .mockRejectedValueOnce(new Error('network timeout'));
@@ -1127,7 +1127,7 @@ describe('Stripe sandbox flow',()=>{
     { id: 'pi_guard', status: 'succeeded', amount: 600, amount_received: 600, currency: 'usd' },
     { id: 'pi_guard', status: 'succeeded', amount: 599, amount_received: 599, currency: 'eur' },
   ])('fails closed on mismatched Stripe recovery evidence %#', async payment => {
-    let now = new Date('2026-10-01T18:00:00.000Z');
+    let now = new Date();
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
       .mockResolvedValueOnce(stripeResponse(payment));

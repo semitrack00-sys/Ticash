@@ -5,6 +5,7 @@ import '../../services/api_client.dart';
 import '../../services/admin_service.dart';
 import '../../services/admin_analytics_service.dart';
 import '../../widgets/admin_analytics_panel.dart';
+import '../../widgets/flupflap_promotions_panel.dart';
 
 /// A section of the existing Operations workspace, authenticated as TiCash staff.
 class FlupFlapAdminPage extends StatefulWidget {
@@ -24,6 +25,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     ('Operators', 'operators', 'recharge.providers.view'),
     ('Internet Plans', 'products', 'recharge.providers.view'),
     ('Providers', 'providers', 'recharge.providers.view'),
+    ('Promotions / Influencers', 'promotions', 'recharge.configuration.view'),
     ('Pending / Failures', 'pending-failures', 'recharge.transactions.view'),
     ('Refunds', 'refunds', 'recharge.refunds'),
     ('Financials', 'financials', 'recharge.reports'),
@@ -50,7 +52,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 
   void load() {
-    if (!widget.session.can('recharge.view')) return;
+    if (!widget.session.can('recharge.view') || section == 'promotions') return;
     final query = <String, dynamic>{'offset': offset};
     if (['operators', 'products'].contains(section)) {
       query['country'] = country.text.trim().toUpperCase();
@@ -256,7 +258,12 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
             ],
           ),
         const SizedBox(height: 16),
-        if (result != null)
+        if (section == 'promotions')
+          FlupFlapPromotionsPanel(
+            dio: client,
+            canManage: widget.session.can('recharge.configuration.manage'),
+          ),
+        if (result != null && section != 'promotions')
           FutureBuilder<Map<String, dynamic>>(
             future: result,
             builder: (context, snapshot) {

@@ -3,6 +3,8 @@ import { notificationFor, retryableNotification, type ReceiverNotification, type
 import { ownerData, ownerWhere, ownerFromDb, recipientOwnerKey, transactionOwnerKey } from '../flupflap/owner.js';
 import { decodeOperatorId } from './provider-identity.js';
 import { randomUUID } from 'node:crypto';
+import { marketingEnabled, sandboxBenefitsEnabled } from '../flupflap/marketing.js';
+import { reconcilePromotion, reserveQuotePromotion } from '../flupflap/marketing-recharge.js';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
   MobileTopUpRuntimeEnvironment,
@@ -519,13 +521,17 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate) {
-    const result = await this.prisma.mobileTopUpTransaction.updateMany({
+    const transition = async (tx: Prisma.TransactionClient) => {
+    const result = await tx.mobileTopUpTransaction.updateMany({
       where: { id, paymentStatus: { in: from }, ...(input.paymentProviderTransactionId ? { OR: [
         { paymentProviderTransactionId: null }, { paymentProviderTransactionId: input.paymentProviderTransactionId },
       ] } : {}) },
       data: transactionUpdateData(input),
     });
+    if (result.count && marketingEnabled()) await reconcilePromotion(tx, id);
     return result.count === 1;
+    };
+    return marketingEnabled() ? this.prisma.$transaction(transition) : transition(this.prisma);
   }
 
   async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
@@ -583,7 +589,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>) {
-    const record = await this.prisma.mobileTopUpQuote.create({ data: {
+    const create = async (tx: Prisma.TransactionClient) => {
+    const record = await tx.mobileTopUpQuote.create({ data: {
       ...input,
       ...ownerData(input.userId),
       receiverQuote: input.receiverQuote ? JSON.parse(JSON.stringify(input.receiverQuote)) as Prisma.InputJsonValue : undefined,
@@ -593,7 +600,9 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       expiresAt: new Date(input.expiresAt),
       consumedAt: input.consumedAt ? new Date(input.consumedAt) : null,
     } });
-    return quoteFromDb(record);
+    return quoteFromDb(marketingEnabled() ? await reserveQuotePromotion(tx, record, sandboxBenefitsEnabled()) : record);
+    };
+    return marketingEnabled() ? this.prisma.$transaction(create) : create(this.prisma);
   }
 
   async getQuote(userId: string, id: string) {
@@ -693,6 +702,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
         await tx.mobileTopUpTransaction.update({ where: { id }, data: transactionUpdateData(input) });
       }
       const record = transactionFromDb(await tx.mobileTopUpTransaction.findUniqueOrThrow({ where: { id } }));
+      if (marketingEnabled()) await reconcilePromotion(tx, id);
       const notification = notificationFor(record);
       if (notification) await tx.rechargeNotification.upsert({ where: { transactionId: id }, update: {}, create: {
         ...notification, createdAt: new Date(notification.createdAt), updatedAt: new Date(notification.updatedAt),

@@ -38,8 +38,8 @@ beforeEach(async () => {
 describe('separate database analytics', () => {
   it('separates TiCash remittance and FlupFlap recharge/customer records', async () => {
     const ti = await read('TICASH'); const fl = await read('FLUPFLAP');
-    expect(ti).toMatchObject({domain:'TICASH',volumeCents:'10000',feeRevenueCents:'200',clients:{total:1,new:0,active:1},products:[{name:'REMITTANCE'}]});
-    expect(fl).toMatchObject({domain:'FLUPFLAP',volumeCents:'1000',feeRevenueCents:'125',clients:{total:2,new:2,guest:1,registered:1,active:1},products:[{name:'AIRTIME'}]});
+    expect(ti).toMatchObject({domain:'TICASH',volumeCents:'10000',feeRevenueCents:'200',clients:{total:1,new:0,today:0,week:0,month:0,year:1,active:1},products:[{name:'REMITTANCE'}]});
+    expect(fl).toMatchObject({domain:'FLUPFLAP',volumeCents:'1000',feeRevenueCents:'125',clients:{total:2,new:2,today:0,week:0,month:2,year:2,guest:1,registered:1,active:1},products:[{name:'AIRTIME'}]});
     expect(fl).toMatchObject({subscriptions:{available:false},internetPlans:{available:false}});
   });
   it('excludes TiCash-owned recharge and corrupt dual-owner records', async () => {

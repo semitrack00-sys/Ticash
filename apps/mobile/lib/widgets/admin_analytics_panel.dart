@@ -219,6 +219,30 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
         Icons.person_add_alt,
         const Color(0xFF7C3AED),
       ),
+      (
+        'Signups today',
+        '${clients['today'] ?? 0}',
+        Icons.today_outlined,
+        const Color(0xFF2563EB),
+      ),
+      (
+        'Signups this week',
+        '${clients['week'] ?? 0}',
+        Icons.date_range_outlined,
+        const Color(0xFF0891B2),
+      ),
+      (
+        'Signups this month',
+        '${clients['month'] ?? 0}',
+        Icons.calendar_month_outlined,
+        const Color(0xFF059669),
+      ),
+      (
+        'Signups this year',
+        '${clients['year'] ?? 0}',
+        Icons.event_note_outlined,
+        const Color(0xFF7C3AED),
+      ),
       if (flup) ...[
         (
           'Guest users',
@@ -342,7 +366,7 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
         ),
         const SizedBox(height: 12),
         const Text(
-          'Clients: accounts as of period end, across live/test activity. Active: at least one transaction in this period. Sales and fees count completed transactions only, grouped by creation date.',
+          'Clients: accounts as of period end. Signup cards use UTC calendar day, week, month and year boundaries. Active: at least one transaction in the selected period. Sales and fees count completed transactions only, grouped by creation date.',
           style: TextStyle(fontSize: 12, color: Color(0xFF52627A)),
         ),
         if ((data['unattributedFeeCount'] as num) > 0)

@@ -19,6 +19,7 @@ class FlupFlapPromotionsPanel extends StatefulWidget {
 class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
   static const path = '/admin/flupflap/promotions';
   late Future<List<Response<dynamic>>> records;
+  final search = TextEditingController();
   String? error;
   @override
   void initState() {
@@ -32,6 +33,18 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
       widget.dio.get('$path/promoters'),
       widget.dio.get('$path/rewards'),
     ]);
+  }
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  bool _matches(dynamic raw) {
+    final query = search.text.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    return raw.toString().toLowerCase().contains(query);
   }
 
   String usd(dynamic cents) =>
@@ -229,6 +242,8 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
       final campaigns = (overview['campaigns'] as List?) ?? [];
       final promoters = (snapshot.data![1].data['promoters'] as List?) ?? [];
       final rewards = (snapshot.data![2].data['rewards'] as List?) ?? [];
+      final visibleCampaigns = campaigns.where(_matches).toList();
+      final visibleRewards = rewards.where(_matches).toList();
       final activeCampaigns = campaigns.where(
         (raw) => (raw as Map)['status'] == 'ACTIVE',
       ).length;
@@ -363,20 +378,38 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
             Text(error!, style: const TextStyle(color: Colors.red)),
           ],
           const SizedBox(height: 20),
+          TextField(
+            controller: search,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: 'Search promotions and rewards',
+              hintText: 'Search by campaign name, promo code, status, promoter, reward or ID',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () => setState(search.clear),
+                      icon: const Icon(Icons.clear),
+                    ),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 20),
           const _MarketingSectionTitle(
             title: 'Campaign portfolio',
             subtitle: 'Performance, attribution, codes, dates and campaign controls.',
             icon: Icons.campaign_outlined,
           ),
           const SizedBox(height: 10),
-          if (campaigns.isEmpty)
+          if (visibleCampaigns.isEmpty)
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text('No campaigns yet.'),
               ),
             ),
-          for (final raw in campaigns)
+          for (final raw in visibleCampaigns)
             Builder(
               builder: (context) {
                 final c = Map<String, dynamic>.from(raw as Map);
@@ -480,8 +513,8 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
             icon: Icons.account_balance_wallet_outlined,
           ),
           const SizedBox(height: 10),
-          if (rewards.isEmpty) const Text('No verified reward records.'),
-          for (final raw in rewards)
+          if (visibleRewards.isEmpty) const Text('No verified reward records.'),
+          for (final raw in visibleRewards)
             Builder(
               builder: (context) {
                 final r = Map<String, dynamic>.from(raw as Map);

@@ -38,6 +38,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   int offset = 0;
   Future<Map<String, dynamic>>? result;
   final country = TextEditingController(), operatorId = TextEditingController();
+  final search = TextEditingController();
   @override
   void initState() {
     super.initState();
@@ -48,6 +49,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   void dispose() {
     country.dispose();
     operatorId.dispose();
+    search.dispose();
     super.dispose();
   }
 
@@ -137,6 +139,16 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
         );
       }
     }
+  }
+
+  bool matchesSearch(Map row) {
+    final query = search.text.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    return row.entries.any((entry) {
+      final key = entry.key.toString().toLowerCase();
+      final text = value(entry.value).toLowerCase();
+      return key.contains(query) || text.contains(query);
+    });
   }
 
   String value(dynamic input) {
@@ -270,6 +282,27 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
         ],
         const SizedBox(height: 16),
+        if (!['dashboard', 'promotions', 'settings'].contains(section)) ...[
+          TextField(
+            controller: search,
+            onChanged: (_) => setState(() {}),
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              labelText: 'Search ${sections.firstWhere((s) => s.$2 == section).$1.toLowerCase()}',
+              hintText: 'Search by name, email, phone, ID, status, country, operator, product or code',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () => setState(search.clear),
+                      icon: const Icon(Icons.clear),
+                    ),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (section == 'promotions')
           FlupFlapPromotionsPanel(
             dio: client,
@@ -289,13 +322,16 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                 );
               }
               final data = snapshot.data!;
-              final rows =
+              final rawRows =
                   data['transactions'] ??
                   data['customers'] ??
                   data['countries'] ??
                   data['operators'] ??
                   data['products'] ??
                   data['events'];
+              final rows = rawRows is List
+                  ? rawRows.where((row) => row is Map && matchesSearch(row)).toList()
+                  : rawRows;
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -319,7 +355,8 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                     const SizedBox(height: 12),
                   ],
                   if (rows is List) ...[
-                    if (rows.isEmpty) const Text('No records.'),
+                    if (rows.isEmpty)
+                      Text(search.text.trim().isEmpty ? 'No records.' : 'No matching records.'),
                     for (final row in rows)
                       Card(
                         color: _sectionTint(section),

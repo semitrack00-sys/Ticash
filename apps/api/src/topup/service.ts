@@ -908,9 +908,22 @@ export class MobileTopUpService {
     this.assertEnabled();
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
-    if (refresh && record.providerTransactionId && !['FAILED', 'REFUNDED'].includes(record.status)) {
+    if (refresh && !['FAILED', 'REFUNDED'].includes(record.status)) {
       this.assertTransactionEnvironment(record);
-      return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, record.provider ?? decodeOperatorId(record.operatorId).provider));
+      const provider = record.provider ?? decodeOperatorId(record.operatorId).provider;
+      if (record.providerTransactionId) {
+        return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, provider));
+      }
+      if (record.failureCode === 'TOPUP_SUBMISSION_UNKNOWN' &&
+          ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus) &&
+          this.provider.findTopUpByCustomIdentifier) {
+        const recovered = await this.provider.findTopUpByCustomIdentifier(record.customIdentifier, provider);
+        if (recovered) {
+          await this.audit(userId, 'MOBILE_TOPUP_PROVIDER_REFERENCE_RECOVERED', 'MobileTopUpTransaction', record.id,
+            { provider, source: 'CUSTOM_IDENTIFIER' });
+          return this.applyProviderResult(record.id, recovered);
+        }
+      }
     }
     return record;
   }

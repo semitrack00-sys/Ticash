@@ -230,11 +230,12 @@ describe('Reloadly Sandbox top-up provider', () => {
   it('submits a provider purchase without exposing credentials in its body', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
-      .mockResolvedValueOnce(json({ transactionId: 44, status: 'PROCESSING', requestedAmount: 5,
-        requestedAmountCurrencyCode: 'USD' }));
+      .mockResolvedValueOnce(json({ transactionId: 44 }));
     const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
-    await provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+18765551234',
-      recipientCountryCode: 'JM', customIdentifier: 'ticash-topup-test' });
+    await expect(provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+18765551234',
+      recipientCountryCode: 'JM', customIdentifier: 'ticash-topup-test', providerCurrency: 'USD' }))
+      .resolves.toMatchObject({ transactionId: '44', status: 'PROCESSING', requestedAmount: 5, requestedAmountCurrencyCode: 'USD' });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/topups-async`);
     const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(body).toMatchObject({ operatorId: 12, amount: 5, useLocalAmount: false,
       recipientPhone: { countryCode: 'JM', number: '18765551234' } });

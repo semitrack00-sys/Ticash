@@ -253,7 +253,9 @@ void main() {
       expect(find.text('Last name'), findsOneWidget);
       expect(find.text('Phone number'), findsOneWidget);
       expect(find.byType(TextField), findsNWidgets(5));
-      await tester.tap(find.text('Continue as guest'));
+      final guestButton = find.text('Continue as guest');
+      await tester.ensureVisible(guestButton);
+      await tester.tap(guestButton);
       await tester.pumpAndSettle();
       expect(find.text('Start recharge'), findsOneWidget);
     },

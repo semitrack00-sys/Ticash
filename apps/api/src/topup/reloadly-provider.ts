@@ -444,6 +444,23 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
   async getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult> {
     return mapTopUp(await this.request(`topups/${encodeURIComponent(transactionId)}/status`));
   }
+
+  async findTopUpByCustomIdentifier(customIdentifier: string): Promise<ProviderTopUpResult | undefined> {
+    const identifier = customIdentifier.trim();
+    if (!/^[A-Za-z0-9_-]{1,160}$/.test(identifier)) {
+      throw new MobileTopUpError('INVALID_TOPUP_IDENTIFIER', 'Invalid recharge reconciliation identifier', 400);
+    }
+    const params = new URLSearchParams({ size: '2', page: '1', customIdentifier: identifier });
+    const body = await this.request(`topups/reports/transactions?${params.toString()}`);
+    const rows = Array.isArray(body.content) ? body.content : [];
+    const exact = rows.filter((row): row is ReloadlyDocument => Boolean(row) && typeof row === 'object' && !Array.isArray(row) &&
+      String((row as Record<string, unknown>).customIdentifier ?? '') === identifier);
+    if (exact.length === 0) return undefined;
+    if (exact.length !== 1) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned ambiguous reconciliation results', 502);
+    }
+    return mapTopUp(exact[0]!);
+  }
 }
 
 export class ReloadlySandboxTopUpProvider extends ReloadlyTopUpProvider {

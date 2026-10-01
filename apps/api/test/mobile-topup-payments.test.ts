@@ -386,6 +386,38 @@ describe('sandbox payment foundation',()=>{
   });
 });
 
+  it('refunds legacy Stripe AUTHORIZED records instead of trying to void an automatic-capture payment', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-legacy-authorized-recovery', 'US');
+    const record = (await f.repository.getTransactionById(session.transactionId))!;
+    await f.repository.updateTransaction(record.id, {
+      status: 'FAILED',
+      paymentStatus: 'AUTHORIZED',
+      paymentProvider: 'STRIPE',
+      paymentProviderTransactionId: 'pi_legacy_captured',
+      failureCode: 'TOPUP_REJECTED',
+      failedAt: new Date().toISOString(),
+    });
+
+    const refund = vi.fn(async () => 'REFUNDED' as const);
+    const voidPayment = vi.fn(async () => 'VOIDED' as const);
+    const recovery = new MobileTopUpService(
+      { ...config, paymentMode: 'stripe_sandbox' },
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      vi.fn(async () => {}),
+      undefined,
+      { refund, void: voidPayment } as never,
+    );
+
+    await expect((recovery as unknown as { recoverPayment: (id: string) => Promise<unknown> }).recoverPayment(record.id))
+      .resolves.toMatchObject({ paymentStatus: 'REFUNDED' });
+    expect(refund).toHaveBeenCalledWith({ paymentId: 'pi_legacy_captured', transactionId: record.id, amountMinor: 599 });
+    expect(voidPayment).not.toHaveBeenCalled();
+  });
+
   it('automatically refunds a failed recharge when Stripe shows a VOID_PENDING payment was already captured', async () => {
     const f = stripeFixture();
     const quote = await f.service.createQuote('customer', quoteInput);

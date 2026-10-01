@@ -248,10 +248,10 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final compact = constraints.maxWidth < 720;
-                final heading = Column(
+                const heading = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Growth command center',
                       style: TextStyle(
                         fontSize: 22,

@@ -91,13 +91,58 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
           reload();
         });
       }
+    } on DioException catch (e) {
+      if (mounted) {
+        setState(() {
+          error = e.response?.statusCode == 503
+              ? 'Promotion management is not enabled on the server yet. Apply the marketing migration and enable FLUPFLAP_MARKETING_ENABLED before creating codes.'
+              : 'Operation not accepted. Check eligibility, dates, permissions and required fields. No success was assumed.';
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
-          error = 'Operation not accepted. Check eligibility, dates, permissions and required fields. No success was assumed.';
+          error = 'Operation not accepted. No success was assumed.';
         });
       }
     }
+  }
+
+  Future<void> createPromotionCode(List<dynamic> promoters) async {
+    var availablePromoters = List<dynamic>.from(promoters);
+    if (availablePromoters.isEmpty) {
+      try {
+        final response = await widget.dio.post(
+          '$path/promoters',
+          data: const {'name': 'FlupFlap Direct'},
+        );
+        final created = response.data;
+        if (created is Map) {
+          availablePromoters = [Map<String, dynamic>.from(created)];
+        } else {
+          setState(() {
+            error = 'The promotion workspace could not initialize a promoter record.';
+          });
+          return;
+        }
+      } on DioException catch (e) {
+        if (!mounted) return;
+        final status = e.response?.statusCode;
+        setState(() {
+          error = status == 503
+              ? 'Promotion management is not enabled on the server yet. Apply the marketing migration and enable FLUPFLAP_MARKETING_ENABLED before creating codes.'
+              : 'The promotion workspace could not initialize. Check permissions and server configuration.';
+        });
+        return;
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          error = 'The promotion workspace could not initialize. No campaign was created.';
+        });
+        return;
+      }
+    }
+    await editCampaign(availablePromoters, null);
   }
 
   Future<void> editCampaign(
@@ -232,11 +277,9 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
                             label: const Text('Create promoter'),
                           ),
                           FilledButton.icon(
-                            onPressed: promoters.isEmpty
-                                ? null
-                                : () => editCampaign(promoters, null),
+                            onPressed: () => createPromotionCode(promoters),
                             icon: const Icon(Icons.add),
-                            label: const Text('Create campaign'),
+                            label: const Text('Create promotion code'),
                           ),
                         ],
                       )

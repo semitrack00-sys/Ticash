@@ -259,8 +259,8 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
                         color: Color(0xFF0F172A),
                       ),
                     ),
-                    const SizedBox(height: 5),
-                    const Text(
+                    SizedBox(height: 5),
+                    Text(
                       'Campaigns, promoters, referral attribution and reward review in one workspace.',
                       style: TextStyle(color: Color(0xFF64748B)),
                     ),
@@ -292,7 +292,7 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
                     : Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(child: heading),
+                          const Expanded(child: heading),
                           const SizedBox(width: 18),
                           actions,
                         ],

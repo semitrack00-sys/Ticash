@@ -41,4 +41,21 @@ jobs:
         shell: bash
         env:
           CAPACITY_LEVEL: ${{ inputs.level }}
-        run: k6 run -e BASE_URL="$BASE_URL" -e CAPACITY_LEVEL="$CAPACITY_LEVEL" load/flupflap-capacity.js
+        run: |
+          mkdir -p artifacts/capacity
+          set +e
+          k6 run --summary-export artifacts/capacity/summary.json \
+            -e BASE_URL="$BASE_URL" \
+            -e CAPACITY_LEVEL="$CAPACITY_LEVEL" \
+            load/flupflap-capacity.js 2>&1 | tee artifacts/capacity/k6.log
+          K6_EXIT=${PIPESTATUS[0]}
+          echo "k6_exit_code=$K6_EXIT" | tee artifacts/capacity/result.txt
+          exit "$K6_EXIT"
+      - name: Upload capacity diagnostics
+        if: always() && inputs.level != 'smoke'
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-capacity-${{ inputs.level }}-${{ github.run_id }}
+          path: artifacts/capacity/
+          if-no-files-found: warn
+          retention-days: 14

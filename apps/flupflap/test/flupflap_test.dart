@@ -167,9 +167,18 @@ void main() {
     'signup uses separate identity and stores only FlupFlap refresh token',
     () async {
       final (s, a, storage) = fixture();
-      await s.register('flup@example.test', 'test-password');
+      await s.register(
+        firstName: 'Flup',
+        lastName: 'Customer',
+        phone: '+15551234567',
+        email: 'flup@example.test',
+        password: 'test-password',
+      );
       expect(a.requests.single.path, '/flupflap/auth/register');
       expect(a.requests.single.data, {
+        'firstName': 'Flup',
+        'lastName': 'Customer',
+        'phone': '+15551234567',
         'email': 'flup@example.test',
         'password': 'test-password',
       });
@@ -240,7 +249,10 @@ void main() {
       await tester.tap(find.text('Create account'));
       await tester.pumpAndSettle();
       expect(find.text('Create FlupFlap account'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(2));
+      expect(find.text('First name'), findsOneWidget);
+      expect(find.text('Last name'), findsOneWidget);
+      expect(find.text('Phone number'), findsOneWidget);
+      expect(find.byType(TextField), findsNWidgets(5));
       await tester.tap(find.text('Continue as guest'));
       await tester.pumpAndSettle();
       expect(find.text('Start recharge'), findsOneWidget);

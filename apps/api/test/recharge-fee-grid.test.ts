@@ -3,16 +3,16 @@ import { approvedRechargeAmountsUsd, approvedRechargePrice, flupFlapAirtimePrice
 
 describe('final FlupFlap airtime fee schedule', () => {
   it.each([
-    [1,139], [9.99,139], [10,179], [19.99,179], [20,249], [29.99,249],
-    [30,299], [39.99,299], [40,349], [49.99,349], [50,399], [74.99,399], [75,499], [100,499],
-    [5,139], [15,179], [25,249], [35,299], [45,349], [60,399], [90,499],
+    [1,124], [9.99,124], [10,164], [19.99,164], [20,234], [29.99,234],
+    [30,284], [39.99,284], [40,334], [49.99,334], [50,384], [74.99,384], [75,484], [100,484],
+    [5,124], [15,164], [25,234], [35,284], [45,334], [60,384], [90,484],
   ])('$%s has exactly %s cents fee', (amount, fee) => {
     const principal = Math.round(amount * 100);
     expect(flupFlapAirtimePrice(amount)).toEqual({ amountMinorUnits: principal, feeMinorUnits: fee, totalMinorUnits: principal + fee });
   });
   it('covers every cent from $1 to $100 without gaps, overlaps or floating-point totals', () => {
     for (let cents = 100; cents <= 10000; cents++) {
-      const fee = cents < 1000 ? 139 : cents < 2000 ? 179 : cents < 3000 ? 249 : cents < 4000 ? 299 : cents < 5000 ? 349 : cents < 7500 ? 399 : 499;
+      const fee = cents < 1000 ? 124 : cents < 2000 ? 164 : cents < 3000 ? 234 : cents < 4000 ? 284 : cents < 5000 ? 334 : cents < 7500 ? 384 : 484;
       expect(flupFlapAirtimePrice(cents / 100)).toEqual({ amountMinorUnits: cents, feeMinorUnits: fee, totalMinorUnits: cents + fee });
     }
   });

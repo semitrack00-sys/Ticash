@@ -36,13 +36,13 @@ export function approvedRechargePrice(amountUsd: number) {
 // Final FlupFlap AIRTIME fees, inclusive bounds in integer cents.
 // Applied only when creating a new applicable quote; never reprice stored records.
 const flupFlapAirtimeFeeTiers = [
-  [100, 999, 139],
-  [1000, 1999, 179],
-  [2000, 2999, 249],
-  [3000, 3999, 299],
-  [4000, 4999, 349],
-  [5000, 7499, 399],
-  [7500, 10000, 499],
+  [100, 999, 124],
+  [1000, 1999, 164],
+  [2000, 2999, 234],
+  [3000, 3999, 284],
+  [4000, 4999, 334],
+  [5000, 7499, 384],
+  [7500, 10000, 484],
 ] as const;
 
 export function flupFlapAirtimePrice(amountUsd: number) {

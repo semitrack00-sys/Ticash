@@ -9,8 +9,8 @@ import { StripeHostedCheckoutProvider } from '../src/topup/stripe-provider.js';
 import type { StripeConfig } from '../src/topup/stripe-config.js';
 import { MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpOperator, type MobileTopUpProvider } from '../src/topup/types.js';
 
-const cases = [[1,139],[9.99,139],[10,179],[19.99,179],[20,249],[29.99,249],[30,299],[39.99,299],
-  [40,349],[49.99,349],[50,399],[74.99,399],[75,499],[100,499],[5,139],[15,179],[25,249],[35,299],[45,349],[60,399],[90,499]];
+const cases = [[1,124],[9.99,124],[10,164],[19.99,164],[20,234],[29.99,234],[30,284],[39.99,284],
+  [40,334],[49.99,334],[50,384],[74.99,384],[75,484],[100,484],[5,124],[15,164],[25,234],[35,284],[45,334],[60,384],[90,484]];
 const config: MobileTopUpConfig = { enabled:true, environment:'sandbox', paymentMode:'stripe_sandbox',
   productionEnabled:false, approvedForLiveUse:false, billingCurrency:'USD', quoteTtlSeconds:300,
   authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com' };
@@ -56,7 +56,7 @@ describe('new FlupFlap airtime quotes',()=>{
   });
   it('uses the same FlupFlap schedule in sandbox without changing TiCash prices',async()=>{
     const f=fixture();
-    expect(await f.service.createQuote(owner,input(5))).toMatchObject({feeUsd:1.39,totalChargeUsd:6.39});
+    expect(await f.service.createQuote(owner,input(5))).toMatchObject({feeUsd:1.24,totalChargeUsd:6.24});
     expect(await f.service.createQuote('ticash-customer',input(5))).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});
     await expect(f.service.createQuote('ticash-customer',input(1))).rejects.toMatchObject({code:'TOPUP_PRODUCT_UNAVAILABLE'});
   });
@@ -76,24 +76,24 @@ describe('new FlupFlap airtime quotes',()=>{
       name:'Provider range',price:1,priceCurrency:'USD',amountType:'RANGE',minimumAmount:1,maximumAmount:20,amountIncrement:0.25,deliveredCurrency:'JMD'}];
     f.provider.quoteReceiverValue=async(p,amount)=>({amount:amount*130,currency:'JMD',senderAmount:amount,senderCurrency:p.priceCurrency,source:'RELOADLY_FX',quotedAt:new Date().toISOString()});
     const range={...input(1),productId:'reloadly:JM:77:airtime:range'};
-    expect(await f.service.createQuote(owner,{...range,amount:1})).toMatchObject({providerAmount:1,feeUsd:1.39,totalChargeUsd:2.39});
-    expect(await f.service.createQuote(owner,{...range,amount:15.25})).toMatchObject({providerAmount:15.25,feeUsd:1.79,totalChargeUsd:17.04});
+    expect(await f.service.createQuote(owner,{...range,amount:1})).toMatchObject({providerAmount:1,feeUsd:1.24,totalChargeUsd:2.24});
+    expect(await f.service.createQuote(owner,{...range,amount:15.25})).toMatchObject({providerAmount:15.25,feeUsd:1.64,totalChargeUsd:16.89});
     for(const amount of [0.99,20.25,100.01,1.01,1.001]) await expect(f.service.createQuote(owner,{...range,amount})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
     const q=await f.service.createQuote(owner,{...range,amount:5});
     const prior=f.provider.listProducts;
     f.provider.listProducts=async(c,id)=>(await prior(c,id))!.map(p=>({...p,amountIncrement:0.5}));
     await expect(f.service.createPaymentSession(owner,{quoteId:q.id},'changed-snapshot','US')).rejects.toMatchObject({code:'TOPUP_QUOTE_CHANGED'});
   });
-  it('preserves an old reviewed quote, Stripe replay, completed receipt and history without repricing',async()=>{
+  it.each([99,139])('preserves an old %s-cent fee quote, Stripe replay, completed receipt and history without repricing',async(oldFee)=>{
     const f=fixture();const fresh=await f.service.createQuote(owner,input(5));
-    const old=await f.repository.createQuote({...fresh,feeUsd:0.99,totalChargeUsd:5.99});
-    expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:599});
+    const old=await f.repository.createQuote({...fresh,feeUsd:oldFee/100,totalChargeUsd:(500+oldFee)/100});
+    expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:500+oldFee});
     await f.repository.transitionPayment((await f.repository.getTransactionByIdempotency(owner,'historical-session'))!.id,['SESSION_CREATED'],{paymentStatus:'CAPTURED',status:'DELIVERED',deliveredValue:650});
     const before=structuredClone(await f.repository.listTransactions(owner));
-    expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:599});
+    expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:500+oldFee});
     await f.service.createQuote(owner,input(5));
     expect(await f.repository.listTransactions(owner)).toEqual(before);
-    expect(await f.repository.getQuote(owner,old.id)).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});
+    expect(await f.repository.getQuote(owner,old.id)).toMatchObject({feeUsd:oldFee/100,totalChargeUsd:(500+oldFee)/100});
     const posts=f.transport.mock.calls.filter(call=>(call as unknown as [string,RequestInit])[1].method==='POST');
     expect(posts).toHaveLength(1);expect(f.submit).not.toHaveBeenCalled();
   });
@@ -106,12 +106,12 @@ describe('new FlupFlap airtime quotes',()=>{
       await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send({...input(1),[field]:0}).expect(400);
     }
     const q=(await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send(input(1)).expect(201)).body.quote;
-    expect(q).toMatchObject({providerAmount:1,feeUsd:1.39,totalChargeUsd:2.39});
+    expect(q).toMatchObject({providerAmount:1,feeUsd:1.24,totalChargeUsd:2.24});
     for(const field of ['fee','feeUsd','totalChargeUsd','amountMinor']) await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'})
       .set('Idempotency-Key','api-fee-session').send({quoteId:q.id,billingCountry:'US',[field]:0}).expect(400);
     await request(app).patch('/api/flupflap/auth/me').auth(token,{type:'bearer'}).send({countryCode:'US'}).expect(403);
     expect((await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'}).set('Idempotency-Key','api-fee-session')
-      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(239);
+      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(224);
     expect(f.submit).not.toHaveBeenCalled();
   });
 });

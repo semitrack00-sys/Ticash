@@ -178,6 +178,9 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
         (
           (item.status === 'PROCESSING' &&
             ['AUTHORIZED', 'CAPTURED'].includes(item.paymentStatus)) ||
+          (item.paymentProvider === 'STRIPE' &&
+            item.status === 'PENDING' &&
+            ['PENDING', 'SESSION_CREATED'].includes(item.paymentStatus)) ||
           ['REFUND_PENDING', 'VOID_PENDING'].includes(item.paymentStatus)
         ) &&
         item.updatedAt <= staleBefore)
@@ -520,6 +523,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       where: {
         OR: [
           { status: 'PROCESSING', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
+          { paymentProvider: 'STRIPE', status: 'PENDING', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } },
           { paymentStatus: { in: ['REFUND_PENDING', 'VOID_PENDING'] } },
         ],
         updatedAt: { lte: new Date(staleBefore) },

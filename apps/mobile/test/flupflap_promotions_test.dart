@@ -38,7 +38,7 @@ void main() {
       final fixture=await mount(tester);
       expect(find.text('Landing views: 10'),findsOneWidget);
       expect(find.text('Qualified customers: 1'),findsOneWidget);
-      expect(find.text('Create campaign'),findsNothing);
+      expect(find.text('Create promotion code'),findsNothing);
       expect(find.text('Record PAID'),findsNothing);
       expect(fixture.requests.every((r)=>r.method=='GET' && r.path.startsWith('/admin/flupflap/promotions')),isTrue);
       expect(tester.takeException(),isNull);
@@ -51,7 +51,7 @@ void main() {
   });
   testWidgets('authorized campaign editor exposes separate benefits/rewards and audit reason', (tester) async {
     await mount(tester,canManage:true);
-    await tester.tap(find.text('Create campaign'));await tester.pumpAndSettle();
+    await tester.tap(find.text('Create promotion code'));await tester.pumpAndSettle();
     expect(find.text('Campaign name'),findsOneWidget);
     expect(find.textContaining('Monetary benefits and rewards are sandbox-only'),findsOneWidget);
     expect(find.text('Customer benefit'),findsOneWidget);

@@ -202,61 +202,73 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 8,
-          children: [
-            for (final s in sections)
-              if (widget.session.can(s.$3))
-                ChoiceChip(
-                  label: Text(s.$1),
-                  selectedColor: const Color(0xFFDDE7FF),
-                  backgroundColor: const Color(0xFFF8FAFC),
-                  side: const BorderSide(color: Color(0xFFE2E8F0)),
-                  labelStyle: TextStyle(
-                    color: section == s.$2 ? const Color(0xFF1D4ED8) : AppTheme.ink,
-                    fontWeight: section == s.$2 ? FontWeight.w800 : FontWeight.w600,
-                  ),
-                  selected: section == s.$2,
-                  onSelected: (_) => setState(() {
-                    section = s.$2;
-                    offset = 0;
-                    if (!['operators', 'products'].contains(section)) {
-                      load();
-                    } else {
-                      result = null;
-                    }
-                  }),
-                ),
-          ],
+        _FlupFlapAdminNavigation(
+          sections: sections,
+          current: section,
+          canAccess: widget.session.can,
+          onSelect: (next) => setState(() {
+            section = next;
+            offset = 0;
+            if (!['operators', 'products'].contains(section)) {
+              load();
+            } else {
+              result = null;
+            }
+          }),
         ),
-        if (['operators', 'products'].contains(section))
-          Wrap(
-            spacing: 8,
-            children: [
-              SizedBox(
-                width: 160,
-                child: TextField(
-                  controller: country,
-                  decoration: const InputDecoration(
-                    labelText: 'Country ISO code',
-                  ),
-                ),
-              ),
-              if (section == 'products')
+        const SizedBox(height: 16),
+        _AdminSectionHeader(section: section),
+        if (['operators', 'products'].contains(section)) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              children: [
                 SizedBox(
                   width: 180,
                   child: TextField(
-                    controller: operatorId,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Operator ID'),
+                    controller: country,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(
+                      labelText: 'Country ISO code',
+                      hintText: 'US, HT, CA…',
+                      prefixIcon: Icon(Icons.public_outlined),
+                    ),
                   ),
                 ),
-              TextButton(
-                onPressed: () => setState(load),
-                child: Text(section == 'products' ? 'Load internet plans' : 'Load operators'),
-              ),
-            ],
+                if (section == 'products')
+                  SizedBox(
+                    width: 200,
+                    child: TextField(
+                      controller: operatorId,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Operator ID',
+                        prefixIcon: Icon(Icons.cell_tower_outlined),
+                      ),
+                    ),
+                  ),
+                FilledButton.icon(
+                  onPressed: () => setState(load),
+                  icon: const Icon(Icons.search),
+                  label: Text(
+                    section == 'products'
+                        ? 'Load internet plans'
+                        : 'Load operators',
+                  ),
+                ),
+              ],
+            ),
           ),
+        ],
         const SizedBox(height: 16),
         if (section == 'promotions')
           FlupFlapPromotionsPanel(
@@ -396,6 +408,281 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
 }
 
 
+
+class _FlupFlapAdminNavigation extends StatelessWidget {
+  const _FlupFlapAdminNavigation({
+    required this.sections,
+    required this.current,
+    required this.canAccess,
+    required this.onSelect,
+  });
+
+  final List<(String, String, String)> sections;
+  final String current;
+  final bool Function(String) canAccess;
+  final ValueChanged<String> onSelect;
+
+  static const groups = <(String, IconData, List<String>)>[
+    ('Overview', Icons.dashboard_outlined, ['dashboard']),
+    (
+      'Customers & Activity',
+      Icons.people_alt_outlined,
+      ['transactions', 'customers', 'pending-failures']
+    ),
+    (
+      'Catalog & Network',
+      Icons.hub_outlined,
+      ['countries', 'operators', 'products', 'providers']
+    ),
+    ('Growth', Icons.campaign_outlined, ['promotions']),
+    (
+      'Finance & Governance',
+      Icons.account_balance_outlined,
+      ['refunds', 'financials', 'reports', 'settings', 'audit']
+    ),
+  ];
+
+  IconData _icon(String key) => switch (key) {
+    'dashboard' => Icons.space_dashboard_outlined,
+    'transactions' => Icons.receipt_long_outlined,
+    'customers' => Icons.people_outline,
+    'countries' => Icons.public_outlined,
+    'operators' => Icons.cell_tower_outlined,
+    'products' => Icons.data_usage_outlined,
+    'providers' => Icons.route_outlined,
+    'promotions' => Icons.campaign_outlined,
+    'pending-failures' => Icons.warning_amber_rounded,
+    'refunds' => Icons.currency_exchange_outlined,
+    'financials' => Icons.account_balance_wallet_outlined,
+    'reports' => Icons.bar_chart_outlined,
+    'settings' => Icons.tune_outlined,
+    'audit' => Icons.fact_check_outlined,
+    _ => Icons.circle_outlined,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final byKey = {for (final item in sections) item.$2: item};
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x080F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'ADMIN WORKSPACE',
+            style: TextStyle(
+              color: AppTheme.muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 14),
+          for (final group in groups) ...[
+            if (group.$3.any((key) {
+              final item = byKey[key];
+              return item != null && canAccess(item.$3);
+            })) ...[
+              Row(
+                children: [
+                  Icon(group.$2, size: 17, color: const Color(0xFF64748B)),
+                  const SizedBox(width: 7),
+                  Text(
+                    group.$1,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF475569),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final key in group.$3)
+                    if (byKey[key] case final item?)
+                      if (canAccess(item.$3))
+                        ChoiceChip(
+                          avatar: Icon(
+                            _icon(key),
+                            size: 17,
+                            color: current == key
+                                ? const Color(0xFF1D4ED8)
+                                : const Color(0xFF64748B),
+                          ),
+                          label: Text(item.$1),
+                          selected: current == key,
+                          selectedColor: const Color(0xFFE8F0FF),
+                          backgroundColor: const Color(0xFFF8FAFC),
+                          side: BorderSide(
+                            color: current == key
+                                ? const Color(0xFFBFDBFE)
+                                : const Color(0xFFE2E8F0),
+                          ),
+                          labelStyle: TextStyle(
+                            color: current == key
+                                ? const Color(0xFF1D4ED8)
+                                : AppTheme.ink,
+                            fontWeight: current == key
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                          ),
+                          onSelected: (_) => onSelect(key),
+                        ),
+                ],
+              ),
+              const SizedBox(height: 14),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminSectionHeader extends StatelessWidget {
+  const _AdminSectionHeader({required this.section});
+  final String section;
+
+  (String, String, IconData) get details => switch (section) {
+    'dashboard' => (
+      'Dashboard',
+      'Service health, readiness, volume and business performance.',
+      Icons.space_dashboard_outlined
+    ),
+    'transactions' => (
+      'Transactions',
+      'Review recharge lifecycle, payment state and delivery records.',
+      Icons.receipt_long_outlined
+    ),
+    'customers' => (
+      'FlupFlap Customers',
+      'Customer access, recharge restrictions and account operations.',
+      Icons.people_outline
+    ),
+    'countries' => (
+      'Countries',
+      'Review provider-backed country coverage currently exposed to FlupFlap.',
+      Icons.public_outlined
+    ),
+    'operators' => (
+      'Operators',
+      'Inspect mobile operators by destination country.',
+      Icons.cell_tower_outlined
+    ),
+    'products' => (
+      'Internet Plans',
+      'Inspect provider-backed airtime, data and bundle products.',
+      Icons.data_usage_outlined
+    ),
+    'providers' => (
+      'Providers',
+      'Review configured recharge providers and coverage state.',
+      Icons.route_outlined
+    ),
+    'promotions' => (
+      'Promotions & Influencers',
+      'Create campaigns, manage promoters and review attributed performance.',
+      Icons.campaign_outlined
+    ),
+    'pending-failures' => (
+      'Pending & Failures',
+      'Focus on transactions that need operational review or reconciliation.',
+      Icons.warning_amber_rounded
+    ),
+    'refunds' => (
+      'Refunds',
+      'Review refund-related records without overriding provider-confirmed state.',
+      Icons.currency_exchange_outlined
+    ),
+    'financials' => (
+      'Financials',
+      'Review authorized financial reporting for recharge activity.',
+      Icons.account_balance_wallet_outlined
+    ),
+    'reports' => (
+      'Reports',
+      'Review operational and business reporting for FlupFlap.',
+      Icons.bar_chart_outlined
+    ),
+    'settings' => (
+      'Settings',
+      'Review configuration state and protected operational controls.',
+      Icons.tune_outlined
+    ),
+    'audit' => (
+      'Audit',
+      'Review staff and system events for accountability and traceability.',
+      Icons.fact_check_outlined
+    ),
+    _ => ('FlupFlap Admin', 'Authorized recharge operations.', Icons.bolt_outlined),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final d = details;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F0FF),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(d.$3, color: const Color(0xFF1D4ED8)),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  d.$1,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.ink,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  d.$2,
+                  style: const TextStyle(
+                    color: AppTheme.muted,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _ProductCatalogSummary extends StatelessWidget {
   const _ProductCatalogSummary({required this.rows});

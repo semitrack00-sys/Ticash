@@ -997,7 +997,7 @@ export class MobileTopUpService {
       ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
     });
     if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
-    if (transition.to === 'AUTHORIZED' || transition.to === 'CAPTURED') await this.fulfillPaidRecharge(record.id);
+    if (transition.to === 'CAPTURED') await this.fulfillPaidRecharge(record.id);
     await this.repository.completePaymentEvent(event.eventId);
   }
 

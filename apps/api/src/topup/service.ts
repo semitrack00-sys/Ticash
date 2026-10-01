@@ -905,7 +905,10 @@ export class MobileTopUpService {
   }
 
   private async refreshTransaction(record: MobileTopUpTransactionRecord) {
-    if (['FAILED', 'REFUNDED', 'DELIVERED'].includes(record.status)) return record;
+    // DELIVERED remains refreshable: providers can later reverse/refund a top-up,
+    // and a later status response can supply authoritative delivered-value data
+    // that was missing from the initial delivery response.
+    if (['FAILED', 'REFUNDED'].includes(record.status)) return record;
     this.assertTransactionEnvironment(record);
     const provider = record.provider ?? decodeOperatorId(record.operatorId).provider;
     if (record.providerTransactionId) {

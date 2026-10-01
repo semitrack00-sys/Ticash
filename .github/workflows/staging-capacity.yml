@@ -25,32 +25,69 @@ jobs:
       BASE_URL: https://ticash-api-staging-v2.onrender.com
     steps:
       - uses: actions/checkout@v4
+
       - name: Verify staging target
         shell: bash
         run: |
           set -euo pipefail
           test "$BASE_URL" = "https://ticash-api-staging-v2.onrender.com"
-          case "$BASE_URL" in *ticash-api.onrender.com*) echo "Production target blocked"; exit 1 ;; esac
+          case "$BASE_URL" in
+            *ticash-api.onrender.com*)
+              echo "Production target blocked"
+              exit 1
+              ;;
+          esac
+
       - name: Smoke test
         shell: bash
-        run: curl --fail --silent --show-error --retry 3 --retry-delay 2 "$BASE_URL/api/health" >/dev/null
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-delay 2             "$BASE_URL/api/health" >/dev/null
+
       - name: Install k6
+        if: inputs.level != 'smoke'
         uses: grafana/setup-k6-action@v1
-      - name: Run selected staging load
+
+      - name: Run staged capacity ladder
         if: inputs.level != 'smoke'
         shell: bash
         env:
-          CAPACITY_LEVEL: ${{ inputs.level }}
+          REQUESTED_LEVEL: ${{ inputs.level }}
         run: |
+          set -u
           mkdir -p artifacts/capacity
-          set +e
-          k6 run --summary-export artifacts/capacity/summary.json \
-            -e BASE_URL="$BASE_URL" \
-            -e CAPACITY_LEVEL="$CAPACITY_LEVEL" \
-            load/flupflap-capacity.js 2>&1 | tee artifacts/capacity/k6.log
-          K6_EXIT=${PIPESTATUS[0]}
-          echo "k6_exit_code=$K6_EXIT" | tee artifacts/capacity/result.txt
-          exit "$K6_EXIT"
+          : > artifacts/capacity/result.txt
+          highest_passed=0
+          overall_exit=0
+
+          for level in 25 500 1000 2500 5000 10000; do
+            if [ "$level" -gt "$REQUESTED_LEVEL" ]; then
+              break
+            fi
+
+            echo "=== Testing staging capacity level: $level VUs ===" | tee -a artifacts/capacity/result.txt
+            mkdir -p "artifacts/capacity/$level"
+
+            set +e
+            k6 run               --summary-export "artifacts/capacity/$level/summary.json"               -e BASE_URL="$BASE_URL"               -e CAPACITY_LEVEL="$level"               -e SINGLE_LEVEL=YES               load/flupflap-capacity.js               2>&1 | tee "artifacts/capacity/$level/k6.log"
+            stage_exit=${PIPESTATUS[0]}
+            set -e
+
+            echo "level=$level exit_code=$stage_exit" | tee -a artifacts/capacity/result.txt
+
+            if [ "$stage_exit" -ne 0 ]; then
+              overall_exit="$stage_exit"
+              echo "highest_passing_level=$highest_passed" | tee -a artifacts/capacity/result.txt
+              echo "first_failing_level=$level" | tee -a artifacts/capacity/result.txt
+              exit "$overall_exit"
+            fi
+
+            highest_passed="$level"
+          done
+
+          echo "highest_passing_level=$highest_passed" | tee -a artifacts/capacity/result.txt
+          echo "requested_level=$REQUESTED_LEVEL" | tee -a artifacts/capacity/result.txt
+
       - name: Upload capacity diagnostics
         if: always() && inputs.level != 'smoke'
         uses: actions/upload-artifact@v4

@@ -90,6 +90,10 @@ export function analyticsQuery(domain: AnalyticsDomain, window: AnalyticsWindow)
       'clients', jsonb_build_object(
         'total', (SELECT count(*) FROM customers),
         'new', (SELECT count(*) FROM customers WHERE created >= ${start}),
+        'today', (SELECT count(*) FROM customers WHERE created >= date_trunc('day', ${end}::timestamp) AND created < ${end}),
+        'week', (SELECT count(*) FROM customers WHERE created >= date_trunc('week', ${end}::timestamp) AND created < ${end}),
+        'month', (SELECT count(*) FROM customers WHERE created >= date_trunc('month', ${end}::timestamp) AND created < ${end}),
+        'year', (SELECT count(*) FROM customers WHERE created >= date_trunc('year', ${end}::timestamp) AND created < ${end}),
         'guest', (SELECT count(*) FROM customers WHERE guest),
         'registered', (SELECT count(*) FROM customers WHERE NOT guest),
         'active', (SELECT count(DISTINCT customer) FROM current)),

@@ -918,7 +918,7 @@ export class MobileTopUpService {
       ...(transition.to === 'FAILED'
         ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() }
         : transition.to === 'CAPTURED'
-          ? { status: 'PROCESSING', failureCode: 'PAYMENT_RECOVERED' }
+          ? { status: 'PENDING', failureCode: 'PAYMENT_RECOVERED' }
           : {}),
     });
     if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
@@ -1106,7 +1106,7 @@ export class MobileTopUpService {
             {
               paymentStatus: 'CAPTURED',
               paymentProviderTransactionId: paymentId,
-              status: 'PROCESSING',
+              status: 'PENDING',
               failureCode: 'PAYMENT_RECOVERED',
             },
           );

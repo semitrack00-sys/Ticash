@@ -934,6 +934,12 @@ class _Receipt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final delivered = transaction.status == MobileTopUpStatus.delivered;
+    final refundPending = transaction.paymentStatus == 'REFUND_PENDING';
+    final voidPending = transaction.paymentStatus == 'VOID_PENDING';
+    final refundCompleted = transaction.paymentStatus == 'REFUNDED';
+    final voidCompleted = transaction.paymentStatus == 'VOIDED';
+    final paymentRecoveryPending = refundPending || voidPending;
+    final recoveryCompleted = refundCompleted || voidCompleted;
     final statusColor = _mobileTopUpStatusColor(transaction.status);
     return ListView(
       padding: const EdgeInsets.all(20),

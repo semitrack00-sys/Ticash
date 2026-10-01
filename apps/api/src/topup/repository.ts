@@ -91,6 +91,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   deliveredAt?: string;
   failedAt?: string;
   refundedAt?: string;
+  customerHiddenAt?: string;
 }
 
 export interface MobileTopUpRepository extends ReceiverNotificationStore {
@@ -113,6 +114,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   getTransaction(userId: string, id: string): Promise<MobileTopUpTransactionRecord | undefined>;
   listFlupFlapTransactions(offset: number): Promise<MobileTopUpTransactionRecord[]>;
   listTransactions(userId: string): Promise<MobileTopUpTransactionRecord[]>;
+  hideTransactionFromCustomer(userId: string, id: string, when: string): Promise<boolean>;
   updateTransaction(id: string, input: TransactionUpdate): Promise<MobileTopUpTransactionRecord>;
   postDeliveredLedger(record: MobileTopUpTransactionRecord): Promise<void>;
   postRefundLedger(record: MobileTopUpTransactionRecord): Promise<void>;
@@ -125,7 +127,7 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
   'paymentProvider' |
   'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
-      'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
+      'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt' | 'customerHiddenAt'>>;
 
 const notifications = new Map<string, ReceiverNotification>();
 const recipients = new Map<string, SavedTopUpRecipientRecord>();
@@ -273,7 +275,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 
   async getTransaction(userId: string, id: string) {
     const record = transactions.get(id);
-    return record?.userId === userId ? record : undefined;
+    return record?.userId === userId && !record.customerHiddenAt ? record : undefined;
   }
 
   async getTransactionByIdempotency(userId: string, key: string) {
@@ -286,8 +288,16 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   }
   async listTransactions(userId: string) {
     return [...transactions.values()]
-      .filter((item) => item.userId === userId)
+      .filter((item) => item.userId === userId && !item.customerHiddenAt)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async hideTransactionFromCustomer(userId: string, id: string, when: string) {
+    const record = transactions.get(id);
+    if (!record || record.userId !== userId || record.customerHiddenAt ||
+        record.status !== 'FAILED' || record.paymentStatus !== 'FAILED' || record.failureCode !== 'CANCELLED_BY_CUSTOMER') return false;
+    transactions.set(id, { ...record, customerHiddenAt: when, updatedAt: now() });
+    return true;
   }
 
   async updateTransaction(id: string, input: TransactionUpdate) {
@@ -361,7 +371,7 @@ function transactionFromDb(record: {
   kind: MobileTopUpKind; providerAmount: Prisma.Decimal; providerCurrency: string; deliveredValue: Prisma.Decimal | null;
   deliveredCurrency: string; feeUsd: Prisma.Decimal; totalChargeUsd: Prisma.Decimal; providerStatus: string | null;
   failureCode: string | null; testMode: boolean; createdAt: Date; updatedAt: Date; deliveredAt: Date | null;
-  failedAt: Date | null; refundedAt: Date | null;
+  failedAt: Date | null; refundedAt: Date | null; customerHiddenAt?: Date | null;
   paymentMethod?: MobileTopUpPaymentMethod | null; paymentProvider?: MobileTopUpPaymentProviderName | string | null;
   paymentEnvironment?: 'SANDBOX' | 'PRODUCTION' | null;
   rechargeEnvironment?: 'SANDBOX' | 'PRODUCTION' | null;
@@ -427,6 +437,7 @@ function transactionFromDb(record: {
     deliveredAt: record.deliveredAt?.toISOString(),
     failedAt: record.failedAt?.toISOString(),
     refundedAt: record.refundedAt?.toISOString(),
+    customerHiddenAt: record.customerHiddenAt?.toISOString(),
   };
 }
 
@@ -647,7 +658,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async getTransaction(userId: string, id: string) {
-    const record = await this.prisma.mobileTopUpTransaction.findFirst({ where: { id, ...ownerWhere(userId) } });
+    const record = await this.prisma.mobileTopUpTransaction.findFirst({ where: { id, ...ownerWhere(userId), customerHiddenAt: null } });
     return record ? transactionFromDb(record) : undefined;
   }
 
@@ -662,8 +673,16 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     return (await this.prisma.mobileTopUpTransaction.findMany({where:{flupFlapCustomerId:{not:null}},orderBy:{createdAt:'desc'},skip:offset,take:100})).map(transactionFromDb);
   }
   async listTransactions(userId: string) {
-    const records = await this.prisma.mobileTopUpTransaction.findMany({ where: ownerWhere(userId), orderBy: { createdAt: 'desc' } });
+    const records = await this.prisma.mobileTopUpTransaction.findMany({ where: { ...ownerWhere(userId), customerHiddenAt: null }, orderBy: { createdAt: 'desc' } });
     return records.map(transactionFromDb);
+  }
+
+  async hideTransactionFromCustomer(userId: string, id: string, when: string) {
+    const result = await this.prisma.mobileTopUpTransaction.updateMany({
+      where: { id, ...ownerWhere(userId), customerHiddenAt: null, status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' },
+      data: { customerHiddenAt: new Date(when) },
+    });
+    return result.count === 1;
   }
 
   async updateTransaction(id: string, input: TransactionUpdate) {
@@ -769,5 +788,6 @@ function transactionUpdateData(input: TransactionUpdate): Prisma.MobileTopUpTran
   if (data.deliveredAt) data.deliveredAt = new Date(String(data.deliveredAt));
   if (data.failedAt) data.failedAt = new Date(String(data.failedAt));
   if (data.refundedAt) data.refundedAt = new Date(String(data.refundedAt));
+  if (data.customerHiddenAt) data.customerHiddenAt = new Date(String(data.customerHiddenAt));
   return data as Prisma.MobileTopUpTransactionUpdateManyMutationInput;
 }

@@ -195,6 +195,7 @@ export interface MobileTopUpProvider {
   getOperator(operatorId: number): Promise<MobileTopUpOperator>;
   submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult>;
   getTopUpStatus(transactionId: string, provider?: MobileTopUpProviderName): Promise<ProviderTopUpResult>;
+  findTopUpByCustomIdentifier?(customIdentifier: string, provider?: MobileTopUpProviderName): Promise<ProviderTopUpResult | undefined>;
 }
 
 export interface MobileTopUpPaymentAuthorization {

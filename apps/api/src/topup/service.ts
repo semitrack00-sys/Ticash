@@ -904,15 +904,67 @@ export class MobileTopUpService {
     return updated;
   }
 
+  private async refreshTransaction(record: MobileTopUpTransactionRecord) {
+    // DELIVERED remains refreshable: providers can later reverse/refund a top-up,
+    // and a later status response can supply authoritative delivered-value data
+    // that was missing from the initial delivery response.
+    if (['FAILED', 'REFUNDED'].includes(record.status)) return record;
+    this.assertTransactionEnvironment(record);
+    const provider = record.provider ?? decodeOperatorId(record.operatorId).provider;
+    if (record.providerTransactionId) {
+      return this.applyProviderResult(
+        record.id,
+        await this.provider.getTopUpStatus(record.providerTransactionId, provider),
+      );
+    }
+    if (record.failureCode === 'TOPUP_SUBMISSION_UNKNOWN' &&
+        ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus) &&
+        this.provider.findTopUpByCustomIdentifier) {
+      const recovered = await this.provider.findTopUpByCustomIdentifier(record.customIdentifier, provider);
+      if (recovered) {
+        await this.audit(record.userId, 'MOBILE_TOPUP_PROVIDER_REFERENCE_RECOVERED', 'MobileTopUpTransaction', record.id,
+          { provider, source: 'CUSTOM_IDENTIFIER' });
+        return this.applyProviderResult(record.id, recovered);
+      }
+      // Bump updatedAt so automatic reconciliation applies a cooldown before the
+      // next read-only provider lookup. No airtime submission occurs here.
+      return this.repository.updateTransaction(record.id, {
+        paymentRecoveryCode: 'FULFILLMENT_RECONCILIATION_REQUIRED',
+      });
+    }
+    return record;
+  }
+
   async getTransaction(userId: string, id: string, refresh = false) {
     this.assertEnabled();
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
-    if (refresh && record.providerTransactionId && !['FAILED', 'REFUNDED'].includes(record.status)) {
-      this.assertTransactionEnvironment(record);
-      return this.applyProviderResult(record.id, await this.provider.getTopUpStatus(record.providerTransactionId, record.provider ?? decodeOperatorId(record.operatorId).provider));
+    return refresh ? this.refreshTransaction(record) : record;
+  }
+
+  async reconcilePendingTransactions(limit = 25) {
+    this.assertEnabled();
+    const staleBefore = new Date(this.clock().getTime() - 15_000).toISOString();
+    const candidates = await this.repository.listReconciliationCandidates(limit, staleBefore);
+    let resolved = 0;
+    let pending = 0;
+    let errors = 0;
+
+    for (const record of candidates) {
+      try {
+        const updated = await this.refreshTransaction(record);
+        if (['DELIVERED', 'FAILED', 'REFUNDED'].includes(updated.status)) resolved += 1;
+        else pending += 1;
+      } catch (error) {
+        errors += 1;
+        await this.audit(record.userId, 'MOBILE_TOPUP_AUTOMATIC_RECONCILIATION_FAILED', 'MobileTopUpTransaction', record.id, {
+          provider: record.provider ?? decodeOperatorId(record.operatorId).provider,
+          code: error instanceof MobileTopUpError ? error.code : 'UNEXPECTED_ERROR',
+        });
+      }
     }
-    return record;
+
+    return { scanned: candidates.length, resolved, pending, errors };
   }
 
   async cancelTransaction(userId: string, id: string) {

@@ -410,7 +410,12 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
         }
       : undefined;
     const recipientCountryCode = normalizeTopUpCountryCode(input.recipientCountryCode);
-    const body = await this.request('topups', {
+    // Use Reloadly's asynchronous top-up endpoint so a provider transaction ID
+    // is returned immediately and can be persisted before later status polling.
+    // This sharply reduces the ambiguous "provider may have accepted it but the
+    // synchronous response was lost" window that can otherwise strand a paid
+    // recharge in TOPUP_SUBMISSION_UNKNOWN.
+    const body = await this.request('topups-async', {
       method: 'POST',
       body: JSON.stringify({
         operatorId: input.operatorId,
@@ -424,11 +429,37 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
         ...(senderPhone ? { senderPhone } : {}),
       }),
     });
-    return mapTopUp(body);
+    const transactionId = body.transactionId;
+    if (transactionId === undefined || transactionId === null || String(transactionId).trim() === '') {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly omitted the asynchronous transaction ID', 502);
+    }
+    return {
+      transactionId: String(transactionId),
+      status: 'PROCESSING',
+      requestedAmount: input.amount,
+      requestedAmountCurrencyCode: input.providerCurrency ?? this.config.billingCurrency,
+    };
   }
 
   async getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult> {
     return mapTopUp(await this.request(`topups/${encodeURIComponent(transactionId)}/status`));
+  }
+
+  async findTopUpByCustomIdentifier(customIdentifier: string): Promise<ProviderTopUpResult | undefined> {
+    const identifier = customIdentifier.trim();
+    if (!/^[A-Za-z0-9_-]{1,160}$/.test(identifier)) {
+      throw new MobileTopUpError('INVALID_TOPUP_IDENTIFIER', 'Invalid recharge reconciliation identifier', 400);
+    }
+    const params = new URLSearchParams({ size: '2', page: '1', customIdentifier: identifier });
+    const body = await this.request(`topups/reports/transactions?${params.toString()}`);
+    const rows = Array.isArray(body.content) ? body.content : [];
+    const exact = rows.filter((row): row is ReloadlyDocument => Boolean(row) && typeof row === 'object' && !Array.isArray(row) &&
+      String((row as Record<string, unknown>).customIdentifier ?? '') === identifier);
+    if (exact.length === 0) return undefined;
+    if (exact.length !== 1) {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned ambiguous reconciliation results', 502);
+    }
+    return mapTopUp(exact[0]!);
   }
 }
 

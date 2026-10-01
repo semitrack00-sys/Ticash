@@ -219,6 +219,11 @@ export class DingUatProvider implements MobileTopUpProvider {
     if (!result) throw new MobileTopUpError('DING_RECONCILIATION_REQUIRED', 'Ding transfer is not yet visible; do not resubmit', 502);
     return result;
   }
+
+  async findTopUpByCustomIdentifier(customIdentifier: string) {
+    if (!customIdentifier) throw new MobileTopUpError('INVALID_TOPUP_IDENTIFIER', 'Invalid recharge reconciliation identifier', 400);
+    return this.lookup(dingDistributorReference(customIdentifier));
+  }
   async submitTopUp(input: ProviderTopUpRequest): Promise<ProviderTopUpResult> {
     if (input.provider !== 'DING' || !input.customIdentifier || !input.providerProductId || input.providerCurrency !== 'USD' || !/^\+[1-9][0-9]{6,14}$/.test(input.recipientPhone)) throw new MobileTopUpError('INVALID_TOPUP_REQUEST', 'Ding requires an exact quote and normalized recipient', 400);
     const reference = dingDistributorReference(input.customIdentifier); const fingerprint = JSON.stringify(input);

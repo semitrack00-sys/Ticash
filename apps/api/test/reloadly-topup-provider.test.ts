@@ -230,15 +230,41 @@ describe('Reloadly Sandbox top-up provider', () => {
   it('submits a provider purchase without exposing credentials in its body', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
-      .mockResolvedValueOnce(json({ transactionId: 44, status: 'PROCESSING', requestedAmount: 5,
-        requestedAmountCurrencyCode: 'USD' }));
+      .mockResolvedValueOnce(json({ transactionId: 44 }));
     const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
-    await provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+18765551234',
-      recipientCountryCode: 'JM', customIdentifier: 'ticash-topup-test' });
+    await expect(provider.submitTopUp({ operatorId: 12, amount: 5, recipientPhone: '+18765551234',
+      recipientCountryCode: 'JM', customIdentifier: 'ticash-topup-test', providerCurrency: 'USD' }))
+      .resolves.toMatchObject({ transactionId: '44', status: 'PROCESSING', requestedAmount: 5, requestedAmountCurrencyCode: 'USD' });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/topups-async`);
     const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(body).toMatchObject({ operatorId: 12, amount: 5, useLocalAmount: false,
       recipientPhone: { countryCode: 'JM', number: '18765551234' } });
     expect(body.client_secret).toBeUndefined();
+  });
+
+  it('recovers an ambiguous submission by its unique custom identifier', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json({
+        content: [{
+          transactionId: 99123,
+          status: 'SUCCESSFUL',
+          customIdentifier: 'ticash-topup-recover-me',
+          requestedAmount: 5,
+          requestedAmountCurrencyCode: 'USD',
+          deliveredAmount: 5,
+          deliveredAmountCurrencyCode: 'USD',
+        }],
+      }));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.findTopUpByCustomIdentifier('ticash-topup-recover-me')).resolves.toMatchObject({
+      transactionId: '99123',
+      status: 'SUCCESSFUL',
+      requestedAmount: 5,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/topups/reports/transactions?');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('customIdentifier=ticash-topup-recover-me');
   });
 
   it('accepts the current Reloadly status response transaction field', async () => {

@@ -108,6 +108,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   reserveTransaction(input: MobileTopUpTransactionRecord): Promise<{ record: MobileTopUpTransactionRecord; created: boolean }>;
   getTransactionById(id: string): Promise<MobileTopUpTransactionRecord | undefined>;
   getTransactionByCheckoutResumeTokenHash(tokenHash: string): Promise<MobileTopUpTransactionRecord | undefined>;
+  listReconciliationCandidates(limit: number, staleBefore: string): Promise<MobileTopUpTransactionRecord[]>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
   registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string): Promise<boolean>;
@@ -169,6 +170,16 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 
   async getTransactionByCheckoutResumeTokenHash(tokenHash: string) {
     return [...transactions.values()].find((item) => item.checkoutResumeTokenHash === tokenHash);
+  }
+
+  async listReconciliationCandidates(limit: number, staleBefore: string) {
+    return [...transactions.values()]
+      .filter((item) =>
+        item.status === 'PROCESSING' &&
+        ['AUTHORIZED', 'CAPTURED'].includes(item.paymentStatus) &&
+        item.updatedAt <= staleBefore)
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, Math.max(0, limit));
   }
 
   async claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string) {
@@ -499,6 +510,19 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   async getTransactionByCheckoutResumeTokenHash(tokenHash: string) {
     const record = await this.prisma.mobileTopUpTransaction.findFirst({ where: { checkoutResumeTokenHash: tokenHash } });
     return record ? transactionFromDb(record) : undefined;
+  }
+
+  async listReconciliationCandidates(limit: number, staleBefore: string) {
+    const records = await this.prisma.mobileTopUpTransaction.findMany({
+      where: {
+        status: 'PROCESSING',
+        paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] },
+        updatedAt: { lte: new Date(staleBefore) },
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: Math.max(0, Math.min(limit, 100)),
+    });
+    return records.map(transactionFromDb);
   }
 
   async claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string) {

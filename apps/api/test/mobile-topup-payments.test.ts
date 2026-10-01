@@ -1101,6 +1101,27 @@ describe('Stripe sandbox flow',()=>{
     expect(transport.mock.calls.every(([url]) => !String(url).includes('/v1/refunds'))).toBe(true);
   });
 
+  it('does not guess void versus refund when Stripe status lookup is unresolved', async () => {
+    let now = new Date('2026-10-01T18:00:00.000Z');
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
+      .mockRejectedValueOnce(new Error('network timeout'));
+    const f = stripeFixture(transport, { clock: () => now });
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-unknown-recovery-state', 'US');
+    await f.repository.updateTransaction(session.transactionId, {
+      status: 'FAILED',
+      paymentStatus: 'VOID_PENDING',
+      paymentProviderTransactionId: 'pi_unknown_state',
+      paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
+    });
+    now = new Date(now.getTime() + 20_000);
+
+    await expect(f.service.reconcilePendingTransactions()).resolves.toMatchObject({ scanned: 1, pending: 1 });
+    expect((await f.repository.getTransactionById(session.transactionId))?.paymentStatus).toBe('VOID_PENDING');
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     { id: 'pi_wrong', status: 'succeeded', amount: 599, amount_received: 599, currency: 'usd' },
     { id: 'pi_guard', status: 'succeeded', amount: 600, amount_received: 600, currency: 'usd' },

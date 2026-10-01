@@ -1,0 +1,53 @@
+name: One-time staging capacity 10k
+
+on:
+  push:
+    branches:
+      - run/staging-capacity-10k-once
+    paths:
+      - .github/workflows/staging-capacity-10k-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-capacity-10k-once
+  cancel-in-progress: false
+
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_URL: https://ticash-api-staging-v2.onrender.com
+      CAPACITY_LEVEL: '10000'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify staging target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BASE_URL" = "https://ticash-api-staging-v2.onrender.com"
+          case "$BASE_URL" in *ticash-api.onrender.com*) echo "Production target blocked"; exit 1 ;; esac
+      - name: Smoke test
+        shell: bash
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 2 "$BASE_URL/api/health" >/dev/null
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+      - name: Run 10,000-user staging capacity test
+        shell: bash
+        run: |
+          mkdir -p artifacts/capacity
+          set +e
+          k6 run --summary-export artifacts/capacity/summary.json             -e BASE_URL="$BASE_URL"             -e CAPACITY_LEVEL="$CAPACITY_LEVEL"             load/flupflap-capacity.js 2>&1 | tee artifacts/capacity/k6.log
+          K6_EXIT=${PIPESTATUS[0]}
+          echo "k6_exit_code=$K6_EXIT" | tee artifacts/capacity/result.txt
+          exit "$K6_EXIT"
+      - name: Upload capacity diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-capacity-10000-${{ github.run_id }}
+          path: artifacts/capacity/
+          if-no-files-found: warn
+          retention-days: 14

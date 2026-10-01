@@ -121,6 +121,21 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return session;
   }
 
+  async expireHostedCheckoutSession(paymentSessionId: string, transactionId: string) {
+    if (!this.checkoutSessionPattern().test(paymentSessionId)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);
+    }
+    const { data } = await this.request(
+      `/v1/checkout/sessions/${encodeURIComponent(paymentSessionId)}/expire`,
+      'POST',
+      {},
+      transactionId + ':expire-checkout',
+    );
+    if (data.id !== paymentSessionId || data.status !== 'expired') {
+      throw new MobileTopUpError('STRIPE_REQUEST_UNRESOLVED', 'Stripe checkout cancellation needs reconciliation', 502);
+    }
+  }
+
   async getPayment(paymentId: string) {
     return (await this.request(`/v1/payment_intents/${encodeURIComponent(paymentId)}`)).data;
   }

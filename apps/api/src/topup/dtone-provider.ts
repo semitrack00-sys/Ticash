@@ -192,4 +192,14 @@ export class DtOnePreproductionProvider implements MobileTopUpProvider {
     if (result.transactionId !== id) return invalid();
     return result;
   }
+
+  async findTopUpByCustomIdentifier(customIdentifier: string) {
+    if (!customIdentifier) throw new MobileTopUpError('INVALID_TOPUP_IDENTIFIER', 'Invalid recharge reconciliation identifier', 400);
+    const externalId = createHash('sha256').update(customIdentifier).digest('hex').slice(0, 40);
+    const values = await this.pages('transactions', { external_id: externalId });
+    const matches = values.filter(value => doc(value).external_id === externalId);
+    if (matches.length === 0) return undefined;
+    if (matches.length !== 1) return invalid();
+    return transaction(matches[0]);
+  }
 }

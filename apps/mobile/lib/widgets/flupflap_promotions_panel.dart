@@ -91,13 +91,58 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
           reload();
         });
       }
+    } on DioException catch (e) {
+      if (mounted) {
+        setState(() {
+          error = e.response?.statusCode == 503
+              ? 'Promotion management is not enabled on the server yet. Apply the marketing migration and enable FLUPFLAP_MARKETING_ENABLED before creating codes.'
+              : 'Operation not accepted. Check eligibility, dates, permissions and required fields. No success was assumed.';
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
-          error = 'Operation not accepted. Check eligibility, dates, permissions and required fields. No success was assumed.';
+          error = 'Operation not accepted. No success was assumed.';
         });
       }
     }
+  }
+
+  Future<void> createPromotionCode(List<dynamic> promoters) async {
+    var availablePromoters = List<dynamic>.from(promoters);
+    if (availablePromoters.isEmpty) {
+      try {
+        final response = await widget.dio.post(
+          '$path/promoters',
+          data: const {'name': 'FlupFlap Direct'},
+        );
+        final created = response.data;
+        if (created is Map) {
+          availablePromoters = [Map<String, dynamic>.from(created)];
+        } else {
+          setState(() {
+            error = 'The promotion workspace could not initialize a promoter record.';
+          });
+          return;
+        }
+      } on DioException catch (e) {
+        if (!mounted) return;
+        final status = e.response?.statusCode;
+        setState(() {
+          error = status == 503
+              ? 'Promotion management is not enabled on the server yet. Apply the marketing migration and enable FLUPFLAP_MARKETING_ENABLED before creating codes.'
+              : 'The promotion workspace could not initialize. Check permissions and server configuration.';
+        });
+        return;
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          error = 'The promotion workspace could not initialize. No campaign was created.';
+        });
+        return;
+      }
+    }
+    await editCampaign(availablePromoters, null);
   }
 
   Future<void> editCampaign(
@@ -180,41 +225,150 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
           ],
         );
       }
-      final campaigns = (snapshot.data![0].data['campaigns'] as List?) ?? [];
+      final overview = Map<String, dynamic>.from(snapshot.data![0].data as Map);
+      final campaigns = (overview['campaigns'] as List?) ?? [];
       final promoters = (snapshot.data![1].data['promoters'] as List?) ?? [];
       final rewards = (snapshot.data![2].data['rewards'] as List?) ?? [];
+      final activeCampaigns = campaigns.where(
+        (raw) => (raw as Map)['status'] == 'ACTIVE',
+      ).length;
+      final reviewRewards = rewards.where(
+        (raw) => ['PENDING', 'APPROVED', 'PAYABLE'].contains((raw as Map)['status']),
+      ).length;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Promotions / Influencers',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 720;
+                const heading = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Growth command center',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    SizedBox(height: 5),
+                    Text(
+                      'Campaigns, promoters, referral attribution and reward review in one workspace.',
+                      style: TextStyle(color: Color(0xFF64748B)),
+                    ),
+                  ],
+                );
+                final actions = widget.canManage
+                    ? Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: addPromoter,
+                            icon: const Icon(Icons.person_add_outlined),
+                            label: const Text('Create promoter'),
+                          ),
+                          FilledButton.icon(
+                            onPressed: () => createPromotionCode(promoters),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Create promotion code'),
+                          ),
+                        ],
+                      )
+                    : const SizedBox.shrink();
+                return compact
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [heading, const SizedBox(height: 14), actions],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Expanded(child: heading),
+                          const SizedBox(width: 18),
+                          actions,
+                        ],
+                      );
+              },
+            ),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Live monetary promotions and automatic payouts are disabled. Test campaign balances are separate from real revenue.',
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _MarketingSummaryCard(
+                label: 'Campaigns',
+                value: '${campaigns.length}',
+                icon: Icons.campaign_outlined,
+                tone: const Color(0xFF2563EB),
+              ),
+              _MarketingSummaryCard(
+                label: 'Active',
+                value: '$activeCampaigns',
+                icon: Icons.play_circle_outline,
+                tone: const Color(0xFF059669),
+              ),
+              _MarketingSummaryCard(
+                label: 'Promoters',
+                value: '${promoters.length}',
+                icon: Icons.groups_outlined,
+                tone: const Color(0xFF7C3AED),
+              ),
+              _MarketingSummaryCard(
+                label: 'Rewards to review',
+                value: '$reviewRewards',
+                icon: Icons.payments_outlined,
+                tone: const Color(0xFFF59E0B),
+              ),
+            ],
           ),
-          if (error != null)
-            Text(error!, style: const TextStyle(color: Colors.red)),
-          if (widget.canManage)
-            Wrap(
-              spacing: 12,
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBEB),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFFDE68A)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextButton.icon(
-                  onPressed: addPromoter,
-                  icon: const Icon(Icons.person_add_outlined),
-                  label: const Text('Create promoter'),
-                ),
-                FilledButton.icon(
-                  onPressed: promoters.isEmpty
-                      ? null
-                      : () => editCampaign(promoters, null),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create campaign'),
+                const Icon(Icons.shield_outlined, color: Color(0xFFB45309)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    overview['liveMonetaryPromotionsEnabled'] == true
+                        ? 'Live monetary promotions are enabled by server policy. Automatic payouts remain separately controlled.'
+                        : 'Live monetary promotions and automatic payouts are disabled. Test campaign balances are separate from real revenue.',
+                    style: const TextStyle(
+                      color: Color(0xFF78350F),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ],
             ),
-          const SizedBox(height: 12),
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 10),
+            Text(error!, style: const TextStyle(color: Colors.red)),
+          ],
+          const SizedBox(height: 20),
+          const _MarketingSectionTitle(
+            title: 'Campaign portfolio',
+            subtitle: 'Performance, attribution, codes, dates and campaign controls.',
+            icon: Icons.campaign_outlined,
+          ),
+          const SizedBox(height: 10),
           if (campaigns.isEmpty)
             const Card(
               child: Padding(
@@ -319,11 +473,13 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
                 );
               },
             ),
-          const SizedBox(height: 20),
-          const Text(
-            'Reward ledger',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          const SizedBox(height: 24),
+          const _MarketingSectionTitle(
+            title: 'Reward ledger',
+            subtitle: 'Audited reward states only. No payout is executed from this screen.',
+            icon: Icons.account_balance_wallet_outlined,
           ),
+          const SizedBox(height: 10),
           if (rewards.isEmpty) const Text('No verified reward records.'),
           for (final raw in rewards)
             Builder(
@@ -374,6 +530,128 @@ class _FlupFlapPromotionsPanelState extends State<FlupFlapPromotionsPanel> {
       );
     },
   );
+}
+
+class _MarketingSummaryCard extends StatelessWidget {
+  const _MarketingSummaryCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.tone,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color tone;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 178,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x080F172A),
+              blurRadius: 14,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: tone.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: tone, size: 21),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    value,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+class _MarketingSectionTitle extends StatelessWidget {
+  const _MarketingSectionTitle({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F0FF),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: const Color(0xFF1D4ED8), size: 20),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
 }
 
 class _CampaignEditor extends StatefulWidget {

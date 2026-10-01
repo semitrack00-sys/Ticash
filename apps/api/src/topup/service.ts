@@ -898,11 +898,11 @@ export class MobileTopUpService {
     }
 
     const transitionMap = {
-      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED'], to: 'CAPTURED' },
-      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED'], to: 'CAPTURED' },
+      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED'], to: 'CAPTURED' },
+      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED'], to: 'CAPTURED' },
       'checkout.session.async_payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'checkout.session.expired': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED'], to: 'CAPTURED' },
+      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED'], to: 'CAPTURED' },
       'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
@@ -915,7 +915,11 @@ export class MobileTopUpService {
     const changed = await this.repository.transitionPayment(record.id, [...transition.from], {
       paymentStatus: transition.to,
       paymentProviderTransactionId: event.paymentId,
-      ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
+      ...(transition.to === 'FAILED'
+        ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() }
+        : transition.to === 'CAPTURED'
+          ? { status: 'PROCESSING', failureCode: 'PAYMENT_RECOVERED' }
+          : {}),
     });
     if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
     if (transition.to === 'CAPTURED') await this.fulfillPaidRecharge(record.id);
@@ -1064,7 +1068,120 @@ export class MobileTopUpService {
     return (await this.repository.getTransactionById(record.id))!;
   }
 
+  private async reconcileHostedStripePending(record: MobileTopUpTransactionRecord) {
+    if (
+      record.paymentProvider !== 'STRIPE' ||
+      !this.stripeProvider ||
+      !record.paymentSessionId ||
+      !['PENDING', 'SESSION_CREATED', 'FAILED'].includes(record.paymentStatus)
+    ) return record;
+
+    this.assertTransactionEnvironment(record);
+    try {
+      const session = await this.stripeProvider.getHostedCheckoutPaymentState(record.paymentSessionId);
+      const paymentId = session.paymentIntentId ?? record.paymentProviderTransactionId;
+      if (paymentId) {
+        const payment = await this.stripeProvider.getPayment(paymentId);
+        if (
+          payment.id !== paymentId ||
+          payment.currency !== 'usd' ||
+          Number(payment.amount) !== usdMinorUnits(record.totalChargeUsd)
+        ) {
+          throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Stripe payment reconciliation returned mismatched data', 502);
+        }
+        const metadata = payment.metadata && typeof payment.metadata === 'object'
+          ? payment.metadata as Record<string, unknown>
+          : undefined;
+        const boundTransactionId = metadata?.transactionId;
+        if (boundTransactionId !== undefined && boundTransactionId !== record.id) {
+          throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Stripe payment reconciliation returned mismatched metadata', 502);
+        }
+
+        const captured = payment.status === 'succeeded' ||
+          Number(payment.amount_received ?? 0) >= usdMinorUnits(record.totalChargeUsd);
+        if (captured) {
+          const changed = await this.repository.transitionPayment(
+            record.id,
+            ['PENDING', 'SESSION_CREATED', 'FAILED'],
+            {
+              paymentStatus: 'CAPTURED',
+              paymentProviderTransactionId: paymentId,
+              status: 'PROCESSING',
+              failureCode: 'PAYMENT_RECOVERED',
+            },
+          );
+          if (changed) {
+            await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_CAPTURED', 'MobileTopUpTransaction', record.id, {
+              provider: 'STRIPE',
+              source: 'RECONCILIATION',
+            });
+            return this.fulfillPaidRecharge(record.id);
+          }
+          return (await this.repository.getTransactionById(record.id)) ?? record;
+        }
+
+        const lastPaymentError = payment.last_payment_error;
+        const declined =
+          payment.status === 'canceled' ||
+          (payment.status === 'requires_payment_method' &&
+            lastPaymentError && typeof lastPaymentError === 'object');
+
+        if (declined) {
+          const changed = await this.repository.transitionPayment(
+            record.id,
+            ['PENDING', 'SESSION_CREATED'],
+            {
+              paymentStatus: 'FAILED',
+              paymentProviderTransactionId: paymentId,
+              status: 'FAILED',
+              failureCode: 'PAYMENT_DECLINED',
+              failedAt: this.clock().toISOString(),
+            },
+          );
+          if (changed) {
+            await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_FAILED', 'MobileTopUpTransaction', record.id, {
+              provider: 'STRIPE',
+              source: 'RECONCILIATION',
+              stripeStatus: String(payment.status),
+            });
+          }
+          return (await this.repository.getTransactionById(record.id)) ?? record;
+        }
+      }
+
+      if (session.status === 'expired') {
+        const changed = await this.repository.transitionPayment(
+          record.id,
+          ['PENDING', 'SESSION_CREATED'],
+          {
+            paymentStatus: 'FAILED',
+            status: 'FAILED',
+            failureCode: 'PAYMENT_EXPIRED',
+            failedAt: this.clock().toISOString(),
+          },
+        );
+        if (changed) {
+          await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_FAILED', 'MobileTopUpTransaction', record.id, {
+            provider: 'STRIPE',
+            source: 'CHECKOUT_EXPIRED_RECONCILIATION',
+          });
+        }
+        return (await this.repository.getTransactionById(record.id)) ?? record;
+      }
+    } catch (error) {
+      await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id, {
+        provider: 'STRIPE',
+        code: error instanceof MobileTopUpError ? error.code : 'UNEXPECTED_ERROR',
+      });
+    }
+    return (await this.repository.getTransactionById(record.id)) ?? record;
+  }
+
   private async refreshTransaction(record: MobileTopUpTransactionRecord) {
+    if (record.paymentProvider === 'STRIPE' && ['PENDING', 'SESSION_CREATED', 'FAILED'].includes(record.paymentStatus)) {
+      const reconciled = await this.reconcileHostedStripePending(record);
+      if (reconciled !== record || reconciled.paymentStatus !== record.paymentStatus || reconciled.status !== record.status) return reconciled;
+    }
     if (['REFUND_PENDING', 'VOID_PENDING'].includes(record.paymentStatus)) {
       return this.reconcilePaymentRecovery(record);
     }

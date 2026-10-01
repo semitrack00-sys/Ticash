@@ -9,6 +9,7 @@ import type {
   MobileTopUpCheckoutResumeDto,
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
+  MobileTopUpPaymentRecovery,
   MobileTopUpProvider,
   MobileTopUpProviderName,
   MobileTopUpRuntimeEnvironment,
@@ -801,7 +802,7 @@ export class MobileTopUpService {
     this.assertTransactionEnvironment(record);
     await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
     // No implicit fallback from a hosted provider to a mock refund.
-    const recovery = record.paymentProvider === 'MOCK'
+    const recovery: MobileTopUpPaymentRecovery | undefined = record.paymentProvider === 'MOCK'
       ? this.paymentProvider
       : record.paymentProvider === 'STRIPE'
         ? this.stripeProvider

@@ -997,6 +997,33 @@ export function createApp(options: CreateAppOptions = {}) {
     options.mobileTopUpClock,
     mobileTopUpStripeProvider,
   );
+
+  // Paid processing recharges reconcile automatically in the API process.
+  // The worker performs provider status/report lookups only; it never calls
+  // submitTopUp, so restarting or overlapping passes cannot duplicate airtime.
+  if (databaseEnabled && mobileTopUpConfig.enabled && process.env.NODE_ENV !== 'test') {
+    let topUpReconciliationRunning = false;
+    const reconcileTopUps = async () => {
+      if (topUpReconciliationRunning) return;
+      topUpReconciliationRunning = true;
+      try {
+        const result = await mobileTopUpService.reconcilePendingTransactions(25);
+        if (result.scanned > 0) {
+          console.info('Mobile top-up automatic reconciliation', result);
+        }
+      } catch (error) {
+        console.warn('Mobile top-up automatic reconciliation failed', {
+          code: error instanceof MobileTopUpError ? error.code : 'UNEXPECTED_ERROR',
+        });
+      } finally {
+        topUpReconciliationRunning = false;
+      }
+    };
+    const initialTopUpReconciliation = setTimeout(() => { void reconcileTopUps(); }, 5_000);
+    initialTopUpReconciliation.unref();
+    const topUpReconciliationTimer = setInterval(() => { void reconcileTopUps(); }, 30_000);
+    topUpReconciliationTimer.unref();
+  }
   const effectiveQuotePricing = async () => {
     let active = await activeAdminConfiguration();
     if (!active) {

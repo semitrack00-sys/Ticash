@@ -755,6 +755,8 @@ describe('Stripe sandbox flow',()=>{
     expect(request.body).toContain('line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=599');
     expect(new URLSearchParams(request.body).get('client_reference_id')).toBe(session.transactionId);
     expect(new URLSearchParams(request.body).get('metadata[transactionId]')).toBe(session.transactionId);
+    expect(new URLSearchParams(request.body).get('payment_intent_data[metadata][transactionId]')).toBe(session.transactionId);
+    expect(new URLSearchParams(request.body).get('payment_intent_data[metadata][billingCountry]')).toBe('US');
     expect(request.body).toContain('metadata%5BbillingCountry%5D=US');
     const params = new URLSearchParams(request.body);
     const resumeToken = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
@@ -1005,7 +1007,7 @@ describe('Stripe sandbox flow',()=>{
       .mockImplementationOnce(async () => stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
       .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'requires_capture' }))
       .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'canceled' }))
-      .mockImplementationOnce(async () => stripeResponse({ id: 're_fixture_123', status: 'pending' }));
+      .mockImplementationOnce(async () => stripeResponse({ id: 're_fixture_123', status: 'pending', payment_intent: 'pi_fixture_123', amount: 599 }));
     const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
 
     await provider.createPaymentSession({ transactionId: 'tx-capture-1', amountMinor: 599, currency: 'USD', billingCountry: 'US', resumeToken: 'A'.repeat(43) });
@@ -1032,6 +1034,7 @@ describe('Stripe sandbox flow',()=>{
     expect(refund.headers.Authorization).toBe(`Bearer ${stripeEnv.STRIPE_SECRET_KEY}`);
     expect(refund.body).toContain('payment_intent=pi_fixture_123');
     expect(refund.body).toContain('amount=599');
+    expect(refund.body).toContain('metadata%5BtransactionId%5D=tx-refund-1');
     expect(refund.body).not.toContain('{');
   });
 

@@ -77,6 +77,12 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
       },
+      payment_intent_data: {
+        metadata: {
+          transactionId: input.transactionId,
+          billingCountry: input.billingCountry,
+        },
+      },
       line_items: [{ quantity: 1, price_data: {
         currency: 'usd',
         unit_amount: input.amountMinor,
@@ -155,6 +161,9 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
       {},
       input.transactionId + ':void',
     );
+    if (data.id !== input.paymentId) {
+      throw new MobileTopUpError('STRIPE_REQUEST_UNRESOLVED', 'Stripe void response did not match the payment', 502);
+    }
     return data.status === 'canceled' ? 'VOIDED' as const : 'VOID_PENDING' as const;
   }
 
@@ -165,6 +174,9 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
       amount: input.amountMinor,
       metadata: { transactionId: input.transactionId },
     }, input.transactionId + ':refund');
+    if (data.payment_intent !== input.paymentId || data.amount !== input.amountMinor) {
+      throw new MobileTopUpError('STRIPE_REQUEST_UNRESOLVED', 'Stripe refund response did not match the payment', 502);
+    }
     return data.status === 'succeeded' ? 'REFUNDED' as const : 'REFUND_PENDING' as const;
   }
 

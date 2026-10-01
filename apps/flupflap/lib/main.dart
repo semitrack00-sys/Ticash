@@ -211,11 +211,18 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  final email = TextEditingController(), password = TextEditingController();
+  final firstName = TextEditingController(),
+      lastName = TextEditingController(),
+      phone = TextEditingController(),
+      email = TextEditingController(),
+      password = TextEditingController();
   bool registration = false, busy = false, obscure = true;
   String? message;
   @override
   void dispose() {
+    firstName.dispose();
+    lastName.dispose();
+    phone.dispose();
     email.dispose();
     password.dispose();
     super.dispose();
@@ -261,6 +268,29 @@ class _AuthScreenState extends State<AuthScreen> {
                       : 'Sign in to FlupFlap',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
+                if (widget.resetToken == null && registration) ...[
+                  TextField(
+                    controller: firstName,
+                    textCapitalization: TextCapitalization.words,
+                    autofillHints: const [AutofillHints.givenName],
+                    decoration: const InputDecoration(labelText: 'First name'),
+                  ),
+                  TextField(
+                    controller: lastName,
+                    textCapitalization: TextCapitalization.words,
+                    autofillHints: const [AutofillHints.familyName],
+                    decoration: const InputDecoration(labelText: 'Last name'),
+                  ),
+                  TextField(
+                    controller: phone,
+                    keyboardType: TextInputType.phone,
+                    autofillHints: const [AutofillHints.telephoneNumber],
+                    decoration: const InputDecoration(
+                      labelText: 'Phone number',
+                      hintText: '+1 555 123 4567',
+                    ),
+                  ),
+                ],
                 if (widget.resetToken == null)
                   TextField(
                     controller: email,
@@ -302,8 +332,11 @@ class _AuthScreenState extends State<AuthScreen> {
                             if (context.mounted) context.go('/login');
                           } else if (registration) {
                             await widget.session.register(
-                              email.text.trim(),
-                              password.text,
+                              firstName: firstName.text.trim(),
+                              lastName: lastName.text.trim(),
+                              phone: phone.text.trim().replaceAll(' ', ''),
+                              email: email.text.trim(),
+                              password: password.text,
                             );
                           } else {
                             await widget.session.login(

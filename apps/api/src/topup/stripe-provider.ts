@@ -77,6 +77,12 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
       },
+      payment_intent_data: {
+        metadata: {
+          transactionId: input.transactionId,
+          billingCountry: input.billingCountry,
+        },
+      },
       line_items: [{ quantity: 1, price_data: {
         currency: 'usd',
         unit_amount: input.amountMinor,
@@ -149,17 +155,29 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
   }
 
   async void(input: { paymentId: string; transactionId: string }) {
-    await this.request(`/v1/payment_intents/${encodeURIComponent(input.paymentId)}/cancel`, 'POST', {}, input.transactionId + ':void');
-    return 'VOID_PENDING' as const;
+    const { data } = await this.request(
+      `/v1/payment_intents/${encodeURIComponent(input.paymentId)}/cancel`,
+      'POST',
+      {},
+      input.transactionId + ':void',
+    );
+    if (data.id !== input.paymentId) {
+      throw new MobileTopUpError('STRIPE_REQUEST_UNRESOLVED', 'Stripe void response needs reconciliation', 502);
+    }
+    return data.status === 'canceled' ? 'VOIDED' as const : 'VOID_PENDING' as const;
   }
 
   async refund(input: { paymentId: string; transactionId: string; amountMinor: number }) {
     this.assertMinorAmount(input.amountMinor);
-    await this.request('/v1/refunds', 'POST', {
+    const { data } = await this.request('/v1/refunds', 'POST', {
       payment_intent: input.paymentId,
       amount: input.amountMinor,
+      metadata: { transactionId: input.transactionId },
     }, input.transactionId + ':refund');
-    return 'REFUND_PENDING' as const;
+    if (data.payment_intent !== input.paymentId || data.amount !== input.amountMinor) {
+      throw new MobileTopUpError('STRIPE_REQUEST_UNRESOLVED', 'Stripe refund response needs reconciliation', 502);
+    }
+    return data.status === 'succeeded' ? 'REFUNDED' as const : 'REFUND_PENDING' as const;
   }
 
   private assertMinorAmount(value: number) {

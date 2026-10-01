@@ -386,6 +386,7 @@ describe('sandbox payment foundation',()=>{
   });
 });
 
+
 describe('payment routes and guest restrictions',()=>{
   it('requires authentication and reports honest permanent/guest method availability',async()=>{
     const f=fixture();const app=createApp({mobileTopUpConfig:config,mobileTopUpProvider:f.provider});
@@ -493,6 +494,78 @@ describe('Stripe sandbox flow',()=>{
 
     return { service, provider, repository, submit, transport, stripeProvider };
   }
+
+  it('refunds legacy Stripe AUTHORIZED records instead of trying to void an automatic-capture payment', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-legacy-authorized-recovery', 'US');
+    const record = (await f.repository.getTransactionById(session.transactionId))!;
+    await f.repository.updateTransaction(record.id, {
+      status: 'FAILED',
+      paymentStatus: 'AUTHORIZED',
+      paymentProvider: 'STRIPE',
+      paymentProviderTransactionId: 'pi_legacy_captured',
+      failureCode: 'TOPUP_REJECTED',
+      failedAt: new Date().toISOString(),
+    });
+
+    const refund = vi.fn(async () => 'REFUNDED' as const);
+    const voidPayment = vi.fn(async () => 'VOIDED' as const);
+    const recovery = new MobileTopUpService(
+      { ...config, paymentMode: 'stripe_sandbox' },
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      vi.fn(async () => {}),
+      undefined,
+      { refund, void: voidPayment } as never,
+    );
+
+    await expect((recovery as unknown as { recoverPayment: (id: string) => Promise<unknown> }).recoverPayment(record.id))
+      .resolves.toMatchObject({ paymentStatus: 'REFUNDED' });
+    expect(refund).toHaveBeenCalledWith({ paymentId: 'pi_legacy_captured', transactionId: record.id, amountMinor: 599 });
+    expect(voidPayment).not.toHaveBeenCalled();
+  });
+
+  it('automatically refunds a failed recharge when Stripe shows a VOID_PENDING payment was already captured', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-recovery-captured', 'US');
+    const record = (await f.repository.getTransactionById(session.transactionId))!;
+    await f.repository.updateTransaction(record.id, {
+      status: 'FAILED',
+      paymentStatus: 'VOID_PENDING',
+      paymentProvider: 'STRIPE',
+      paymentProviderTransactionId: 'pi_captured_fixture',
+      failureCode: 'TOPUP_SUBMISSION_UNKNOWN',
+      failedAt: new Date().toISOString(),
+    });
+
+    const getPayment = vi.fn(async () => ({
+      id: 'pi_captured_fixture',
+      status: 'succeeded',
+      amount: 599,
+      amount_received: 599,
+      currency: 'usd',
+    }));
+    const refund = vi.fn(async () => 'REFUNDED' as const);
+    const voidPayment = vi.fn(async () => 'VOIDED' as const);
+    const later = new MobileTopUpService(
+      { ...config, paymentMode: 'stripe_sandbox' },
+      f.provider,
+      new MockMobileTopUpPaymentProvider(),
+      f.repository,
+      vi.fn(async () => {}),
+      () => new Date(Date.now() + 60_000),
+      { getPayment, refund, void: voidPayment } as never,
+    );
+
+    await expect(later.reconcilePaymentRecoveries()).resolves.toMatchObject({ scanned: 1, resolved: 1, errors: 0 });
+    expect(refund).toHaveBeenCalledWith({ paymentId: 'pi_captured_fixture', transactionId: record.id, amountMinor: 599 });
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect((await f.repository.getTransactionById(record.id))?.paymentStatus).toBe('REFUNDED');
+    expect(f.submit).not.toHaveBeenCalled();
+  });
 
   it.each([true, false])('enables configured Stripe Sandbox CARD for guest=%s while preserving bank restrictions', guest => {
     const f = stripeFixture();
@@ -718,6 +791,8 @@ describe('Stripe sandbox flow',()=>{
     expect(new URLSearchParams(request.body).get('client_reference_id')).toBe(session.transactionId);
     expect(new URLSearchParams(request.body).get('metadata[transactionId]')).toBe(session.transactionId);
     expect(request.body).toContain('metadata%5BbillingCountry%5D=US');
+    expect(new URLSearchParams(request.body).get('payment_intent_data[metadata][transactionId]')).toBe(session.transactionId);
+    expect(new URLSearchParams(request.body).get('payment_intent_data[metadata][billingCountry]')).toBe('US');
     const params = new URLSearchParams(request.body);
     const resumeToken = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
     expect(resumeToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -967,7 +1042,7 @@ describe('Stripe sandbox flow',()=>{
       .mockImplementationOnce(async () => stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' }))
       .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'requires_capture' }))
       .mockImplementationOnce(async () => stripeResponse({ id: 'pi_fixture_123', status: 'canceled' }))
-      .mockImplementationOnce(async () => stripeResponse({ id: 're_fixture_123', status: 'pending' }));
+      .mockImplementationOnce(async () => stripeResponse({ id: 're_fixture_123', status: 'pending', payment_intent: 'pi_fixture_123', amount: 599 }));
     const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
 
     await provider.createPaymentSession({ transactionId: 'tx-capture-1', amountMinor: 599, currency: 'USD', billingCountry: 'US', resumeToken: 'A'.repeat(43) });
@@ -1052,13 +1127,13 @@ describe('Stripe sandbox flow',()=>{
       return { ...f, session, event };
     }
 
-    it.each(['checkout.session.completed', 'checkout.session.async_payment_succeeded'])('%s + paid authorizes once, including duplicate events', async type => {
+    it.each(['checkout.session.completed', 'checkout.session.async_payment_succeeded'])('%s + paid captures once, including duplicate events', async type => {
       const f = await checkout();
       const event = f.event(type);
       await f.service.acceptVerifiedPaymentEvent(event);
       await f.service.acceptVerifiedPaymentEvent(event);
       await f.service.acceptVerifiedPaymentEvent(f.event(type, {}, 'evt_binding_second_delivery'));
-      expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe('AUTHORIZED');
+      expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe('CAPTURED');
       expect(f.submit).toHaveBeenCalledTimes(1);
     });
 
@@ -1150,12 +1225,14 @@ describe('Stripe sandbox flow',()=>{
       expect(f.submit).not.toHaveBeenCalled();
     });
 
-    it('does not let a standalone PaymentIntent success bypass the stored Checkout Session binding', async () => {
+    it('accepts a server-bound PaymentIntent success and still fulfills only once', async () => {
       const f = await checkout();
-      const intent = f.event('payment_intent.succeeded', { id: 'pi_binding', amount_received: 599 });
-      await expect(f.service.acceptVerifiedPaymentEvent(intent)).rejects.toMatchObject({ code: 'PAYMENT_NOT_FOUND' });
+      const intent = f.event('payment_intent.succeeded', { id: 'pi_binding', amount: 599, amount_received: 599 });
+      await f.service.acceptVerifiedPaymentEvent(intent);
+      await f.service.acceptVerifiedPaymentEvent(intent);
+      expect((await f.repository.getTransactionById(f.session.transactionId))?.paymentStatus).toBe('CAPTURED');
+      expect(f.submit).toHaveBeenCalledTimes(1);
       expect(() => f.event('payment_intent.succeeded')).toThrow(); // A cs_ ID is not a PaymentIntent.
-      expect(f.submit).not.toHaveBeenCalled();
     });
   });
 

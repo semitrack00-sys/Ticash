@@ -793,7 +793,9 @@ export class MobileTopUpService {
       if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
       this.assertTransactionEnvironment(record);
       if (!['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return record;
-      refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');
+      refund = record.paymentStatus === 'CAPTURED' ||
+        (record.paymentProvider === 'STRIPE' && record.paymentStatus === 'AUTHORIZED') ||
+        (providerReversed && record.paymentProvider === 'MOCK');
       pending = refund ? 'REFUND_PENDING' : 'VOID_PENDING';
     } while (!await this.repository.transitionPayment(id, [record.paymentStatus], {
       paymentStatus: pending, paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
@@ -828,7 +830,8 @@ export class MobileTopUpService {
 
     const record = await this.repository.getTransactionById(event.transactionId);
     const hostedProvider = record?.paymentProvider === 'STRIPE';
-    if (!record || !hostedProvider || !record.paymentSessionId || record.paymentSessionId !== event.checkoutSessionId) {
+    if (!record || !hostedProvider || !record.paymentSessionId ||
+        (event.checkoutSessionId !== undefined && record.paymentSessionId !== event.checkoutSessionId)) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
     const expectedEnvironment = this.runtimeEnvironment();
@@ -852,14 +855,26 @@ export class MobileTopUpService {
       return;
     }
 
+    if (event.type === 'payment_intent.canceled' && record.paymentStatus === 'VOID_PENDING') {
+      if (await this.repository.transitionPayment(record.id, ['VOID_PENDING'], {
+        paymentStatus: 'VOIDED',
+        paymentProviderTransactionId: event.paymentId,
+        paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+      })) {
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_VOIDED', 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
+      }
+      await this.repository.completePaymentEvent(event.eventId);
+      return;
+    }
+
     const transitionMap = {
-      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
-      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'CAPTURED' },
+      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'CAPTURED' },
       'checkout.session.async_payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'checkout.session.expired': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'CAPTURED' },
       'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
+      'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'FAILED' },
       'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
       'payment_intent.requires_action': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
       'payment_intent.incomplete': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
@@ -873,7 +888,7 @@ export class MobileTopUpService {
       ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
     });
     if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
-    if (transition.to === 'AUTHORIZED') await this.fulfillPaidRecharge(record.id);
+    if (transition.to === 'CAPTURED') await this.fulfillPaidRecharge(record.id);
     await this.repository.completePaymentEvent(event.eventId);
   }
 
@@ -940,6 +955,104 @@ export class MobileTopUpService {
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     return refresh ? this.refreshTransaction(record) : record;
+  }
+
+  private async reconcileStripePaymentRecovery(record: MobileTopUpTransactionRecord) {
+    if (record.paymentProvider !== 'STRIPE' || !this.stripeProvider) return record;
+    const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
+    if (!paymentId) {
+      return this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED' });
+    }
+
+    this.assertTransactionEnvironment(record);
+    const snapshot = await this.stripeProvider.getPayment(paymentId);
+    const expectedAmount = usdMinorUnits(record.totalChargeUsd);
+    if (snapshot.id !== paymentId || snapshot.currency !== 'usd' || snapshot.amount !== expectedAmount) {
+      throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Stripe payment recovery did not match the recharge', 409);
+    }
+
+    if (record.paymentStatus === 'VOID_PENDING') {
+      if (snapshot.status === 'canceled') {
+        await this.repository.transitionPayment(record.id, ['VOID_PENDING'], {
+          paymentStatus: 'VOIDED',
+          paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+        });
+        return (await this.repository.getTransactionById(record.id))!;
+      }
+
+      if (snapshot.status === 'succeeded') {
+        if (await this.repository.transitionPayment(record.id, ['VOID_PENDING'], {
+          paymentStatus: 'REFUND_PENDING',
+          paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
+        })) {
+          const result = await this.stripeProvider.refund?.({
+            paymentId,
+            transactionId: record.id,
+            amountMinor: expectedAmount,
+          });
+          if (result === 'REFUNDED') {
+            await this.repository.transitionPayment(record.id, ['REFUND_PENDING'], {
+              paymentStatus: 'REFUNDED',
+              paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+            });
+          }
+        }
+        return (await this.repository.getTransactionById(record.id))!;
+      }
+
+      const result = await this.stripeProvider.void?.({ paymentId, transactionId: record.id });
+      if (result === 'VOIDED') {
+        await this.repository.transitionPayment(record.id, ['VOID_PENDING'], {
+          paymentStatus: 'VOIDED',
+          paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+        });
+      } else {
+        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED' });
+      }
+      return (await this.repository.getTransactionById(record.id))!;
+    }
+
+    if (record.paymentStatus === 'REFUND_PENDING') {
+      const result = await this.stripeProvider.refund?.({
+        paymentId,
+        transactionId: record.id,
+        amountMinor: expectedAmount,
+      });
+      if (result === 'REFUNDED') {
+        await this.repository.transitionPayment(record.id, ['REFUND_PENDING'], {
+          paymentStatus: 'REFUNDED',
+          paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+        });
+      } else {
+        await this.repository.updateTransaction(record.id, { paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED' });
+      }
+    }
+
+    return (await this.repository.getTransactionById(record.id))!;
+  }
+
+  async reconcilePaymentRecoveries(limit = 25) {
+    this.assertEnabled();
+    const staleBefore = new Date(this.clock().getTime() - 15_000).toISOString();
+    const candidates = await this.repository.listPaymentRecoveryCandidates(limit, staleBefore);
+    let resolved = 0;
+    let pending = 0;
+    let errors = 0;
+
+    for (const record of candidates) {
+      try {
+        const updated = await this.reconcileStripePaymentRecovery(record);
+        if (['VOIDED', 'REFUNDED'].includes(updated.paymentStatus)) resolved += 1;
+        else pending += 1;
+      } catch (error) {
+        errors += 1;
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_AUTOMATIC_RECONCILIATION_FAILED', 'MobileTopUpTransaction', record.id, {
+          code: error instanceof MobileTopUpError ? error.code : 'UNEXPECTED_ERROR',
+        });
+      }
+    }
+
+    return { scanned: candidates.length, resolved, pending, errors };
   }
 
   async reconcilePendingTransactions(limit = 25) {

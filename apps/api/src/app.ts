@@ -1007,9 +1007,12 @@ export function createApp(options: CreateAppOptions = {}) {
       if (topUpReconciliationRunning) return;
       topUpReconciliationRunning = true;
       try {
-        const result = await mobileTopUpService.reconcilePendingTransactions(25);
-        if (result.scanned > 0) {
-          console.info('Mobile top-up automatic reconciliation', result);
+        const [topUps, payments] = await Promise.all([
+          mobileTopUpService.reconcilePendingTransactions(25),
+          mobileTopUpService.reconcilePaymentRecoveries(25),
+        ]);
+        if (topUps.scanned > 0 || payments.scanned > 0) {
+          console.info('Mobile top-up automatic reconciliation', { topUps, payments });
         }
       } catch (error) {
         console.warn('Mobile top-up automatic reconciliation failed', {

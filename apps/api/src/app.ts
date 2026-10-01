@@ -1071,7 +1071,16 @@ export function createApp(options: CreateAppOptions = {}) {
     optionsSuccessStatus: 204,
   }));
   app.use(express.json({ limit: '128kb' }));
-  app.use('/api', rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8' }));
+  // Health probes are intentionally excluded from the general client rate limiter.
+  // They are read-only, cheap, and are used by Render plus capacity/availability checks.
+  // Keeping them behind the shared per-IP limiter makes many legitimate probes from a
+  // single NAT/CI source look like abusive client traffic and produces false 429s.
+  app.use('/api', rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: 'draft-8',
+    skip: (req) => req.path === '/health' || req.path === '/v1/health',
+  }));
   const authenticationLimiter = rateLimit({
     windowMs: 15 * 60_000,
     limit: 20,

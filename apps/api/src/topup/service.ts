@@ -794,7 +794,32 @@ export class MobileTopUpService {
       if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
       this.assertTransactionEnvironment(record);
       if (!['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return record;
-      refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');
+      if (record.paymentProvider === 'STRIPE' && this.stripeProvider) {
+        const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
+        if (!paymentId) return record;
+        try {
+          const payment = await this.stripeProvider.getPayment(paymentId);
+          if (payment.id !== paymentId || payment.currency !== 'usd' ||
+              Number(payment.amount) !== usdMinorUnits(record.totalChargeUsd)) {
+            throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Stripe payment reconciliation returned mismatched data', 502);
+          }
+          if (payment.status === 'canceled') {
+            await this.repository.transitionPayment(id, [record.paymentStatus], {
+              paymentStatus: 'VOIDED', paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+            });
+            await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_VOIDED', 'MobileTopUpTransaction', id);
+            return (await this.repository.getTransactionById(id))!;
+          }
+          refund = payment.status === 'succeeded' ||
+            Number(payment.amount_received ?? 0) >= usdMinorUnits(record.totalChargeUsd);
+        } catch {
+          // Unknown Stripe state stays recoverable. The pending worker re-checks
+          // Stripe before repeating an idempotent cancel/refund request.
+          refund = record.paymentStatus === 'CAPTURED';
+        }
+      } else {
+        refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');
+      }
       pending = refund ? 'REFUND_PENDING' : 'VOID_PENDING';
     } while (!await this.repository.transitionPayment(id, [record.paymentStatus], {
       paymentStatus: pending, paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
@@ -854,11 +879,11 @@ export class MobileTopUpService {
     }
 
     const transitionMap = {
-      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
-      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED'], to: 'CAPTURED' },
+      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED'], to: 'CAPTURED' },
       'checkout.session.async_payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'checkout.session.expired': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED'], to: 'AUTHORIZED' },
+      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED'], to: 'CAPTURED' },
       'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
@@ -874,7 +899,7 @@ export class MobileTopUpService {
       ...(transition.to === 'FAILED' ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() } : {}),
     });
     if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
-    if (transition.to === 'AUTHORIZED') await this.fulfillPaidRecharge(record.id);
+    if (transition.to === 'CAPTURED') await this.fulfillPaidRecharge(record.id);
     await this.repository.completePaymentEvent(event.eventId);
   }
 
@@ -915,9 +940,79 @@ export class MobileTopUpService {
         ? this.stripeProvider
         : undefined;
     const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
-    if (!paymentId || !recovery?.getRecoveryStatus) return record;
+    if (!paymentId || !recovery) return record;
 
-    const kind = record.paymentStatus === 'REFUND_PENDING' ? 'REFUND' as const : 'VOID' as const;
+    // Stripe Checkout uses automatic capture. A legacy record may say
+    // VOID_PENDING even though Stripe already captured the PaymentIntent.
+    // Re-read Stripe before deciding which recovery operation is safe.
+    if (record.paymentProvider === 'STRIPE' && this.stripeProvider) {
+      try {
+        const payment = await this.stripeProvider.getPayment(paymentId);
+        if (payment.id !== paymentId || payment.currency !== 'usd' ||
+            Number(payment.amount) !== usdMinorUnits(record.totalChargeUsd)) {
+          throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Stripe payment reconciliation returned mismatched data', 502);
+        }
+        const captured = payment.status === 'succeeded' ||
+          Number(payment.amount_received ?? 0) >= usdMinorUnits(record.totalChargeUsd);
+
+        if (payment.status === 'canceled') {
+          if (await this.repository.transitionPayment(record.id, [record.paymentStatus], {
+            paymentStatus: 'VOIDED',
+            paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+          })) {
+            await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_VOIDED', 'MobileTopUpTransaction', record.id);
+          }
+          return (await this.repository.getTransactionById(record.id))!;
+        }
+
+        if (captured && record.paymentStatus === 'VOID_PENDING') {
+          await this.repository.transitionPayment(record.id, ['VOID_PENDING'], {
+            paymentStatus: 'REFUND_PENDING',
+            paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',
+          });
+          await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_REFUND_PENDING', 'MobileTopUpTransaction', record.id, {
+            correctedFrom: 'VOID_PENDING',
+            stripeStatus: String(payment.status),
+          });
+          try {
+            const status = await this.stripeProvider.refund?.({
+              paymentId,
+              transactionId: record.id,
+              amountMinor: usdMinorUnits(record.totalChargeUsd),
+            });
+            if (status === 'REFUNDED') {
+              await this.repository.transitionPayment(record.id, ['REFUND_PENDING'], {
+                paymentStatus: 'REFUNDED',
+                paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+              });
+              await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_REFUNDED', 'MobileTopUpTransaction', record.id);
+            }
+          } catch { /* Same idempotency key is retried on a later reconciliation pass. */ }
+          return (await this.repository.getTransactionById(record.id))!;
+        }
+
+        if (!captured && record.paymentStatus === 'VOID_PENDING') {
+          try {
+            const status = await this.stripeProvider.void?.({ paymentId, transactionId: record.id });
+            if (status === 'VOIDED') {
+              await this.repository.transitionPayment(record.id, ['VOID_PENDING'], {
+                paymentStatus: 'VOIDED',
+                paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+              });
+              await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_VOIDED', 'MobileTopUpTransaction', record.id);
+              return (await this.repository.getTransactionById(record.id))!;
+            }
+          } catch { /* Idempotent cancel can be retried safely after another status read. */ }
+        }
+      } catch {
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
+        return (await this.repository.getTransactionById(record.id))!;
+      }
+    }
+
+    if (!recovery.getRecoveryStatus) return record;
+    const current = (await this.repository.getTransactionById(record.id))!;
+    const kind = current.paymentStatus === 'REFUND_PENDING' ? 'REFUND' as const : 'VOID' as const;
     try {
       const status = await recovery.getRecoveryStatus({
         paymentId,
@@ -927,12 +1022,22 @@ export class MobileTopUpService {
       });
       const expected = kind === 'REFUND' ? 'REFUNDED' : 'VOIDED';
       if (status === expected) {
-        if (await this.repository.transitionPayment(record.id, [record.paymentStatus], {
+        if (await this.repository.transitionPayment(record.id, [current.paymentStatus], {
           paymentStatus: status,
           paymentRecoveryCode: 'RECOVERY_CONFIRMED',
         })) {
           await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + status, 'MobileTopUpTransaction', record.id);
         }
+      } else if (kind === 'REFUND' && record.paymentProvider === 'STRIPE' && this.stripeProvider) {
+        // If the original refund response was lost, replay the same idempotent
+        // refund request. Stripe will not create a duplicate refund for the same key.
+        try {
+          await this.stripeProvider.refund?.({
+            paymentId,
+            transactionId: record.id,
+            amountMinor: usdMinorUnits(record.totalChargeUsd),
+          });
+        } catch { /* A later pass re-queries before any retry. */ }
       }
     } catch {
       await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);

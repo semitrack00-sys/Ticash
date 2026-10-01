@@ -83,7 +83,7 @@ describe('persistent FlupFlap marketing with migrated PostgreSQL', () => {
       submitTopUp: vi.fn(async () => { throw new Error('Provider submission forbidden'); }), getTopUpStatus: async () => { throw new Error('Provider status request forbidden'); } };
     const transport = vi.fn<typeof fetch>(async (_url, options) => {
       const body = new URLSearchParams(String(options?.body));
-      expect(body.get('line_items[0][price_data][unit_amount]')).toBe('1129');
+      expect(body.get('line_items[0][price_data][unit_amount]')).toBe('1114');
       return new Response(JSON.stringify({ id: 'cs_test_marketing', url: 'https://checkout.stripe.com/c/pay/cs_test_marketing' }), { status: 200 });
     });
     const stripe = new StripeSandboxPaymentProvider(loadStripeConfig({ STRIPE_ENABLED: 'true', STRIPE_ENVIRONMENT: 'sandbox',
@@ -96,9 +96,9 @@ describe('persistent FlupFlap marketing with migrated PostgreSQL', () => {
     const service = new MobileTopUpService(config, provider, new MockMobileTopUpPaymentProvider(), repository, async () => {}, () => new Date(), stripe);
     const owner = flupFlapOwner(customerId);
     const q = await service.createQuote(owner, { countryCode: 'HT', phone: '+50937050210', operatorId: 7, productId: 'reloadly:HT:7:airtime:10.00' });
-    expect(q).toMatchObject({ providerAmount: 10, feeUsd: 1.29, totalChargeUsd: 11.29, deliveredValue: 100, deliveredCurrency: 'HTG' });
+    expect(q).toMatchObject({ providerAmount: 10, feeUsd: 1.14, totalChargeUsd: 11.14, deliveredValue: 100, deliveredCurrency: 'HTG' });
     const result = await service.createPaymentSession(owner, { quoteId: q.id }, 'marketing-key-0001', 'US');
-    expect(result.amountMinor).toBe(1129); expect(transport).toHaveBeenCalledTimes(1); expect(provider.submitTopUp).not.toHaveBeenCalled();
+    expect(result.amountMinor).toBe(1114); expect(transport).toHaveBeenCalledTimes(1); expect(provider.submitTopUp).not.toHaveBeenCalled();
     expect((await prisma.mobileTopUpTransaction.findUniqueOrThrow({ where: { quoteId: q.id } })).providerAmount.toString()).toBe('10');
   });
   it('global caps reject additional redemptions, expired reservations release capacity', async () => {

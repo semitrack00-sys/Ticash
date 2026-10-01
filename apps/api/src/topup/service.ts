@@ -793,7 +793,9 @@ export class MobileTopUpService {
       if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
       this.assertTransactionEnvironment(record);
       if (!['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return record;
-      refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');
+      refund = record.paymentStatus === 'CAPTURED' ||
+        (record.paymentProvider === 'STRIPE' && record.paymentStatus === 'AUTHORIZED') ||
+        (providerReversed && record.paymentProvider === 'MOCK');
       pending = refund ? 'REFUND_PENDING' : 'VOID_PENDING';
     } while (!await this.repository.transitionPayment(id, [record.paymentStatus], {
       paymentStatus: pending, paymentRecoveryCode: 'PAYMENT_RECOVERY_REQUIRED',

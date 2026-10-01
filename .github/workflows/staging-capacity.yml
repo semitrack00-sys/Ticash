@@ -1,0 +1,44 @@
+name: Staging capacity test
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: Maximum staging load level
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, '25', '500', '1000', '2500', '5000', '10000']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-capacity-test
+  cancel-in-progress: false
+
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BASE_URL: https://ticash-api-staging-v2.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify staging target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BASE_URL" = "https://ticash-api-staging-v2.onrender.com"
+          case "$BASE_URL" in *ticash-api.onrender.com*) echo "Production target blocked"; exit 1 ;; esac
+      - name: Smoke test
+        shell: bash
+        run: curl --fail --silent --show-error --retry 3 --retry-delay 2 "$BASE_URL/api/health" >/dev/null
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+      - name: Run selected staging load
+        if: inputs.level != 'smoke'
+        shell: bash
+        env:
+          CAPACITY_LEVEL: ${{ inputs.level }}
+        run: k6 run -e BASE_URL="$BASE_URL" -e CAPACITY_LEVEL="$CAPACITY_LEVEL" load/flupflap-capacity.js

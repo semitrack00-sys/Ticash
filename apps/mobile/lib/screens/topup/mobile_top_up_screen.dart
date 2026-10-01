@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'receiver_value_summary.dart';
 
@@ -31,6 +32,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   MobileTopUpQuote? _quote;
   MobileTopUpTransaction? _receipt;
   String? _receiptLogoUrl;
+  Timer? _receiptRefreshTimer;
   bool _busy = false;
   bool _history = false;
   String? _error;
@@ -60,6 +62,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
 
   @override
   void dispose() {
+    _receiptRefreshTimer?.cancel();
     _countriesSubscription.close();
     _phone.dispose();
     _nickname.dispose();
@@ -73,6 +76,40 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           'Mobile Recharge is temporarily unavailable.';
     }
     return 'Mobile Recharge is temporarily unavailable.';
+  }
+
+  bool _paymentRecoveryPending(MobileTopUpTransaction transaction) =>
+      const {'REFUND_PENDING', 'VOID_PENDING'}.contains(transaction.paymentStatus);
+
+  void _syncReceiptRefreshTimer() {
+    final receipt = _receipt;
+    if (receipt == null || !_paymentRecoveryPending(receipt)) {
+      _receiptRefreshTimer?.cancel();
+      _receiptRefreshTimer = null;
+      return;
+    }
+    _receiptRefreshTimer ??= Timer.periodic(const Duration(seconds: 5), (_) async {
+      final current = _receipt;
+      if (!mounted || current == null || !_paymentRecoveryPending(current)) {
+        _receiptRefreshTimer?.cancel();
+        _receiptRefreshTimer = null;
+        return;
+      }
+      try {
+        final updated = await ref
+            .read(mobileTopUpServiceProvider)
+            .transaction(current.id, refresh: true);
+        if (!mounted) return;
+        setState(() => _receipt = updated);
+        if (!_paymentRecoveryPending(updated)) {
+          _receiptRefreshTimer?.cancel();
+          _receiptRefreshTimer = null;
+          ref.invalidate(mobileTopUpHistoryProvider);
+        }
+      } catch (_) {
+        // Keep the receipt visible; the next interval or manual refresh can retry.
+      }
+    });
   }
 
   Future<void> _run(Future<void> Function() task) async {
@@ -193,12 +230,17 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
         _receiptLogoUrl = logoUrl;
         _quote = null;
       });
+      _syncReceiptRefreshTimer();
     }
   });
 
-  void _reset() => setState(() {
-    _clearRechargeState(clearPhone: true, clearNickname: true);
-  });
+  void _reset() {
+    _receiptRefreshTimer?.cancel();
+    _receiptRefreshTimer = null;
+    setState(() {
+      _clearRechargeState(clearPhone: true, clearNickname: true);
+    });
+  }
 
   void _setCountryCode(String value) => setState(() {
     _countryCode = value;
@@ -345,7 +387,10 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
           final updated = await ref
               .read(mobileTopUpServiceProvider)
               .transaction(_receipt!.id, refresh: true);
-          if (mounted) setState(() => _receipt = updated);
+          if (mounted) {
+            setState(() => _receipt = updated);
+            _syncReceiptRefreshTimer();
+          }
         }),
       );
     }
@@ -914,6 +959,42 @@ class _Receipt extends StatelessWidget {
           textAlign: TextAlign.center,
           style: TextStyle(color: AppTheme.muted),
         ),
+        if (paymentRecoveryPending || recoveryCompleted) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: recoveryCompleted
+                  ? AppTheme.success.withValues(alpha: 0.10)
+                  : AppTheme.gold.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: recoveryCompleted ? AppTheme.success : AppTheme.gold,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  recoveryCompleted ? Icons.check_circle : Icons.hourglass_top,
+                  color: recoveryCompleted ? AppTheme.success : AppTheme.navy,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    refundCompleted
+                        ? 'Refund completed. Your payment provider has confirmed the refund.'
+                        : voidCompleted
+                            ? 'Payment voided. The charge was cancelled before settlement.'
+                            : refundPending
+                                ? 'Refund processing. TiCash is checking the payment provider automatically.'
+                                : 'Payment cancellation processing. TiCash is checking automatically.',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 20),
         Card(
           child: Padding(
@@ -964,7 +1045,7 @@ class _Receipt extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        if (!delivered && transaction.status != MobileTopUpStatus.failed)
+        if (!delivered && transaction.status != MobileTopUpStatus.failed || paymentRecoveryPending)
           OutlinedButton.icon(
             onPressed: onRefresh,
             icon: const Icon(Icons.refresh),

@@ -810,12 +810,22 @@ export class MobileTopUpService {
             await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_VOIDED', 'MobileTopUpTransaction', id);
             return (await this.repository.getTransactionById(id))!;
           }
-          refund = payment.status === 'succeeded' ||
+          const captured = payment.status === 'succeeded' ||
             Number(payment.amount_received ?? 0) >= usdMinorUnits(record.totalChargeUsd);
+          const uncaptured = payment.status === 'requires_capture' ||
+            Number(payment.amount_capturable ?? 0) >= usdMinorUnits(record.totalChargeUsd);
+          if (!captured && !uncaptured) {
+            await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', id, {
+              stripeStatus: typeof payment.status === 'string' ? payment.status : 'UNKNOWN',
+            });
+            return record;
+          }
+          refund = captured;
         } catch {
-          // Unknown Stripe state stays recoverable. The pending worker re-checks
-          // Stripe before repeating an idempotent cancel/refund request.
-          refund = record.paymentStatus === 'CAPTURED';
+          // Fail closed when Stripe's current state is unknown. Never guess
+          // between refund and void from a stale local status.
+          await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', id);
+          return record;
         }
       } else {
         refund = record.paymentStatus === 'CAPTURED' || (providerReversed && record.paymentProvider === 'MOCK');

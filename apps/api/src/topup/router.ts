@@ -61,6 +61,7 @@ export function createMobileTopUpRouter(options: {
   authenticate: RequestHandler;
   requireFundingAllowed: RequestHandler;
   service: MobileTopUpService;
+  quotePresentation?: (userId: string, quoteId: string) => Promise<Record<string, unknown>>;
   isGuest: (userId: string) => Promise<boolean>;
   supportedCountriesPath?: string;
   billingCountryForUser: (userId: string) => Promise<string | undefined>;
@@ -137,7 +138,7 @@ export function createMobileTopUpRouter(options: {
 
   router.post('/quotes', ...protectedRoute, asyncRoute(async (req, res) => {
     const quote = await options.service.createQuote(req.userId!, quoteSchema.parse(req.body));
-    res.status(201).json({ quote });
+    res.status(201).json({ quote: { ...quote, ...await options.quotePresentation?.(req.userId!, quote.id) } });
   }));
 
   router.post('/transactions', ...protectedRoute, asyncRoute(async (req, res) => {
@@ -169,7 +170,8 @@ export function createMobileTopUpRouter(options: {
 
   router.post('/transactions/:id/repeat', ...protectedRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
-    res.status(201).json({ quote: await options.service.repeat(req.userId!, id) });
+    const quote = await options.service.repeat(req.userId!, id);
+    res.status(201).json({ quote: { ...quote, ...await options.quotePresentation?.(req.userId!, quote.id) } });
   }));
 
   return router;

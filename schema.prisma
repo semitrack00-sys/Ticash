@@ -180,6 +180,7 @@ enum MobileTopUpEnvironment {
 }
 
 model User {
+  promotionAudits PromotionAuditEvent[]
   id                  String                    @id @default(uuid())
   email               String                    @unique
   phone               String?                   @unique
@@ -561,6 +562,7 @@ model MobileTopUpRecipient {
 }
 
 model MobileTopUpQuote {
+  promotion PromotionRedemption?
   receiverQuote Json?
   productSnapshot       Json?
   providerProductId     String?
@@ -595,6 +597,7 @@ model MobileTopUpQuote {
 }
 
 model MobileTopUpTransaction {
+  promotionRewards PromoterReward[]
   receiverQuote Json?
   receiverValueConfirmed Boolean @default(false)
   receiverDiscrepancy Boolean @default(false)
@@ -808,6 +811,10 @@ model IdempotencyKey {
 
 // SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
 model FlupFlapCustomer {
+  referralCode ReferralCode?
+  marketingAttribution ReferralAttribution?
+  promoter Promoter?
+  promotionRedemptions PromotionRedemption[]
   authVersion Int @default(0)
   id String @id @default(uuid())
   email String? @unique
@@ -832,6 +839,175 @@ model FlupFlapCustomer {
   quotes MobileTopUpQuote[]
   transactions MobileTopUpTransaction[]
   auditLogs AuditLog[]
+}
+
+enum PromotionCampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  DISABLED
+  EXPIRED
+  REVOKED
+}
+
+enum PromoterRewardStatus {
+  PENDING
+  APPROVED
+  PAYABLE
+  PAID
+  REVERSED
+}
+
+enum CampaignEventType {
+  LANDING_VIEWED
+  SIGNUP_STARTED
+  ACCOUNT_CREATED
+  FIRST_SUCCESSFUL_RECHARGE
+}
+
+enum PromotionRedemptionStatus {
+  RESERVED
+  FULFILLED
+  EXPIRED
+  REVERSED
+}
+
+model ReferralCode {
+  code String @id
+  customerId String @unique
+  createdAt DateTime @default(now())
+  disabledAt DateTime?
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  attributions ReferralAttribution[]
+  visits CampaignVisit[]
+}
+
+model Promoter {
+  id String @id @default(uuid())
+  name String
+  // Optional verified FlupFlap identity for future private portal and self-promo checks.
+  customerId String? @unique
+  disabledAt DateTime?
+  createdAt DateTime @default(now())
+  customer FlupFlapCustomer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  campaigns PromotionCampaign[]
+}
+
+model PromotionCampaign {
+  testMode Boolean @default(true)
+  id String @id @default(uuid())
+  name String
+  promoterId String
+  code String @unique
+  status PromotionCampaignStatus @default(DRAFT)
+  startsAt DateTime
+  endsAt DateTime
+  rules Json
+  version Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  promoter Promoter @relation(fields: [promoterId], references: [id], onDelete: Restrict)
+  attributions ReferralAttribution[]
+  redemptions PromotionRedemption[]
+  visits CampaignVisit[]
+  audits PromotionAuditEvent[]
+  @@index([promoterId, status])
+  @@index([status, startsAt, endsAt])
+}
+
+model CampaignVisit {
+  id String @id @default(uuid())
+  capabilityHash String @unique
+  referralCode String?
+  campaignId String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  referral ReferralCode? @relation(fields: [referralCode], references: [code], onDelete: Restrict)
+  campaign PromotionCampaign? @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  attribution ReferralAttribution?
+  events CampaignEvent[]
+  @@index([campaignId, createdAt])
+  @@index([expiresAt])
+}
+
+model ReferralAttribution {
+  id String @id @default(uuid())
+  customerId String @unique
+  visitId String @unique
+  referralCode String?
+  campaignId String?
+  createdAt DateTime @default(now())
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  visit CampaignVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  referral ReferralCode? @relation(fields: [referralCode], references: [code], onDelete: Restrict)
+  campaign PromotionCampaign? @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  @@index([campaignId, createdAt])
+  @@index([referralCode, createdAt])
+}
+
+model CampaignEvent {
+  id String @id @default(uuid())
+  visitId String
+  type CampaignEventType
+  createdAt DateTime @default(now())
+  visit CampaignVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  @@unique([visitId, type])
+}
+
+model PromotionRedemption {
+  id String @id @default(uuid())
+  quoteId String @unique
+  campaignId String
+  customerId String
+  status PromotionRedemptionStatus @default(RESERVED)
+  campaignVersion Int
+  rulesSnapshot Json
+  originalFeeCents Int
+  benefitCents Int
+  feeCents Int
+  principalCents Int
+  testMode Boolean
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  quote MobileTopUpQuote @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  campaign PromotionCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  rewards PromoterReward[]
+  @@index([campaignId, status, testMode])
+  @@index([customerId, campaignId, testMode])
+}
+
+model PromoterReward {
+  id String @id @default(uuid())
+  redemptionId String @unique
+  transactionId String @unique
+  amountCents Int
+  status PromoterRewardStatus @default(PENDING)
+  testMode Boolean
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  redemption PromotionRedemption @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  transaction MobileTopUpTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  audits PromotionAuditEvent[]
+  @@index([status, testMode])
+}
+
+// Append-only in SQL as well as application code. No tokens, IPs or customer PII.
+model PromotionAuditEvent {
+  id String @id @default(uuid())
+  actorId String?
+  campaignId String?
+  rewardId String?
+  action String
+  reason String
+  snapshot Json
+  createdAt DateTime @default(now())
+  actor User? @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  campaign PromotionCampaign? @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  reward PromoterReward? @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+  @@index([campaignId, createdAt])
+  @@index([rewardId, createdAt])
 }
 model FlupFlapSession {
   authVersion Int @default(0)

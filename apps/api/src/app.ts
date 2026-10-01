@@ -1,4 +1,6 @@
 import { createFlupFlapAdmin } from './flupflap/admin.js';
+import { FlupFlapMarketing, marketingEnabled } from './flupflap/marketing.js';
+import { createMarketingRouter, createMarketingAdminRouter } from './flupflap/marketing-router.js';
 import { createFlupFlapIdentity, loadFlupFlapConfig, type FlupFlapConfig } from './flupflap/auth.js';
 import { FlupFlapIdentityRepository } from './flupflap/repository.js';
 import { flupFlapCustomerId } from './flupflap/owner.js';
@@ -655,6 +657,7 @@ export interface CreateAppOptions {
   passwordResetEmailService?: PasswordResetEmailService;
   flupFlapConfig?: FlupFlapConfig;
   flupFlapRepository?: FlupFlapIdentityRepository;
+  flupFlapMarketing?: FlupFlapMarketing;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -1204,10 +1207,15 @@ export function createApp(options: CreateAppOptions = {}) {
     }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
+  const marketing = options.flupFlapMarketing ?? (databaseEnabled && marketingEnabled() ? new FlupFlapMarketing(prisma) : undefined);
+  app.use('/api/flupflap/marketing', createMarketingRouter({ service: marketing,
+    authenticate: flupFlap.authenticate, requireRechargeAllowed: flupFlap.requireRechargeAllowed }));
+  app.use('/api/admin/flupflap/promotions', createMarketingAdminRouter({ service: marketing, authenticate, permission }));
   app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
     authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,
     service: mobileTopUpService, isGuest: flupFlap.isGuest, billingCountryForUser: flupFlap.billingCountryForUser,
     supportedCountriesPath: '/api/flupflap/mobile-topups/countries',
+    quotePresentation: marketing ? async (owner, id) => marketing.quotePresentation(id, owner.slice('flupflap:'.length)) : undefined,
   }));
 
   app.use('/api/mobile-topups', createMobileTopUpRouter({

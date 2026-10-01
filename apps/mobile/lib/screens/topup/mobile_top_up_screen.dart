@@ -1045,7 +1045,7 @@ class _Receipt extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        if (!delivered && transaction.status != MobileTopUpStatus.failed || paymentRecoveryPending)
+        if ((!delivered && transaction.status != MobileTopUpStatus.failed) || paymentRecoveryPending)
           OutlinedButton.icon(
             onPressed: onRefresh,
             icon: const Icon(Icons.refresh),

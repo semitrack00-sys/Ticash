@@ -1150,6 +1150,54 @@ describe('Stripe sandbox flow',()=>{
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
+  it('reconciles an insufficient-funds Stripe attempt out of pending and permits a later successful retry', async () => {
+    let paid = false;
+    const transport = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const target = String(url);
+      if (target.endsWith('/v1/checkout/sessions') && init?.method === 'POST') {
+        return stripeResponse({ id: 'cs_test_fixture_123', url: 'https://checkout.stripe.com/c/pay/cs_test_fixture_123' });
+      }
+      if (target.includes('/v1/checkout/sessions/cs_test_fixture_123')) {
+        return stripeResponse({
+          id: 'cs_test_fixture_123',
+          status: 'open',
+          payment_status: paid ? 'paid' : 'unpaid',
+          payment_intent: 'pi_declined_fixture',
+        });
+      }
+      if (target.includes('/v1/payment_intents/pi_declined_fixture')) {
+        return stripeResponse({
+          id: 'pi_declined_fixture',
+          status: paid ? 'succeeded' : 'requires_payment_method',
+          amount: 599,
+          amount_received: paid ? 599 : 0,
+          currency: 'usd',
+          metadata: {},
+          ...(paid ? {} : { last_payment_error: { code: 'card_declined', decline_code: 'insufficient_funds' } }),
+        });
+      }
+      throw new Error('Unexpected Stripe fixture request: ' + target);
+    });
+    const f = stripeFixture(transport);
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-insufficient-funds-reconcile', 'US');
+
+    const failed = await f.service.getTransaction('customer', session.transactionId, true);
+    expect(failed).toMatchObject({
+      status: 'FAILED',
+      paymentStatus: 'FAILED',
+      failureCode: 'PAYMENT_DECLINED',
+      paymentProviderTransactionId: 'pi_declined_fixture',
+    });
+    expect(f.submit).not.toHaveBeenCalled();
+
+    paid = true;
+    const recovered = await f.service.getTransaction('customer', session.transactionId, true);
+    expect(recovered.paymentStatus).toBe('CAPTURED');
+    expect(recovered.failureCode).toBe('PAYMENT_RECOVERED');
+    expect(f.submit).toHaveBeenCalledTimes(1);
+  });
+
   it('requires a verified Stripe signature and rejects invalid payloads before fulfillment', async () => {
     const f = stripeFixture();
     const quote = await f.service.createQuote('customer', quoteInput);

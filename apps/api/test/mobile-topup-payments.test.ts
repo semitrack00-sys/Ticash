@@ -124,10 +124,21 @@ describe('sandbox payment foundation',()=>{
     expect(f.audit.mock.calls.flat()).toContain('MOBILE_TOPUP_CANCELLED_BY_CUSTOMER');
     await expect(f.service.cancelTransaction('customer', session.transactionId)).rejects.toMatchObject({ code: 'TOPUP_NOT_CANCELLABLE', statusCode: 409 });
 
+    await f.service.deleteCancelledTransactionFromHistory('customer', session.transactionId);
+    expect(await f.repository.listTransactions('customer')).toHaveLength(0);
+    await expect(f.service.getTransaction('customer', session.transactionId)).rejects.toMatchObject({ code: 'TOPUP_NOT_FOUND', statusCode: 404 });
+    expect(await f.repository.getTransactionById(session.transactionId)).toMatchObject({
+      id: session.transactionId,
+      failureCode: 'CANCELLED_BY_CUSTOMER',
+      customerHiddenAt: expect.any(String),
+    });
+    expect(f.audit.mock.calls.flat()).toContain('MOBILE_TOPUP_HIDDEN_BY_CUSTOMER');
+
     const quote2 = await f.service.createQuote('customer', quoteInput);
     const paid = await f.service.purchase('customer', { quoteId: quote2.id }, 'cancel-paid-001');
     expect(['AUTHORIZED', 'CAPTURED']).toContain(paid.paymentStatus);
     await expect(f.service.cancelTransaction('customer', paid.id)).rejects.toMatchObject({ code: 'TOPUP_NOT_CANCELLABLE', statusCode: 409 });
+    await expect(f.service.deleteCancelledTransactionFromHistory('customer', paid.id)).rejects.toMatchObject({ code: 'TOPUP_NOT_DELETABLE', statusCode: 409 });
   });
 
   it.each(approvedRechargeGrid)('uses the approved TiCash fee grid for $%s recharge', async (amount, fee, total) => {

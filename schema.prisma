@@ -649,6 +649,7 @@ model MobileTopUpTransaction {
   deliveredAt           DateTime?
   failedAt              DateTime?
   refundedAt            DateTime?
+  customerHiddenAt      DateTime?
   user                  User? @relation(fields: [userId], references: [id], onDelete: Restrict)
   recipient             MobileTopUpRecipient?     @relation(fields: [recipientId], references: [id], onDelete: SetNull)
   quote                 MobileTopUpQuote           @relation(fields: [quoteId], references: [id], onDelete: Restrict)
@@ -660,6 +661,7 @@ model MobileTopUpTransaction {
   @@index([paymentStatus, updatedAt])
   @@index([userId, createdAt])
   @@index([status, updatedAt])
+  @@index([flupFlapCustomerId, customerHiddenAt, createdAt])
   flupFlapCustomerId String?
   flupFlapCustomer FlupFlapCustomer? @relation(fields: [flupFlapCustomerId], references: [id], onDelete: Restrict)
   @@index([flupFlapCustomerId, createdAt])

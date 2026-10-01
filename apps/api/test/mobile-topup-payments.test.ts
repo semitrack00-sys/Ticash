@@ -114,6 +114,22 @@ describe('sandbox payment foundation',()=>{
     expect(receipt).toMatchObject({id:session.transactionId,paymentMethod:'CARD',paymentProvider:'MOCK',paymentStatus:'AUTHORIZED',status:'PROCESSING'});
     expect(receipt.paymentSessionId).toBe(session.paymentSession.id);expect(receipt.paymentAuthorizationId).toBeTruthy();expect(f.submit).toHaveBeenCalledTimes(1);
   });
+  it('cancels only an untouched pending recharge and blocks cancellation after authorization', async () => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'cancel-pending-001');
+    const cancelled = await f.service.cancelTransaction('customer', session.transactionId);
+    expect(cancelled).toMatchObject({ status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' });
+    expect(f.submit).not.toHaveBeenCalled();
+    expect(f.audit.mock.calls.flat()).toContain('MOBILE_TOPUP_CANCELLED_BY_CUSTOMER');
+    await expect(f.service.cancelTransaction('customer', session.transactionId)).rejects.toMatchObject({ code: 'TOPUP_NOT_CANCELLABLE', statusCode: 409 });
+
+    const quote2 = await f.service.createQuote('customer', quoteInput);
+    const paid = await f.service.purchase('customer', { quoteId: quote2.id }, 'cancel-paid-001');
+    expect(['AUTHORIZED', 'CAPTURED']).toContain(paid.paymentStatus);
+    await expect(f.service.cancelTransaction('customer', paid.id)).rejects.toMatchObject({ code: 'TOPUP_NOT_CANCELLABLE', statusCode: 409 });
+  });
+
   it.each(approvedRechargeGrid)('uses the approved TiCash fee grid for $%s recharge', async (amount, fee, total) => {
     const f = fixture();
     const quote = await f.service.createQuote('customer', quoteInputFor(amount));

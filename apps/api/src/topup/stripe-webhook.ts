@@ -26,7 +26,7 @@ export interface VerifiedStripeEvent {
   environment: MobileTopUpRuntimeEnvironment;
   transactionId: string;
   paymentId: string;
-  checkoutSessionId: string;
+  checkoutSessionId?: string;
   paymentIntentId?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   payloadHash: string;
@@ -117,7 +117,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
     type: parsed.data.type as StripeEventType,
     transactionId,
     paymentId: paymentIntentId ?? object.id,
-    checkoutSessionId: object.id,
+    ...(isCheckoutSession ? { checkoutSessionId: object.id } : {}),
     ...(paymentIntentId ? { paymentIntentId } : {}),
     ...(isCheckoutSession ? { paymentStatus: object.payment_status } : {}),
     amountMinor,

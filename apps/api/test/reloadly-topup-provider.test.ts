@@ -242,6 +242,31 @@ describe('Reloadly Sandbox top-up provider', () => {
     expect(body.client_secret).toBeUndefined();
   });
 
+  it('recovers an ambiguous submission by its unique custom identifier', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json({
+        content: [{
+          transactionId: 99123,
+          status: 'SUCCESSFUL',
+          customIdentifier: 'ticash-topup-recover-me',
+          requestedAmount: 5,
+          requestedAmountCurrencyCode: 'USD',
+          deliveredAmount: 5,
+          deliveredAmountCurrencyCode: 'USD',
+        }],
+      }));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.findTopUpByCustomIdentifier('ticash-topup-recover-me')).resolves.toMatchObject({
+      transactionId: '99123',
+      status: 'SUCCESSFUL',
+      requestedAmount: 5,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/topups/reports/transactions?');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('customIdentifier=ticash-topup-recover-me');
+  });
+
   it('accepts the current Reloadly status response transaction field', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))

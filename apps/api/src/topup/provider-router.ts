@@ -154,4 +154,12 @@ export class GlobalRechargeProviderRouter implements MobileTopUpProvider {
     if (result.transactionId !== id) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Provider returned a different transaction', 502);
     return { ...result, transactionId: encodeTransactionReference(provider, result.transactionId) };
   }
+
+  async findTopUpByCustomIdentifier(customIdentifier: string, provider?: MobileTopUpProviderName) {
+    if (!provider) throw new MobileTopUpError('TOPUP_PROVIDER_MISMATCH', 'Recharge provider is required for reconciliation', 502);
+    const owner = this.owning(provider);
+    if (!owner.findTopUpByCustomIdentifier) return undefined;
+    const result = await owner.findTopUpByCustomIdentifier(customIdentifier);
+    return result ? { ...result, transactionId: encodeTransactionReference(provider, result.transactionId) } : undefined;
+  }
 }

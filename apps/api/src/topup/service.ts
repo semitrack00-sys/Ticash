@@ -828,7 +828,8 @@ export class MobileTopUpService {
 
     const record = await this.repository.getTransactionById(event.transactionId);
     const hostedProvider = record?.paymentProvider === 'STRIPE';
-    if (!record || !hostedProvider || !record.paymentSessionId || record.paymentSessionId !== event.checkoutSessionId) {
+    if (!record || !hostedProvider || !record.paymentSessionId ||
+        (event.checkoutSessionId !== undefined && record.paymentSessionId !== event.checkoutSessionId)) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
     const expectedEnvironment = this.runtimeEnvironment();

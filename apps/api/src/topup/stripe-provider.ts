@@ -127,6 +127,29 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return session;
   }
 
+  async getHostedCheckoutPaymentState(paymentSessionId: string) {
+    if (!this.checkoutSessionPattern().test(paymentSessionId)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);
+    }
+    const { data } = await this.request(`/v1/checkout/sessions/${encodeURIComponent(paymentSessionId)}`);
+    if (data.id !== paymentSessionId) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe payment session does not match the reservation', 502);
+    }
+    const status = typeof data.status === 'string' ? data.status : undefined;
+    const paymentStatus = typeof data.payment_status === 'string' ? data.payment_status : undefined;
+    const paymentIntentId = typeof data.payment_intent === 'string' ? data.payment_intent : undefined;
+    if (status && !['open', 'complete', 'expired'].includes(status)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid checkout status', 502);
+    }
+    if (paymentStatus && !['paid', 'unpaid', 'no_payment_required'].includes(paymentStatus)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid checkout payment status', 502);
+    }
+    if (paymentIntentId && !/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Stripe returned an invalid payment-intent binding', 502);
+    }
+    return { id: paymentSessionId, status, paymentStatus, paymentIntentId };
+  }
+
   async expireHostedCheckoutSession(paymentSessionId: string, transactionId: string) {
     if (!this.checkoutSessionPattern().test(paymentSessionId)) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);

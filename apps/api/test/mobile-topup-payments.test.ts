@@ -494,6 +494,44 @@ describe('Stripe sandbox flow',()=>{
     return { service, provider, repository, submit, transport, stripeProvider };
   }
 
+  it('confirms Stripe refund immediately when Stripe returns succeeded', async () => {
+    const transport = vi.fn(async () => stripeResponse({
+      id: 're_fixture_123',
+      status: 'succeeded',
+      amount: 599,
+      payment_intent: 'pi_fixture_123',
+      metadata: { transactionId: 'transaction-fixture' },
+    }));
+    const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
+    await expect(provider.refund({
+      paymentId: 'pi_fixture_123',
+      transactionId: 'transaction-fixture',
+      amountMinor: 599,
+    })).resolves.toBe('REFUNDED');
+    const payload = new URLSearchParams(transportRequest(transport).body);
+    expect(payload.get('metadata[transactionId]')).toBe('transaction-fixture');
+  });
+
+  it('reconciles a pending Stripe refund from the refunds API without resubmitting it', async () => {
+    const transport = vi.fn(async () => stripeResponse({
+      object: 'list',
+      data: [{
+        id: 're_fixture_123',
+        status: 'succeeded',
+        amount: 599,
+        metadata: { transactionId: 'transaction-fixture' },
+      }],
+    }));
+    const provider = new StripeSandboxPaymentProvider(loadStripeConfig(stripeEnv), transport);
+    await expect(provider.getRecoveryStatus({
+      paymentId: 'pi_fixture_123',
+      transactionId: 'transaction-fixture',
+      kind: 'REFUND',
+      amountMinor: 599,
+    })).resolves.toBe('REFUNDED');
+    expect(transportRequest(transport).url).toContain('/v1/refunds?payment_intent=pi_fixture_123');
+  });
+
   it.each([true, false])('enables configured Stripe Sandbox CARD for guest=%s while preserving bank restrictions', guest => {
     const f = stripeFixture();
     const methods = f.service.paymentMethods(guest).methods;

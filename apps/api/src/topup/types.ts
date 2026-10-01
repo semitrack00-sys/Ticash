@@ -69,6 +69,7 @@ export interface MobileTopUpPaymentCapture {
 export interface MobileTopUpPaymentRecovery {
   void?(input: { paymentId: string; transactionId: string }): Promise<'VOIDED' | 'VOID_PENDING'>;
   refund?(input: { paymentId: string; transactionId: string; amountMinor: number }): Promise<'REFUNDED' | 'REFUND_PENDING'>;
+  getRecoveryStatus?(input: { paymentId: string; transactionId: string; kind: 'VOID' | 'REFUND'; amountMinor?: number }): Promise<'VOIDED' | 'VOID_PENDING' | 'REFUNDED' | 'REFUND_PENDING'>;
 }
 
 export interface MobileTopUpConfig {

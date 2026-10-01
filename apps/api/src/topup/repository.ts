@@ -175,8 +175,11 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   async listReconciliationCandidates(limit: number, staleBefore: string) {
     return [...transactions.values()]
       .filter((item) =>
-        item.status === 'PROCESSING' &&
-        ['AUTHORIZED', 'CAPTURED'].includes(item.paymentStatus) &&
+        (
+          (item.status === 'PROCESSING' &&
+            ['AUTHORIZED', 'CAPTURED'].includes(item.paymentStatus)) ||
+          ['REFUND_PENDING', 'VOID_PENDING'].includes(item.paymentStatus)
+        ) &&
         item.updatedAt <= staleBefore)
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
       .slice(0, Math.max(0, limit));
@@ -515,8 +518,10 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   async listReconciliationCandidates(limit: number, staleBefore: string) {
     const records = await this.prisma.mobileTopUpTransaction.findMany({
       where: {
-        status: 'PROCESSING',
-        paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] },
+        OR: [
+          { status: 'PROCESSING', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
+          { paymentStatus: { in: ['REFUND_PENDING', 'VOID_PENDING'] } },
+        ],
         updatedAt: { lte: new Date(staleBefore) },
       },
       orderBy: { updatedAt: 'asc' },

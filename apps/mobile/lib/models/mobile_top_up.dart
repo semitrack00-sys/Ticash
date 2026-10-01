@@ -354,6 +354,7 @@ class MobileTopUpTransaction {
     required this.feeUsd,
     required this.totalChargeUsd,
     required this.status,
+    required this.paymentStatus,
     required this.testMode,
     required this.createdAt,
     this.deliveredValue,
@@ -375,6 +376,7 @@ class MobileTopUpTransaction {
   final double feeUsd;
   final double totalChargeUsd;
   final MobileTopUpStatus status;
+  final String paymentStatus;
   final bool testMode;
   final DateTime createdAt;
   final String? providerTransactionId;
@@ -404,6 +406,7 @@ class MobileTopUpTransaction {
           (item) => item.name == (json['status'] as String).toLowerCase(),
           orElse: () => MobileTopUpStatus.pending,
         ),
+        paymentStatus: (json['paymentStatus'] as String? ?? 'PENDING').toUpperCase(),
         testMode: json['testMode'] as bool? ?? true,
         createdAt: DateTime.parse(json['createdAt'] as String),
         receiverQuote: json['receiverQuote'] == null

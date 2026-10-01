@@ -9,6 +9,7 @@ import type {
   MobileTopUpCheckoutResumeDto,
   MobileTopUpDestination,
   MobileTopUpPaymentProvider,
+  MobileTopUpPaymentRecovery,
   MobileTopUpProvider,
   MobileTopUpProviderName,
   MobileTopUpRuntimeEnvironment,
@@ -801,7 +802,7 @@ export class MobileTopUpService {
     this.assertTransactionEnvironment(record);
     await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
     // No implicit fallback from a hosted provider to a mock refund.
-    const recovery = record.paymentProvider === 'MOCK'
+    const recovery: MobileTopUpPaymentRecovery | undefined = record.paymentProvider === 'MOCK'
       ? this.paymentProvider
       : record.paymentProvider === 'STRIPE'
         ? this.stripeProvider
@@ -904,7 +905,45 @@ export class MobileTopUpService {
     return updated;
   }
 
+  private async reconcilePaymentRecovery(record: MobileTopUpTransactionRecord) {
+    if (!['REFUND_PENDING', 'VOID_PENDING'].includes(record.paymentStatus)) return record;
+    this.assertTransactionEnvironment(record);
+
+    const recovery = record.paymentProvider === 'MOCK'
+      ? this.paymentProvider
+      : record.paymentProvider === 'STRIPE'
+        ? this.stripeProvider
+        : undefined;
+    const paymentId = record.paymentProviderTransactionId ?? record.paymentAuthorizationId;
+    if (!paymentId || !recovery?.getRecoveryStatus) return record;
+
+    const kind = record.paymentStatus === 'REFUND_PENDING' ? 'REFUND' as const : 'VOID' as const;
+    try {
+      const status = await recovery.getRecoveryStatus({
+        paymentId,
+        transactionId: record.id,
+        kind,
+        ...(kind === 'REFUND' ? { amountMinor: usdMinorUnits(record.totalChargeUsd) } : {}),
+      });
+      const expected = kind === 'REFUND' ? 'REFUNDED' : 'VOIDED';
+      if (status === expected) {
+        if (await this.repository.transitionPayment(record.id, [record.paymentStatus], {
+          paymentStatus: status,
+          paymentRecoveryCode: 'RECOVERY_CONFIRMED',
+        })) {
+          await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + status, 'MobileTopUpTransaction', record.id);
+        }
+      }
+    } catch {
+      await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
+    }
+    return (await this.repository.getTransactionById(record.id))!;
+  }
+
   private async refreshTransaction(record: MobileTopUpTransactionRecord) {
+    if (['REFUND_PENDING', 'VOID_PENDING'].includes(record.paymentStatus)) {
+      return this.reconcilePaymentRecovery(record);
+    }
     // DELIVERED remains refreshable: providers can later reverse/refund a top-up,
     // and a later status response can supply authoritative delivered-value data
     // that was missing from the initial delivery response.
@@ -953,7 +992,11 @@ export class MobileTopUpService {
     for (const record of candidates) {
       try {
         const updated = await this.refreshTransaction(record);
-        if (['DELIVERED', 'FAILED', 'REFUNDED'].includes(updated.status)) resolved += 1;
+        if (
+          ['REFUNDED', 'VOIDED'].includes(updated.paymentStatus) ||
+          (['DELIVERED', 'FAILED', 'REFUNDED'].includes(updated.status) &&
+            !['REFUND_PENDING', 'VOID_PENDING'].includes(updated.paymentStatus))
+        ) resolved += 1;
         else pending += 1;
       } catch (error) {
         errors += 1;

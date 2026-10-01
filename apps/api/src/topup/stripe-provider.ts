@@ -149,16 +149,50 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
   }
 
   async void(input: { paymentId: string; transactionId: string }) {
-    await this.request(`/v1/payment_intents/${encodeURIComponent(input.paymentId)}/cancel`, 'POST', {}, input.transactionId + ':void');
-    return 'VOID_PENDING' as const;
+    const { data } = await this.request(
+      `/v1/payment_intents/${encodeURIComponent(input.paymentId)}/cancel`,
+      'POST',
+      {},
+      input.transactionId + ':void',
+    );
+    return data.status === 'canceled' ? 'VOIDED' as const : 'VOID_PENDING' as const;
   }
 
   async refund(input: { paymentId: string; transactionId: string; amountMinor: number }) {
     this.assertMinorAmount(input.amountMinor);
-    await this.request('/v1/refunds', 'POST', {
+    const { data } = await this.request('/v1/refunds', 'POST', {
       payment_intent: input.paymentId,
       amount: input.amountMinor,
+      metadata: { transactionId: input.transactionId },
     }, input.transactionId + ':refund');
+    return data.status === 'succeeded' ? 'REFUNDED' as const : 'REFUND_PENDING' as const;
+  }
+
+  async getRecoveryStatus(input: {
+    paymentId: string;
+    transactionId: string;
+    kind: 'VOID' | 'REFUND';
+    amountMinor?: number;
+  }) {
+    if (input.kind === 'VOID') {
+      const { data } = await this.request(`/v1/payment_intents/${encodeURIComponent(input.paymentId)}`);
+      return data.status === 'canceled' ? 'VOIDED' as const : 'VOID_PENDING' as const;
+    }
+
+    this.assertMinorAmount(input.amountMinor ?? 0);
+    const { data } = await this.request(
+      `/v1/refunds?payment_intent=${encodeURIComponent(input.paymentId)}&limit=10`,
+    );
+    const rows = Array.isArray(data.data) ? data.data : [];
+    const matching = rows.filter((row): row is Record<string, unknown> => {
+      if (!row || typeof row !== 'object') return false;
+      const metadata = row.metadata;
+      const transactionMatches =
+        metadata && typeof metadata === 'object' &&
+        (metadata as Record<string, unknown>).transactionId === input.transactionId;
+      return transactionMatches || Number(row.amount) === input.amountMinor;
+    });
+    if (matching.some((row) => row.status === 'succeeded')) return 'REFUNDED' as const;
     return 'REFUND_PENDING' as const;
   }
 

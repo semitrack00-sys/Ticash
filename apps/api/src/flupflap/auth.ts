@@ -19,13 +19,14 @@ export function loadFlupFlapConfig(env: NodeJS.ProcessEnv = process.env): FlupFl
   return { enabled, accessSecret: env.FLUPFLAP_ACCESS_SECRET, resetUrl: env.FLUPFLAP_PASSWORD_RESET_URL_BASE };
 }
 export function publicFlupFlapCustomer(c: FlupFlapCustomer) {
-  return { id: c.id, domain: 'FLUPFLAP', email: c.email, countryCode: c.countryCode, guest: Boolean(c.guestExpiresAt),
+  return { id: c.id, domain: 'FLUPFLAP', email: c.email, firstName: c.firstName, lastName: c.lastName, phone: c.phone, countryCode: c.countryCode, guest: Boolean(c.guestExpiresAt),
     status: c.status, emailVerified: Boolean(c.emailVerifiedAt), createdAt: c.createdAt.toISOString() };
 }
 type AuthRequest = Request & { userId?: string; flupFlapCustomer?: FlupFlapCustomer; flupFlapSessionId?: string };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const email = z.email().max(254).transform(value => value.trim().toLowerCase());
 const password = z.string().min(8).max(128).refine(value => Buffer.byteLength(value, 'utf8') <= 72);
+const phone = z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'Enter a valid international phone number including + and country code');
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const webRefreshCookie = 'flupflap_refresh';
 function cookies(header?: string) { return Object.fromEntries((header ?? '').split(';').map(v=>v.trim()).filter(Boolean).map(v=>{const i=v.indexOf('=');return i<0?[v,'']:[v.slice(0,i),decodeURIComponent(v.slice(i+1))];})); }
@@ -80,9 +81,23 @@ export function createFlupFlapIdentity(options: {
   const refreshLimited = rateLimit({ windowMs:15*60_000, limit:120, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many session refresh requests. Try again later.'} });
   const guestLimited = rateLimit({ windowMs:15*60_000, limit:5, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many guest sessions. Try again later.'} });
   router.post('/register', limited, async (req,res) => {
-    const input = z.object({email,password,countryCode:z.string().regex(/^[A-Z]{2}$/).optional()}).strict().parse(req.body);
+    const input = z.object({
+      firstName:z.string().trim().min(1).max(80),
+      lastName:z.string().trim().min(1).max(80),
+      phone,
+      email,
+      password,
+      countryCode:z.string().regex(/^[A-Z]{2}$/).optional(),
+    }).strict().parse(req.body);
     try {
-      const c = await repo.create({email:input.email,passwordHash:await bcrypt.hash(input.password,12),countryCode:input.countryCode});
+      const c = await repo.create({
+        firstName:input.firstName,
+        lastName:input.lastName,
+        phone:input.phone,
+        email:input.email,
+        passwordHash:await bcrypt.hash(input.password,12),
+        countryCode:input.countryCode,
+      });
       const session=await issue(c); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.status(201).json(session);
     } catch(error) {
       if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {res.status(409).json({code:'REGISTRATION_UNAVAILABLE',error:'Unable to create this account. Try signing in or resetting your password.'});return;}

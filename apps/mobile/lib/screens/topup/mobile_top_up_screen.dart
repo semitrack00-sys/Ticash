@@ -819,7 +819,12 @@ class _ReviewCard extends StatelessWidget {
     ),
   );
 
-  static Widget _line(String label, String value, {bool strong = false}) =>
+  static Widget _line(
+    String label,
+    String value, {
+    bool strong = false,
+    Color? valueColor,
+  }) =>
       Padding(
         padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(
@@ -835,12 +840,39 @@ class _ReviewCard extends StatelessWidget {
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
+                  color: valueColor,
                 ),
               ),
             ),
           ],
         ),
       );
+}
+
+Color _mobileTopUpStatusColor(MobileTopUpStatus status) {
+  switch (status) {
+    case MobileTopUpStatus.delivered:
+      return AppTheme.success;
+    case MobileTopUpStatus.failed:
+    case MobileTopUpStatus.refunded:
+      return AppTheme.error;
+    case MobileTopUpStatus.pending:
+    case MobileTopUpStatus.processing:
+      return AppTheme.gold;
+  }
+}
+
+IconData _mobileTopUpStatusIcon(MobileTopUpStatus status) {
+  switch (status) {
+    case MobileTopUpStatus.delivered:
+      return Icons.check_circle;
+    case MobileTopUpStatus.failed:
+    case MobileTopUpStatus.refunded:
+      return Icons.cancel;
+    case MobileTopUpStatus.pending:
+    case MobileTopUpStatus.processing:
+      return Icons.schedule;
+  }
 }
 
 class _Receipt extends StatelessWidget {
@@ -857,13 +889,14 @@ class _Receipt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final delivered = transaction.status == MobileTopUpStatus.delivered;
+    final statusColor = _mobileTopUpStatusColor(transaction.status);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         Icon(
-          delivered ? Icons.check_circle : Icons.schedule,
+          _mobileTopUpStatusIcon(transaction.status),
           size: 66,
-          color: delivered ? AppTheme.success : AppTheme.gold,
+          color: statusColor,
         ),
         const SizedBox(height: 12),
         Text(
@@ -920,6 +953,7 @@ class _Receipt extends StatelessWidget {
                 _ReviewCard._line(
                   'Status',
                   transaction.status.name.toUpperCase(),
+                  valueColor: statusColor,
                 ),
                 _ReviewCard._line(
                   'Date',
@@ -982,12 +1016,10 @@ class _History extends ConsumerWidget {
                     return Card(
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: const Color(0xFFFFF4D6),
+                          backgroundColor: _mobileTopUpStatusColor(item.status).withValues(alpha: 0.12),
                           child: Icon(
-                            item.kind == MobileTopUpKind.data
-                                ? Icons.wifi
-                                : Icons.phone_android,
-                            color: AppTheme.navy,
+                            _mobileTopUpStatusIcon(item.status),
+                            color: _mobileTopUpStatusColor(item.status),
                           ),
                         ),
                         title: Text(

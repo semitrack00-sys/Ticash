@@ -77,6 +77,12 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
       },
+      payment_intent_data: {
+        metadata: {
+          transactionId: input.transactionId,
+          billingCountry: input.billingCountry,
+        },
+      },
       line_items: [{ quantity: 1, price_data: {
         currency: 'usd',
         unit_amount: input.amountMinor,

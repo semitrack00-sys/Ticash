@@ -410,7 +410,12 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
         }
       : undefined;
     const recipientCountryCode = normalizeTopUpCountryCode(input.recipientCountryCode);
-    const body = await this.request('topups', {
+    // Use Reloadly's asynchronous top-up endpoint so a provider transaction ID
+    // is returned immediately and can be persisted before later status polling.
+    // This sharply reduces the ambiguous "provider may have accepted it but the
+    // synchronous response was lost" window that can otherwise strand a paid
+    // recharge in TOPUP_SUBMISSION_UNKNOWN.
+    const body = await this.request('topups-async', {
       method: 'POST',
       body: JSON.stringify({
         operatorId: input.operatorId,
@@ -424,7 +429,16 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
         ...(senderPhone ? { senderPhone } : {}),
       }),
     });
-    return mapTopUp(body);
+    const transactionId = body.transactionId;
+    if (transactionId === undefined || transactionId === null || String(transactionId).trim() === '') {
+      throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly omitted the asynchronous transaction ID', 502);
+    }
+    return {
+      transactionId: String(transactionId),
+      status: 'PROCESSING',
+      requestedAmount: input.amount,
+      requestedAmountCurrencyCode: input.providerCurrency ?? this.config.billingCurrency,
+    };
   }
 
   async getTopUpStatus(transactionId: string): Promise<ProviderTopUpResult> {

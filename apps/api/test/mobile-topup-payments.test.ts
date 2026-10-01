@@ -1310,6 +1310,24 @@ describe('Stripe sandbox flow',()=>{
       expect(() => f.event('payment_intent.succeeded')).toThrow(); // A cs_ ID is not a PaymentIntent.
       expect(f.submit).not.toHaveBeenCalled();
     });
+
+    it.each(['payment_intent.payment_failed', 'payment_intent.canceled'])('%s marks the reserved recharge failed without fulfillment', async type => {
+      const f = await checkout();
+      const intent = f.event(type, {
+        id: 'pi_binding',
+        amount_received: 599,
+        amount_total: undefined,
+        payment_status: undefined,
+      }, 'evt_binding_terminal_failure');
+      await f.service.acceptVerifiedPaymentEvent(intent);
+      expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({
+        status: 'FAILED',
+        paymentStatus: 'FAILED',
+        failureCode: 'PAYMENT_DECLINED',
+        paymentProviderTransactionId: 'pi_binding',
+      });
+      expect(f.submit).not.toHaveBeenCalled();
+    });
   });
 
   it('only successful server-verified Stripe payments can trigger Reloadly fulfillment, and duplicates are ignored', async () => {

@@ -609,7 +609,7 @@ describe('Stripe sandbox flow',()=>{
   it('preserves permanent customers stored country and rejects browser overrides', async () => {
     const f = flupFlapStripeFixture();
     const customer = (await request(f.app).post('/api/flupflap/auth/register')
-      .send({ email: 'stripe-profile@example.test', password: 'correct-horse-42', countryCode: 'US' }).expect(201)).body;
+      .send({ firstName:'Stripe', lastName:'Profile', phone:'+15550001001', email: 'stripe-profile@example.test', password: 'correct-horse-42', countryCode: 'US' }).expect(201)).body;
     const before = await f.identities.customer(customer.user.id);
     const quote = await f.quote(customer.accessToken);
     for (const billingCountry of ['CA', 'US']) {
@@ -626,7 +626,7 @@ describe('Stripe sandbox flow',()=>{
   it('does not let a permanent customer without a stored country substitute a request country', async () => {
     const f = flupFlapStripeFixture();
     const customer = (await request(f.app).post('/api/flupflap/auth/register')
-      .send({ email: 'stripe-no-country@example.test', password: 'correct-horse-42' }).expect(201)).body;
+      .send({ firstName:'Stripe', lastName:'NoCountry', phone:'+15550001002', email: 'stripe-no-country@example.test', password: 'correct-horse-42' }).expect(201)).body;
     const quote = await f.quote(customer.accessToken);
     await f.session(customer.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(400);
     const response = await f.session(customer.accessToken, { quoteId: quote.id }).expect(409);

@@ -123,8 +123,19 @@ class FlupFlapSession extends ChangeNotifier {
 
   Future<void> login(String email, String password) =>
       _authenticate('login', {'email': email, 'password': password});
-  Future<void> register(String email, String password) =>
-      _authenticate('register', {'email': email, 'password': password});
+  Future<void> register({
+    required String firstName,
+    required String lastName,
+    required String phone,
+    required String email,
+    required String password,
+  }) => _authenticate('register', {
+    'firstName': firstName,
+    'lastName': lastName,
+    'phone': phone,
+    'email': email,
+    'password': password,
+  });
   Future<void> enterGuest() => _authenticate('guest', {});
   Future<void> refresh() {
     if (_loggingOut) return Future.error(StateError('Signing out'));

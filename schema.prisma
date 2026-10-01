@@ -810,6 +810,8 @@ model FlupFlapCustomer {
   id String @id @default(uuid())
   email String? @unique
   passwordHash String?
+  firstName String?
+  lastName String?
   emailVerifiedAt DateTime?
   phone String? @unique
   phoneVerifiedAt DateTime?

@@ -21,7 +21,7 @@ function setup(options: Parameters<typeof createApp>[0] = {}) {
  return {app,identities,recharge,provider};
 }
 const root='/api/flupflap';
-const signup=async(app:ReturnType<typeof createApp>,name='a')=>(await request(app).post(root+'/auth/register').send({email:`${name}@example.test`,password:'correct-horse-42'}).expect(201)).body;
+const signup=async(app:ReturnType<typeof createApp>,name='a')=>(await request(app).post(root+'/auth/register').send({firstName:'Test',lastName:name.toUpperCase(),phone:`+1555000${name.charCodeAt(0).toString().padStart(4,'0')}`,email:`${name}@example.test`,password:'correct-horse-42'}).expect(201)).body;
 const headers=(token:string)=>({Authorization:`Bearer ${token}`});
 const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:'reloadly:JM:77:airtime:5.00'};
 
@@ -29,10 +29,10 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
  beforeEach(resetStore);
  it('creates a lightweight separate identity, never a TiCash User',async()=>{
   const {app}=setup();const c=await signup(app);
-  expect(c.user.domain).toBe('FLUPFLAP');expect(c.user).not.toHaveProperty('passwordHash');expect(c.user).not.toHaveProperty('role');
+  expect(c.user).toMatchObject({domain:'FLUPFLAP',firstName:'Test',lastName:'A',phone:'+15550000097'});expect(c.user).not.toHaveProperty('passwordHash');expect(c.user).not.toHaveProperty('role');
   await request(app).post('/api/auth/login').send({email:c.user.email,password:'correct-horse-42'}).expect(401);
   await request(app).get(root+'/auth/me').set(headers(c.accessToken)).expect(200);
-  await request(app).post(root+'/auth/register').send({email:'bad@example.test',password:'correct-horse-42',role:'ADMIN'}).expect(400);
+  await request(app).post(root+'/auth/register').send({firstName:'Bad',lastName:'Actor',phone:'+15550009999',email:'bad@example.test',password:'correct-horse-42',role:'ADMIN'}).expect(400);
  });
  it('rejects FlupFlap tokens at every TiCash-only boundary, and TiCash tokens at FlupFlap',async()=>{
   const {app}=setup();const c=await signup(app);

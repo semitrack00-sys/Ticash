@@ -915,6 +915,44 @@ export class MobileTopUpService {
     return record;
   }
 
+  async cancelTransaction(userId: string, id: string) {
+    this.assertEnabled();
+    const record = await this.repository.getTransaction(userId, id);
+    if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+    this.assertTransactionEnvironment(record);
+
+    const cancellable =
+      record.status === 'PENDING' &&
+      !record.providerTransactionId &&
+      !record.fulfillmentStartedAt &&
+      !record.paymentAuthorizationId &&
+      !record.paymentProviderTransactionId &&
+      ['PENDING', 'SESSION_CREATED'].includes(record.paymentStatus);
+    if (!cancellable) {
+      throw new MobileTopUpError('TOPUP_NOT_CANCELLABLE', 'This recharge can no longer be cancelled', 409);
+    }
+
+    if (record.paymentProvider === 'STRIPE' && record.paymentStatus === 'SESSION_CREATED') {
+      if (!record.paymentSessionId || !this.stripeProvider) {
+        throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment cancellation could not be confirmed', 409);
+      }
+      await this.stripeProvider.expireHostedCheckoutSession(record.paymentSessionId, record.id);
+    }
+
+    const failedAt = this.clock().toISOString();
+    const changed = await this.repository.transitionPayment(id, [record.paymentStatus], {
+      status: 'FAILED',
+      paymentStatus: 'FAILED',
+      failureCode: 'CANCELLED_BY_CUSTOMER',
+      failedAt,
+    });
+    if (!changed) {
+      throw new MobileTopUpError('TOPUP_NOT_CANCELLABLE', 'This recharge changed state and can no longer be cancelled', 409);
+    }
+    await this.audit(userId, 'MOBILE_TOPUP_CANCELLED_BY_CUSTOMER', 'MobileTopUpTransaction', id);
+    return (await this.repository.getTransaction(userId, id))!;
+  }
+
   async notificationStatus(id: string) {
     const record = await this.repository.getNotification(id);
     if (!record) return null;

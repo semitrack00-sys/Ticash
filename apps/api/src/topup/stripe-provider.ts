@@ -137,7 +137,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
   }
 
   async getPayment(paymentId: string) {
-    return (await this.request(`/v1/payment_intents/${encodeURIComponent(paymentId)}`)).data;
+    return (await this.request(`/v1/payment_intents/${encodeURIComponent(paymentId)}?expand[]=latest_charge`)).data;
   }
 
   async capture(input: { paymentId: string; transactionId: string; amountMinor: number }) {

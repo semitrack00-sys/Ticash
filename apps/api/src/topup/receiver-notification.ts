@@ -43,24 +43,73 @@ export function receiverMessage(record: Pick<ReceiverNotification, 'language' | 
   if (!validReceiverValue(record.amount, record.currency)) throw new Error('Invalid notification amount');
   const value = `${record.amount} ${record.currency}`;
   const messages: Record<ReceiverLanguage, string> = {
-    en: `TiCash: Your recharge of ${value} was successful. Thank you for using TiCash.`,
-    ht: `TiCash: Ou resevwa yon rechaj ${value} sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize TiCash.`,
-    es: `TiCash: Has recibido una recarga de ${value}. La transacción fue exitosa. Gracias por usar TiCash.`,
-    pt: `TiCash: Você recebeu uma recarga de ${value}. A transação foi concluída com sucesso. Obrigado por usar o TiCash.`,
-    fr: `TiCash : Votre recharge de ${value} a réussi. Merci d'utiliser TiCash.`,
-    sw: `TiCash: Umepokea salio la ${value}. Muamala umefanikiwa. Asante kwa kutumia TiCash.`,
+    en: `FlupFlap: Your recharge of ${value} was successful. Thank you for using FlupFlap.`,
+    ht: `FlupFlap: Ou resevwa yon rechaj ${value} sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.`,
+    es: `FlupFlap: Has recibido una recarga de ${value}. La transacción fue exitosa. Gracias por usar FlupFlap.`,
+    pt: `FlupFlap: Você recebeu uma recarga de ${value}. A transação foi concluída com sucesso. Obrigado por usar o FlupFlap.`,
+    fr: `FlupFlap : Votre recharge de ${value} a réussi. Merci d'utiliser FlupFlap.`,
+    sw: `FlupFlap: Umepokea salio la ${value}. Muamala umefanikiwa. Asante kwa kutumia FlupFlap.`,
   };
   return messages[record.language as ReceiverLanguage] ?? messages.en;
 }
 
 export interface ReceiverSmsProvider {
-  // An adapter MUST implement provider-side deduplication with this stable key.
-  // Unknown acceptance is not retried automatically, even if the adapter times out.
+  // Unknown acceptance is never retried automatically. Some SMS providers, including
+  // Telnyx POST /messages, do not provide server-side idempotency for SMS sends.
+  // The durable outbox claim therefore provides the exactly-once attempt boundary.
   send(input: { to: string; message: string; idempotencyKey: string }): Promise<
     { status: 'SENT' | 'DELIVERED'; messageId: string } |
     { status: 'NOT_SENT'; category: 'SMS_NOT_CONFIGURED' | 'PROVIDER_REJECTED' }
   >;
 }
+
+export interface TelnyxSmsConfig {
+  apiKey: string;
+  fromNumber: string;
+  messagingProfileId: string;
+  baseUrl: string;
+}
+
+export function loadTelnyxSmsConfig(env: NodeJS.ProcessEnv = process.env): TelnyxSmsConfig | undefined {
+  const apiKey = env.TELNYX_API_KEY?.trim();
+  const fromNumber = env.TELNYX_FROM_NUMBER?.trim();
+  const messagingProfileId = env.TELNYX_MESSAGING_PROFILE_ID?.trim();
+  if (!apiKey && !fromNumber && !messagingProfileId) return undefined;
+  if (!apiKey || !fromNumber || !messagingProfileId) throw new Error('TELNYX_API_KEY, TELNYX_FROM_NUMBER and TELNYX_MESSAGING_PROFILE_ID must be configured together');
+  if (!/^\+[1-9]\d{7,14}$/.test(fromNumber)) throw new Error('TELNYX_FROM_NUMBER must be E.164');
+  if (!/^[0-9a-f-]{36}$/i.test(messagingProfileId)) throw new Error('TELNYX_MESSAGING_PROFILE_ID must be a UUID');
+  return { apiKey, fromNumber, messagingProfileId, baseUrl: 'https://api.telnyx.com/v2' };
+}
+
+export class TelnyxReceiverSmsProvider implements ReceiverSmsProvider {
+  constructor(private readonly config: TelnyxSmsConfig, private readonly transport: typeof fetch = fetch) {}
+
+  async send(input: { to: string; message: string; idempotencyKey: string }): Promise<
+    { status: 'SENT'; messageId: string } | { status: 'NOT_SENT'; category: 'PROVIDER_REJECTED' }
+  > {
+    if (!/^\+[1-9]\d{7,14}$/.test(input.to)) return { status: 'NOT_SENT', category: 'PROVIDER_REJECTED' };
+    // Deliberately one HTTP attempt: Telnyx SMS sends have no server-side idempotency.
+    // A network/timeout exception is allowed to escape so the outbox records an
+    // ambiguous outcome and never blindly resends the SMS.
+    const response = await this.transport(`${this.config.baseUrl}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.config.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: this.config.fromNumber,
+        to: input.to,
+        text: input.message,
+        messaging_profile_id: this.config.messagingProfileId,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return { status: 'NOT_SENT', category: 'PROVIDER_REJECTED' };
+    const body = await response.json() as { data?: { id?: unknown } };
+    const messageId = body.data?.id;
+    if (typeof messageId !== 'string' || messageId.length < 1 || messageId.length > 200) throw new Error('Invalid Telnyx acceptance response');
+    return { status: 'SENT', messageId };
+  }
+}
+
 export class DisabledReceiverSmsProvider implements ReceiverSmsProvider {
   async send(): Promise<{ status: 'NOT_SENT'; category: 'SMS_NOT_CONFIGURED' }> {
     return { status: 'NOT_SENT', category: 'SMS_NOT_CONFIGURED' };

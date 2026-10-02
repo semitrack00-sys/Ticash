@@ -65,6 +65,7 @@ import {
 } from './topup/repository.js';
 import { createMobileTopUpRouter } from './topup/router.js';
 import { MobileTopUpService } from './topup/service.js';
+import { loadTelnyxSmsConfig, ReceiverNotificationService, TelnyxReceiverSmsProvider, type ReceiverSmsProvider } from './topup/receiver-notification.js';
 import { loadStripeConfig } from './topup/stripe-config.js';
 import { StripeHostedCheckoutProvider } from './topup/stripe-provider.js';
 import { createStripeWebhookHandler } from './topup/stripe-webhook.js';
@@ -651,6 +652,7 @@ export interface CreateAppOptions {
   mobileTopUpProvider?: MobileTopUpProvider;
   mobileTopUpPaymentProvider?: MobileTopUpPaymentProvider;
   mobileTopUpStripeProvider?: StripeHostedCheckoutProvider;
+  receiverSmsProvider?: ReceiverSmsProvider;
   stripeConfig?: ReturnType<typeof loadStripeConfig>;
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
@@ -988,6 +990,11 @@ export function createApp(options: CreateAppOptions = {}) {
     );
   }
 
+  const receiverSmsProvider = options.receiverSmsProvider ?? (() => {
+    const telnyx = loadTelnyxSmsConfig();
+    return telnyx ? new TelnyxReceiverSmsProvider(telnyx) : undefined;
+  })();
+
   const mobileTopUpService = new MobileTopUpService(
     mobileTopUpConfig,
     mobileTopUpProvider,
@@ -996,7 +1003,30 @@ export function createApp(options: CreateAppOptions = {}) {
     recordAudit,
     options.mobileTopUpClock,
     mobileTopUpStripeProvider,
+    receiverSmsProvider,
   );
+
+  // SMS delivery is independent from recharge settlement. The outbox claim prevents
+  // concurrent duplicate attempts; ambiguous Telnyx outcomes are never auto-retried.
+  if (databaseEnabled && receiverSmsProvider && process.env.NODE_ENV !== 'test') {
+    const notifications = new ReceiverNotificationService(mobileTopUpRepository, receiverSmsProvider);
+    let smsWorkerRunning = false;
+    const processSmsOutbox = async () => {
+      if (smsWorkerRunning) return;
+      smsWorkerRunning = true;
+      try {
+        await notifications.processBatch(50);
+      } catch {
+        console.warn('Recharge SMS outbox processing failed', { code: 'SMS_WORKER_ERROR' });
+      } finally {
+        smsWorkerRunning = false;
+      }
+    };
+    const initialSmsWorker = setTimeout(() => { void processSmsOutbox(); }, 7_500);
+    initialSmsWorker.unref();
+    const smsWorkerTimer = setInterval(() => { void processSmsOutbox(); }, 30_000);
+    smsWorkerTimer.unref();
+  }
 
   // Paid processing recharges reconcile automatically in the API process.
   // The worker performs provider status/report lookups only; it never calls

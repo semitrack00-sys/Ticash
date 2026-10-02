@@ -59,26 +59,11 @@ point. It has no payment, wallet, Stripe or recharge-provider dependency. It cla
 each record with a conditional database update before using `ReceiverSmsProvider`.
 The SMS adapter must honor the stable `recharge-receiver:<transactionId>` key.
 
-No SMS adapter or SMS credentials existed in this repository. This PR therefore
-ships **abstraction-only**, with `DisabledReceiverSmsProvider`. No external SMS
-request is made and no send is fabricated. New rows remain PENDING with
-`SMS_NOT_CONFIGURED`; an explicit disabled-provider retry records FAILED with that
-category. Delivery remains successful. A production worker is **not started** by
-this PR, and changing environment variables alone cannot enable SMS.
+The production adapter is Telnyx and remains disabled unless all three server-only settings are present: `TELNYX_API_KEY`, `TELNYX_MESSAGING_PROFILE_ID`, and `TELNYX_FROM_NUMBER`. The sender must be E.164 and the messaging profile ID must be a UUID. These values are never exposed to Flutter or API responses.
 
-Production prerequisites before enabling sends:
+The API runs a bounded outbox worker only when the database is enabled, Telnyx is fully configured, and the process is not running tests. It claims durable outbox records before making a single `POST https://api.telnyx.com/v2/messages` request. Telnyx SMS sending does not provide server-side idempotency for this endpoint, so the adapter deliberately performs no network retry. A timeout or malformed acceptance response becomes `SMS_OUTCOME_UNKNOWN` and is not automatically resent. An explicit non-2xx rejection becomes `PROVIDER_REJECTED` and remains eligible for a controlled retry. A successful API acceptance is recorded as `SENT`, never fabricated as carrier delivery.
 
-1. Select and review a server-only SMS adapter with documented provider-side
-   idempotency, confirmed rejection semantics and delivery-status reconciliation.
-2. Configure that adapter's account credential, API token and approved sender in
-   server/worker environment variables or the secret store only. Exact variable
-   names are adapter-specific and intentionally not invented here; there are **no
-   required SMS environment variables for this disabled implementation**. Never
-   pass them as Flutter defines or expose them through API responses.
-3. Wire a separately supervised worker to `processBatch`, respecting the intended
-   sandbox/production SMS environment, retry policy and operational monitoring.
-4. Apply the reviewed schema migration in the normal deployment process. This PR
-   does not deploy or execute production migrations.
+Recharge settlement is independent from SMS. A notification failure cannot change a delivered recharge, payment ledger, provider result, or receiver-value evidence.
 
 Only explicit `NOT_SENT` / `PROVIDER_REJECTED` and `SMS_NOT_CONFIGURED` outcomes are
 retryable. An exception, invalid acceptance response or crash after claiming is

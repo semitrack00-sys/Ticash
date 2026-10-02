@@ -104,6 +104,42 @@ class FixtureAdapter implements HttpClientAdapter {
 }
 
 void main() {
+  testWidgets('registration sends locale-based national phone in E.164', (
+    tester,
+  ) async {
+    tester.platformDispatcher.localesTestValue = [const Locale('fr', 'HT')];
+    addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+    final (s, adapter, _) = fixture();
+    await s.initialize();
+    await tester.pumpWidget(FlupFlapApp(session: s));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Create account'));
+    await tester.tap(find.text('Create account'));
+    await tester.pumpAndSettle();
+    for (final field in [
+      ('First name', 'Test'),
+      ('Last name', 'Customer'),
+      ('Phone number', '37000000'),
+      ('Email', 'customer@example.test'),
+      ('Password', 'test-password'),
+    ]) {
+      await tester.enterText(
+        find.widgetWithText(TextField, field.$1),
+        field.$2,
+      );
+    }
+    await tester.ensureVisible(find.text('Create account'));
+    await tester.tap(find.text('Create account'));
+    await tester.pumpAndSettle();
+    expect(
+      adapter.requests
+          .singleWhere((r) => r.path.endsWith('/auth/register'))
+          .data['phone'],
+      '+50937000000',
+    );
+    expect(s.authenticated, isTrue);
+    await tester.pumpWidget(const SizedBox());
+  });
   test(
     'shared recharge service uses only the FlupFlap API namespace',
     () async {

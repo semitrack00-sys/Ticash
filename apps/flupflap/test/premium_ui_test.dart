@@ -456,11 +456,16 @@ void main() {
         find.widgetWithText(TextField, 'Recipient name'),
         'Family',
       );
-      await tap(tester, find.byType(DropdownButtonFormField<String>));
+      await tap(tester, find.byKey(const ValueKey('phone-country-picker')));
+      await tester.enterText(
+        find.byKey(const ValueKey('phone-country-search')),
+        'HT',
+      );
+      await tester.pumpAndSettle();
       await tap(tester, find.text('Haiti').last);
       await tester.enterText(
-        find.widgetWithText(TextField, 'International phone number'),
-        '+50937000000',
+        find.widgetWithText(TextField, 'Phone number'),
+        '37000000',
       );
       await tap(tester, find.text('Save recipient'));
       expect(

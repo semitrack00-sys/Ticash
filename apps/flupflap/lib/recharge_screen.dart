@@ -1,38 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/widgets/mobile_operator_logo.dart';
 import 'billing_countries.dart';
 import 'checkout_contract.dart';
+import 'country_flag.dart';
 import 'native_actions.dart';
 import 'parity_strings.dart';
+import 'phone_country_field.dart';
 import 'recharge_journey.dart';
 
-class CountryFlag extends StatelessWidget {
-  const CountryFlag(this.code, {super.key});
-  final String code;
-  @override
-  Widget build(BuildContext context) {
-    final fallback = Text(
-      code,
-      style: const TextStyle(fontWeight: FontWeight.w700),
-    );
-    return SizedBox(
-      width: 30,
-      height: 22,
-      child: RegExp(r'^[A-Z]{2}$').hasMatch(code)
-          ? SvgPicture.asset(
-              'assets/flags/${code.toLowerCase()}.svg',
-              fit: BoxFit.contain,
-              semanticsLabel: code,
-              placeholderBuilder: (_) => fallback,
-              errorBuilder: (_, __, ___) => fallback,
-            )
-          : fallback,
-    );
-  }
-}
+export 'country_flag.dart';
 
 Future<String?> pickCountry(
   BuildContext context,
@@ -276,58 +254,22 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     ),
   );
   Widget destination() {
-    final selected = j.countries.where((c) => c.code == j.country).firstOrNull;
     return card([
       Text(
         context.ft('destination'),
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 16),
-      OutlinedButton(
-        onPressed: j.busy || j.locked
-            ? null
-            : () async {
-                final code = await pickCountry(context, j.countries);
-                if (code != null && !j.busy && !j.locked) {
-                  j.destination(code: code, number: phone.text);
-                }
-              },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Row(
-            children: [
-              if (j.country != null) ...[
-                CountryFlag(j.country!),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: Text(
-                  selected == null
-                      ? context.ft('country')
-                      : '${selected.name} (${selected.code})',
-                ),
-              ),
-              const Icon(Icons.expand_more),
-            ],
-          ),
-        ),
-      ),
-      const SizedBox(height: 16),
-      TextField(
-        key: const ValueKey('destination-phone'),
+      PhoneCountryField(
+        fieldKey: const ValueKey('destination-phone'),
         controller: phone,
-        keyboardType: TextInputType.phone,
+        countryCode: j.country,
         textInputAction: TextInputAction.done,
         enabled: !j.busy && !j.locked,
-        decoration: InputDecoration(
-          labelText: context.ft('phone'),
-          prefixIcon: const Icon(Icons.phone_android),
-        ),
-        onChanged: (v) {
-          if (j.country != null) j.destination(code: j.country!, number: v);
-        },
-        onSubmitted: (_) {
-          if (!j.busy) j.continueDestination();
+        onChanged: (entry) =>
+            j.destination(code: entry.country.code, number: entry.e164),
+        onSubmitted: () {
+          if (!j.busy && !j.locked) j.continueDestination();
         },
       ),
       if (j.recipients.isNotEmpty)

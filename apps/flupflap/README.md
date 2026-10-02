@@ -30,3 +30,42 @@ Output: `build/app/outputs/flutter-apk/app-debug.apk`. Release signing requires 
 - The reused mobile checkout uses the existing MOCK purchase route. It does not collect card details or implement a native Stripe payment UI. Stripe sandbox remains supported by the existing website/shared backend. Native Stripe UI is a separate capability, not silently enabled here.
 
 All verification uses test doubles or disposable local data. No real payment/provider transaction is needed to validate this target.
+
+## Premium UI regression validation
+
+`test/flupflap_test.dart` retains the original identity, guest, signup, navigation,
+logout/refresh race and endpoint isolation contracts. `test/premium_ui_test.dart`
+adds mocked end-to-end recipient/recharge/review/result flows, all five transaction
+states, retry, keyboard submission, password recovery and permanent/guest profile
+boundaries. Its catalog, amounts and phone numbers are test fixtures only.
+
+The responsive matrix covers 360, 375, 390, 412, 430 and 768 logical pixels at
+1.0 and 1.5 text scale, including registration with a 300-pixel keyboard inset.
+Optional local screenshots can be captured by setting `FLUPFLAP_SCREENSHOT_DIR`
+to an artifact directory outside source and `FLUPFLAP_TEST_FONT` to the SDK's
+`bin/cache/artifacts/material_fonts/roboto-regular.ttf` before running the premium
+tests. These variables affect test rendering only; no fixtures enter an APK.
+
+Run both packages after changes to the shared recharge screen:
+
+```sh
+# apps/flupflap
+flutter pub get
+flutter analyze
+flutter test
+# apps/mobile
+flutter pub get
+flutter analyze
+flutter test
+```
+
+FlupFlap opts into customer presentation on the shared screen. AUTO routing stays
+the default; explicit provider controls remain available under Advanced routing
+options. Saved-recipient navigation supplies only the existing recipient metadata;
+operator detection and quote creation still use the backend. History opens stored
+receipts and Repeat requests a fresh quote without automatically purchasing.
+
+The existing Android workflow builds debug APK and AAB artifacts after validation.
+These are QA artifacts, not store releases. Validate `flutter build apk --release`
+and `flutter build appbundle --release` only with separately provisioned release
+signing. Never disable the signing guard or commit a keystore/key.properties.

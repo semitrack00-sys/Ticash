@@ -568,7 +568,9 @@ export class MobileTopUpService {
     input: { quoteId: string; recipientId?: string },
     key: string,
     billingCountry?: string,
+    androidReturn = false,
   ) {
+    if (androidReturn && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
     const reserved = await this.reservePayment(userId, input, key);
     this.assertTransactionEnvironment(reserved);
 
@@ -662,6 +664,7 @@ export class MobileTopUpService {
           currency: 'USD',
           billingCountry: country,
           resumeToken,
+          ...(androidReturn ? { androidReturn: true } : {}),
         });
       } catch (error) {
         await this.repository.updateTransaction(reserved.id, { paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN' });

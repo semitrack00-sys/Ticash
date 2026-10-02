@@ -31,6 +31,8 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="flupflap" android:host="recharge"/>
+                <data android:scheme="flupflap" android:host="checkout-return"/>
+                <data android:scheme="flupflap" android:host="join"/>
                 <data android:scheme="flupflap" android:host="reset-password"/>
             </intent-filter>
         </activity>

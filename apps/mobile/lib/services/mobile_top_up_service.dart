@@ -4,7 +4,9 @@ import '../models/mobile_top_up.dart';
 import 'api_client.dart';
 
 class MobileTopUpService {
-  MobileTopUpService({Dio? dio, String basePath = '/mobile-topups'}) : _base = basePath, _dio = dio ?? ApiClient.instance.dio;
+  MobileTopUpService({Dio? dio, String basePath = '/mobile-topups'})
+    : _base = basePath,
+      _dio = dio ?? ApiClient.instance.dio;
   final Dio _dio;
   final String _base;
 
@@ -75,12 +77,10 @@ class MobileTopUpService {
               },
             )).data
             as Map<String, dynamic>;
-    return MobileTopUpOperator.fromJson(
-      {
-        'countryCode': normalizedCountryCode,
-        ...(data['operator'] as Map<String, dynamic>),
-      },
-    );
+    return MobileTopUpOperator.fromJson({
+      'countryCode': normalizedCountryCode,
+      ...(data['operator'] as Map<String, dynamic>),
+    });
   }
 
   Future<List<MobileTopUpProduct>> products(
@@ -90,7 +90,11 @@ class MobileTopUpService {
   }) async {
     final normalizedClassification = classification?.trim().toUpperCase();
     if (normalizedClassification != null &&
-        !const {'AIRTIME', 'DATA', 'BUNDLE'}.contains(normalizedClassification)) {
+        !const {
+          'AIRTIME',
+          'DATA',
+          'BUNDLE',
+        }.contains(normalizedClassification)) {
       throw ArgumentError.value(
         classification,
         'classification',
@@ -153,6 +157,7 @@ class MobileTopUpService {
     required int operatorId,
     required String productId,
     double? amount,
+    String? catalogVersion,
   }) async {
     final data =
         (await _dio.post(
@@ -163,6 +168,7 @@ class MobileTopUpService {
                 'operatorId': operatorId,
                 'productId': productId,
                 if (amount != null) 'amount': amount,
+                if (catalogVersion != null) 'catalogVersion': catalogVersion,
               },
             )).data
             as Map<String, dynamic>;

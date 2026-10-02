@@ -10,6 +10,9 @@ dependencies:
   ticash:
     path: ../mobile
   flutter_riverpod: ^2.5.1
+  flutter_svg: ^2.2.0
+  flutter_localizations:
+    sdk: flutter
   dio: ^5.4.3+1
   go_router: ^14.2.0
   flutter_secure_storage: ^9.2.2
@@ -21,3 +24,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/flupflap-logo.png
+    - assets/flags/

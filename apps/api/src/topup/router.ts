@@ -1,3 +1,4 @@
+import { androidCheckoutReturn } from './android-checkout-return.js';
 import express, { type Request, type RequestHandler, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
@@ -64,9 +65,11 @@ export function createMobileTopUpRouter(options: {
   quotePresentation?: (userId: string, quoteId: string) => Promise<Record<string, unknown>>;
   isGuest: (userId: string) => Promise<boolean>;
   supportedCountriesPath?: string;
+  allowAndroidReturn?: boolean;
   billingCountryForUser: (userId: string) => Promise<string | undefined>;
 }) {
   const router = express.Router();
+  if (options.allowAndroidReturn) router.get('/checkout-return', androidCheckoutReturn);
   const protectedRoute = [options.authenticate, options.requireFundingAllowed];
 
   router.post('/checkout-resume', checkoutResumeLimit, asyncRoute(async (req, res) => {
@@ -82,9 +85,12 @@ export function createMobileTopUpRouter(options: {
     const key = req.header('idempotency-key');
     if (!key) throw new MobileTopUpError('IDEMPOTENCY_KEY_REQUIRED', 'An Idempotency-Key header is required', 400);
     const guest = await options.isGuest(req.userId!);
-    const { billingCountry: requestBillingCountry, ...input } = guest
-      ? guestPaymentSessionSchema.parse(req.body)
-      : { ...purchaseSchema.parse(req.body), billingCountry: undefined };
+    const paymentSchema = options.allowAndroidReturn ? purchaseSchema.extend({ returnTarget: z.literal('FLUPFLAP_ANDROID').optional() }) : purchaseSchema;
+    const guestSchema = options.allowAndroidReturn ? guestPaymentSessionSchema.extend({ returnTarget: z.literal('FLUPFLAP_ANDROID').optional() }) : guestPaymentSessionSchema;
+    const parsed = guest ? guestSchema.parse(req.body) : paymentSchema.parse(req.body);
+    const input = { quoteId: parsed.quoteId, ...(parsed.recipientId ? { recipientId: parsed.recipientId } : {}) };
+    const requestBillingCountry = 'billingCountry' in parsed ? parsed.billingCountry as string | undefined : undefined;
+    const androidReturn = 'returnTarget' in parsed && parsed.returnTarget === 'FLUPFLAP_ANDROID';
     // Guest billing country is session context only; permanent customers use their stored profile.
     const billingCountry = guest ? requestBillingCountry : await options.billingCountryForUser(req.userId!);
     res.status(201).json(await options.service.createPaymentSession(
@@ -92,6 +98,7 @@ export function createMobileTopUpRouter(options: {
       input,
       key,
       billingCountry,
+      androidReturn,
     ));
   }));
 

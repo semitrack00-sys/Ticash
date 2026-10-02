@@ -1,0 +1,522 @@
+import 'dart:async';
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:ticash/models/mobile_top_up.dart';
+import 'checkout_contract.dart';
+
+enum RechargeStep { destination, product, review, payment, result }
+
+/// One session-owned controller survives tab navigation/browser handoff.
+/// A request that may have reserved a payment never gets a new key on retry.
+class RechargeJourney extends ChangeNotifier {
+  RechargeJourney(
+    this.client, {
+    required this.guest,
+    required this.storedBillingCountry,
+    DateTime Function()? clock,
+  }) : now = clock ?? DateTime.now;
+  final FlupFlapClient client;
+  final bool Function() guest;
+  final String? Function() storedBillingCountry;
+  final DateTime Function() now;
+  RechargeStep step = RechargeStep.destination;
+  MobileTopUpAvailability? availability;
+  PaymentMethods? payments;
+  List<MobileTopUpCountry> countries = [];
+  List<MobileTopUpRecipient> recipients = [];
+  List<MobileTopUpOperator> operators = [];
+  List<MobileTopUpProduct> products = [];
+  List<RechargeResult> history = [];
+  String? country, billingCountry, recipientId, error, notice;
+  String phone = '', amount = '', nickname = '';
+  MobileTopUpOperator? operator;
+  MobileTopUpProduct? product;
+  MobileTopUpQuote? quote;
+  Map<String, dynamic>? promotion;
+  HostedSession? hosted;
+  RechargeResult? result;
+  bool busy = false, reviewed = false, initialized = false;
+  String? _attemptKey,
+      _attemptQuote,
+      _attemptRecipient,
+      _attemptCountry,
+      _transactionId,
+      _resumeToken;
+  CheckoutMode? _attemptMode;
+  bool _attemptGuest = false, _disposed = false;
+  int _revision = 0, _polls = 0;
+  Timer? _timer, _quoteTimer;
+  bool get locked =>
+      _attemptKey != null ||
+      _resumeToken != null ||
+      (result != null && !result!.terminal);
+  bool get quoteValid => quote != null && quote!.expiresAt.isAfter(now());
+  bool get canPay =>
+      !busy &&
+      !locked &&
+      initialized &&
+      payments != null &&
+      quoteValid &&
+      reviewed &&
+      (payments!.mode == CheckoutMode.mock ||
+          RegExp(r'^[A-Z]{2}$').hasMatch(
+            guest() ? billingCountry ?? '' : storedBillingCountry() ?? '',
+          ));
+  bool get canBack =>
+      !busy &&
+      !locked &&
+      (step == RechargeStep.product || step == RechargeStep.review);
+  void _emit() {
+    if (!_disposed) notifyListeners();
+  }
+
+  String safeError(Object e) {
+    final data = e is DioException ? e.response?.data : null;
+    final code = data is Map ? data['code'] : null;
+    return switch (code) {
+      'TOPUP_QUOTE_EXPIRED' || 'TOPUP_QUOTE_ALREADY_USED' => 'quoteExpired',
+      'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
+      'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
+      'GUEST_SCOPE_RESTRICTED' || 'FORBIDDEN' => 'accountRequired',
+      'INSUFFICIENT_FUNDS' => 'insufficientFunds',
+      'PAYMENT_DECLINED' => 'paymentDeclined',
+      'RESUME_TOKEN_EXPIRED' || 'RESUME_TOKEN_NOT_FOUND' => 'resumeUnavailable',
+      _ => 'requestFailed',
+    };
+  }
+
+  Future<void> _run(Future<void> Function(int) action) async {
+    if (busy || _disposed) return;
+    busy = true;
+    error = null;
+    _emit();
+    final version = _revision;
+    try {
+      await action(version);
+    } catch (e) {
+      if (version == _revision) error = safeError(e);
+    } finally {
+      if (!_disposed) {
+        busy = false;
+        _emit();
+      }
+    }
+  }
+
+  bool _current(int revision) => !_disposed && revision == _revision;
+  Future<void> initialize() => _run((v) async {
+    final status = await client.topups.availability();
+    final catalog = await client.topups.countries();
+    final saved = await client.topups.recipients();
+    final existing = await client.history();
+    if (!_current(v)) return;
+    availability = status;
+    countries = catalog;
+    recipients = saved;
+    history = existing;
+    // Recover an unresolved reservation before enabling a new checkout after app restart.
+    final pending = existing.where((t) => !t.terminal).firstOrNull;
+    if (pending != null) {
+      result = pending;
+      _transactionId = pending.id;
+      step = RechargeStep.result;
+      _schedule();
+    }
+    payments = await client.methods(status);
+    if (_current(v)) initialized = true;
+  });
+  void _editable() {
+    if (locked || busy) throw StateError('Resolve pending checkout first');
+  }
+
+  void _invalidateQuote() {
+    _quoteTimer?.cancel();
+    quote = null;
+    promotion = null;
+    reviewed = false;
+    hosted = null;
+  }
+
+  void _watchQuote() {
+    _quoteTimer?.cancel();
+    final delay = quote!.expiresAt.difference(now());
+    if (!delay.isNegative) _quoteTimer = Timer(delay, _emit);
+  }
+
+  void destination({
+    required String code,
+    required String number,
+    String? savedId,
+  }) {
+    _editable();
+    _revision++;
+    country = code;
+    phone = number;
+    recipientId = savedId;
+    operator = null;
+    product = null;
+    operators = [];
+    products = [];
+    amount = '';
+    _invalidateQuote();
+    step = RechargeStep.destination;
+    error = null;
+    _emit();
+  }
+
+  void selectRecipient(MobileTopUpRecipient r) =>
+      destination(code: r.countryCode, number: r.phone, savedId: r.id);
+  void setAmount(String value) {
+    _editable();
+    amount = value;
+    _revision++;
+    _invalidateQuote();
+    _emit();
+  }
+
+  void setBillingCountry(String? value) {
+    _editable();
+    billingCountry = value;
+    reviewed = false;
+    _emit();
+  }
+
+  void confirmReview(bool value) {
+    reviewed = value;
+    _emit();
+  }
+
+  void back() {
+    if (!canBack) return;
+    step = step == RechargeStep.review && product != null
+        ? RechargeStep.product
+        : RechargeStep.destination;
+    reviewed = false;
+    _emit();
+  }
+
+  Future<void> continueDestination() => _run((v) async {
+    if (country == null ||
+        !countries.any((c) => c.code == country) ||
+        !RegExp(
+          r'^\+[1-9][0-9]{6,14}$',
+        ).hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
+      throw const FormatException('Invalid destination');
+    }
+    phone = phone.replaceAll(RegExp(r'[\s().-]'), '');
+    final list = await client.topups.operators(country!);
+    MobileTopUpOperator? detected;
+    try {
+      detected = await client.topups.detectOperator(
+        countryCode: country!,
+        phone: phone,
+      );
+    } catch (_) {
+      /* Provider detection may require manual selection. */
+    }
+    if (!_current(v)) return;
+    operators = list;
+    operator = detected == null
+        ? null
+        : list
+              .where((o) => o.id == detected!.id && o.countryCode == country)
+              .firstOrNull;
+    product = null;
+    products = [];
+    _invalidateQuote();
+    step = RechargeStep.product;
+    if (operator != null) {
+      products = await client.topups.products(country!, operator!.id);
+    }
+  });
+  Future<void> selectOperator(MobileTopUpOperator value) => _run((v) async {
+    if (locked || !operators.contains(value) || value.countryCode != country) {
+      throw StateError('Invalid operator');
+    }
+    operator = value;
+    product = null;
+    products = [];
+    amount = '';
+    _invalidateQuote();
+    final list = await client.topups.products(country!, value.id);
+    if (_current(v)) products = list;
+  });
+  void selectProduct(MobileTopUpProduct value) {
+    _editable();
+    if (!products.contains(value) || value.operatorId != operator?.id) {
+      throw StateError('Invalid product');
+    }
+    product = value;
+    amount = '';
+    _revision++;
+    _invalidateQuote();
+    _emit();
+  }
+
+  double? _rangeAmount() {
+    if (product?.amountType != 'RANGE') return null;
+    if (product!.kind != MobileTopUpKind.airtime ||
+        !RegExp(r'^\d+(\.\d{1,2})?$').hasMatch(amount)) {
+      throw const FormatException('Invalid amount');
+    }
+    final value = double.parse(amount);
+    final p = product!;
+    if (p.minimumAmount == null ||
+        p.maximumAmount == null ||
+        value < p.minimumAmount! ||
+        value > p.maximumAmount!) {
+      throw const FormatException('Invalid amount');
+    }
+    final cents = moneyCents(value);
+    final precision = p.amountPrecision ?? 2;
+    if (precision == 0 && cents % 100 != 0 ||
+        precision == 1 && cents % 10 != 0) {
+      throw const FormatException('Invalid precision');
+    }
+    if (p.amountIncrement != null) {
+      final increment = moneyCents(p.amountIncrement!);
+      if (increment <= 0 ||
+          (cents - moneyCents(p.minimumAmount!)) % increment != 0) {
+        throw const FormatException('Invalid increment');
+      }
+    }
+    return value;
+  }
+
+  Future<void> review() => _run((v) async {
+    if (locked || product == null || operator == null || country == null) {
+      throw StateError('Select product');
+    }
+    final q = await client.topups.quote(
+      countryCode: country!,
+      phone: phone,
+      operatorId: operator!.id,
+      productId: product!.id,
+      amount: _rangeAmount(),
+      catalogVersion: product!.catalogVersion,
+    );
+    if (!_current(v)) return;
+    if (q.countryCode != country ||
+        q.phone != phone ||
+        q.operatorId != operator!.id ||
+        q.productId != product!.id) {
+      throw const FormatException('Quote binding mismatch');
+    }
+    quote = q;
+    _watchQuote();
+    reviewed = false;
+    step = RechargeStep.review;
+    promotion = null;
+    try {
+      final details = await client.promotion(q.id);
+      promotion = details == null ? q.promotion : {...?q.promotion, ...details};
+    } on DioException catch (e) {
+      if (![404, 503].contains(e.response?.statusCode)) rethrow;
+    }
+  });
+  Future<void> applyPromotion(String code) => _run((v) async {
+    if (locked) throw StateError('Checkout locked');
+    _invalidateQuote();
+    await client.visit(promo: code);
+    await client.claim();
+    if (_current(v)) {
+      notice = 'promotionApplied';
+      step = RechargeStep.product;
+    }
+  });
+  Future<void> pay() => _run((v) async {
+    if (locked ||
+        !initialized ||
+        payments == null ||
+        !quoteValid ||
+        !reviewed) {
+      throw StateError('Review required');
+    }
+    final status = await client.topups.availability();
+    final methods = await client.methods(status);
+    if (!_current(v)) return;
+    if (methods.mode != payments!.mode) {
+      throw const FormatException('Payment mode changed');
+    }
+    final billing = guest() ? billingCountry : storedBillingCountry();
+    if (methods.mode != CheckoutMode.mock &&
+        !RegExp(r'^[A-Z]{2}$').hasMatch(billing ?? '')) {
+      throw const FormatException('Billing required');
+    }
+    if (nickname.trim().isNotEmpty && recipientId == null) {
+      final r = await client.topups.saveRecipient(
+        nickname: nickname.trim(),
+        phone: quote!.phone,
+        countryCode: quote!.countryCode,
+        operator: operator,
+      );
+      recipientId = r.id;
+    }
+    if (!_current(v)) return;
+    // Reserve the key BEFORE dispatch; keep it even on timeout/unknown failures.
+    _quoteTimer?.cancel();
+    _attemptKey = newAttemptKey();
+    _attemptQuote = quote!.id;
+    _attemptRecipient = recipientId;
+    _attemptCountry = billing;
+    _attemptGuest = guest();
+    _attemptMode = methods.mode;
+    step = RechargeStep.payment;
+    await _submit();
+  });
+  Future<void> retryPayment() => _run((v) async {
+    if (_attemptKey == null || result?.terminal == true) return;
+    await _submit();
+  });
+  Future<void> _submit() async {
+    if (_disposed) return;
+    if (_attemptMode == CheckoutMode.mock) {
+      final t = await client.topups.purchase(
+        quoteId: _attemptQuote!,
+        idempotencyKey: _attemptKey!,
+        recipientId: _attemptRecipient,
+      );
+      // Read canonical server state; no local inference from HTTP success.
+      _transactionId = t.id;
+      await refresh();
+    } else {
+      final session = await client.payment(
+        quote: quote!,
+        mode: _attemptMode!,
+        key: _attemptKey!,
+        guest: _attemptGuest,
+        billingCountry: _attemptCountry,
+        recipientId: _attemptRecipient,
+      );
+      if (_transactionId != null && _transactionId != session.transactionId) {
+        throw const FormatException('Attempt binding mismatch');
+      }
+      hosted = session;
+      _transactionId = session.transactionId;
+      _schedule();
+    }
+  }
+
+  Future<void> refresh() async {
+    if (_disposed) return;
+    try {
+      final updated = _resumeToken != null
+          ? await client.resume(_resumeToken!)
+          : _transactionId != null
+          ? await client.transaction(_transactionId!)
+          : null;
+      if (_disposed || updated == null) return;
+      result = updated;
+      step = RechargeStep.result;
+      if (updated.terminal) {
+        _timer?.cancel();
+        _resumeToken = null;
+        _attemptKey = null;
+        hosted = null;
+      }
+      _emit();
+      _schedule();
+    } catch (e) {
+      if (!_disposed) {
+        error = safeError(e);
+        _emit();
+        _schedule();
+      }
+    }
+  }
+
+  Future<void> resume(String token) async {
+    if (!resumeTokenPattern.hasMatch(token)) {
+      error = 'resumeUnavailable';
+      _emit();
+      return;
+    }
+    _timer?.cancel();
+    _resumeToken = token;
+    _polls = 0;
+    step = RechargeStep.result;
+    await refresh();
+  }
+
+  void _schedule() {
+    if (_disposed ||
+        _timer?.isActive == true ||
+        _polls >= 24 ||
+        result?.terminal == true ||
+        (_transactionId == null && _resumeToken == null)) {
+      return;
+    }
+    _timer = Timer(const Duration(seconds: 5), () {
+      _polls++;
+      refresh();
+    });
+  }
+
+  Future<void> loadHistory() => _run((v) async {
+    final list = await client.history();
+    if (_current(v)) history = list;
+  });
+  Future<void> repeat(RechargeResult prior) => _run((v) async {
+    if (locked || prior.id == null || !prior.terminal) {
+      throw StateError('Unresolved recharge');
+    }
+    final q = await client.topups.repeat(prior.id!);
+    if (!_current(v)) return;
+    // A repeat is a new reviewed reservation, not a replay of the completed one.
+    _timer?.cancel();
+    _polls = 0;
+    _transactionId = null;
+    _attemptQuote = null;
+    _attemptRecipient = null;
+    _attemptCountry = null;
+    _attemptMode = null;
+    hosted = null;
+    quote = q;
+    _watchQuote();
+    country = q.countryCode;
+    phone = q.phone;
+    recipientId = null;
+    operator = null;
+    product = null;
+    promotion = null;
+    reviewed = false;
+    result = null;
+    step = RechargeStep.review;
+    try {
+      final details = await client.promotion(q.id);
+      promotion = details == null ? q.promotion : {...?q.promotion, ...details};
+    } on DioException catch (e) {
+      if (![404, 503].contains(e.response?.statusCode)) rethrow;
+    }
+  });
+  void startAnother() {
+    _editable();
+    _revision++;
+    _timer?.cancel();
+    _polls = 0;
+    _transactionId = null;
+    _attemptQuote = null;
+    result = null;
+    hosted = null;
+    country = null;
+    phone = '';
+    operator = null;
+    product = null;
+    products = [];
+    operators = [];
+    recipientId = null;
+    nickname = '';
+    _invalidateQuote();
+    step = RechargeStep.destination;
+    _emit();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _timer?.cancel();
+    _quoteTimer?.cancel();
+    _resumeToken = null;
+    super.dispose();
+  }
+}

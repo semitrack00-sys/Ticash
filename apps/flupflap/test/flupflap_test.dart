@@ -246,6 +246,8 @@ void main() {
       expect(find.text('Sign in to FlupFlap'), findsOneWidget);
       expect(find.text('Continue as guest'), findsOneWidget);
       expect(find.textContaining('KYC'), findsNothing);
+      await tester.ensureVisible(find.text('Create account'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Create account'));
       await tester.pumpAndSettle();
       expect(find.text('Create FlupFlap account'), findsOneWidget);

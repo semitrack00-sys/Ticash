@@ -84,6 +84,7 @@ class MobileTopUpAvailability {
     required this.approvedForLiveUse,
     required this.liveRechargeEnabled,
     this.providers = const [],
+    this.paymentMode,
   });
   final bool enabled;
   final String environment;
@@ -92,6 +93,7 @@ class MobileTopUpAvailability {
   final bool approvedForLiveUse;
   final bool liveRechargeEnabled;
   final List<String> providers;
+  final String? paymentMode;
 
   bool get isGenuinelyLive =>
       environment.toUpperCase() == 'PRODUCTION' &&
@@ -105,6 +107,7 @@ class MobileTopUpAvailability {
   factory MobileTopUpAvailability.fromJson(Map<String, dynamic> json) =>
       MobileTopUpAvailability(
         enabled: json['enabled'] as bool? ?? false,
+        paymentMode: json['paymentMode'] as String?,
         environment: json['environment'] as String? ?? 'SANDBOX',
         testMode: json['testMode'] as bool? ?? true,
         productionEnabled: json['productionEnabled'] as bool? ?? false,
@@ -188,6 +191,9 @@ class MobileTopUpProduct {
     this.description,
     this.benefits = const [],
     this.validityLabel,
+    this.catalogVersion,
+    this.amountIncrement,
+    this.amountPrecision,
   });
   final String id;
   final int operatorId;
@@ -203,16 +209,23 @@ class MobileTopUpProduct {
   final String? description;
   final List<String> benefits;
   final String? validityLabel;
+  final String? catalogVersion;
+  final double? amountIncrement;
+  final int? amountPrecision;
 
   static List<String> _benefits(dynamic value) {
     if (value is! List) return const [];
-    return value.whereType<Map>().map((item) {
-      final type = item['type']?.toString() ?? '';
-      final amount = item['amount'];
-      final unit = item['unit']?.toString().replaceAll('_', ' ') ?? '';
-      if (amount == -1) return 'Unlimited $type';
-      return '$amount $unit ${type.toLowerCase()}'.trim();
-    }).where((item) => item.isNotEmpty).toList();
+    return value
+        .whereType<Map>()
+        .map((item) {
+          final type = item['type']?.toString() ?? '';
+          final amount = item['amount'];
+          final unit = item['unit']?.toString().replaceAll('_', ' ') ?? '';
+          if (amount == -1) return 'Unlimited $type';
+          return '$amount $unit ${type.toLowerCase()}'.trim();
+        })
+        .where((item) => item.isNotEmpty)
+        .toList();
   }
 
   static String? _validity(dynamic value) {
@@ -241,6 +254,9 @@ class MobileTopUpProduct {
         description: json['description'] as String?,
         benefits: _benefits(json['benefits']),
         validityLabel: _validity(json['validity']),
+        catalogVersion: json['catalogVersion'] as String?,
+        amountIncrement: (json['amountIncrement'] as num?)?.toDouble(),
+        amountPrecision: (json['amountPrecision'] as num?)?.toInt(),
       );
 }
 
@@ -295,6 +311,7 @@ class MobileTopUpQuote {
     required this.expiresAt,
     this.deliveredValue,
     this.receiverQuote,
+    this.promotion,
   });
   final String id;
   final String phone;
@@ -308,6 +325,7 @@ class MobileTopUpQuote {
   final String providerCurrency;
   final double? deliveredValue;
   final Map<String, dynamic>? receiverQuote;
+  final Map<String, dynamic>? promotion;
   final String deliveredCurrency;
   final double feeUsd;
   final double totalChargeUsd;
@@ -332,6 +350,9 @@ class MobileTopUpQuote {
         receiverQuote: json['receiverQuote'] == null
             ? null
             : Map<String, dynamic>.from(json['receiverQuote'] as Map),
+        promotion: json['promotion'] is Map
+            ? Map<String, dynamic>.from(json['promotion'] as Map)
+            : null,
         deliveredValue: (json['deliveredValue'] as num?)?.toDouble(),
         deliveredCurrency: json['deliveredCurrency'] as String,
         feeUsd: (json['feeUsd'] as num).toDouble(),
@@ -406,7 +427,8 @@ class MobileTopUpTransaction {
           (item) => item.name == (json['status'] as String).toLowerCase(),
           orElse: () => MobileTopUpStatus.pending,
         ),
-        paymentStatus: (json['paymentStatus'] as String? ?? 'PENDING').toUpperCase(),
+        paymentStatus: (json['paymentStatus'] as String? ?? 'PENDING')
+            .toUpperCase(),
         testMode: json['testMode'] as bool? ?? true,
         createdAt: DateTime.parse(json['createdAt'] as String),
         receiverQuote: json['receiverQuote'] == null

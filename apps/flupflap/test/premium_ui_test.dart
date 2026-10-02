@@ -36,7 +36,7 @@ const terms = {
 
 class CatalogAdapter extends FixtureAdapter {
   String transactionStatus = 'PENDING';
-  bool unavailable = false;
+  bool unavailable = false, includeHistory = false;
   final saved = <Map<String, dynamic>>[
     {...recipient},
   ];
@@ -44,6 +44,13 @@ class CatalogAdapter extends FixtureAdapter {
     ...terms,
     'id': 'transaction-fixture',
     'status': transactionStatus,
+    'paymentStatus': transactionStatus == 'DELIVERED'
+        ? 'CAPTURED'
+        : transactionStatus == 'REFUNDED'
+        ? 'REFUNDED'
+        : transactionStatus == 'FAILED'
+        ? 'FAILED'
+        : 'AUTHORIZED',
     'testMode': true,
     'createdAt': '2026-09-30T12:00:00Z',
   };
@@ -53,6 +60,15 @@ class CatalogAdapter extends FixtureAdapter {
     Stream<Uint8List>? stream,
     Future<void>? cancel,
   ) async {
+    if (o.path.startsWith('/flupflap/marketing/quotes/')) {
+      return ResponseBody.fromString(
+        '{"promotion":null}',
+        200,
+        headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+        },
+      );
+    }
     if (!o.path.startsWith('/flupflap/mobile-topups/')) {
       return super.fetch(o, stream, cancel);
     }
@@ -70,12 +86,36 @@ class CatalogAdapter extends FixtureAdapter {
     if (o.path.endsWith('/status')) {
       data = {
         'enabled': true,
+        'paymentMode': 'MOCK',
         'environment': 'SANDBOX',
         'testMode': true,
         'productionEnabled': false,
         'approvedForLiveUse': false,
         'liveRechargeEnabled': false,
         'providers': ['RELOADLY', 'DING'],
+      };
+    } else if (o.path.endsWith('/payment-methods')) {
+      data = {
+        'environment': 'SANDBOX',
+        'methods': [
+          {
+            'type': 'CARD',
+            'provider': 'MOCK',
+            'enabled': true,
+            'testMode': true,
+          },
+        ],
+      };
+    } else if (o.path.endsWith('/operators')) {
+      data = {
+        'operators': [
+          {
+            'id': 255,
+            'name': terms['operatorName'],
+            'countryCode': 'US',
+            'bundle': false,
+          },
+        ],
       };
     } else if (o.path.endsWith('/countries')) {
       data = {
@@ -130,7 +170,7 @@ class CatalogAdapter extends FixtureAdapter {
       };
     } else if (o.path.endsWith('/transactions') && o.method == 'GET') {
       data = {
-        'transactions': [transaction],
+        'transactions': includeHistory ? [transaction] : [],
       };
     } else {
       data = {'transaction': transaction};
@@ -150,7 +190,7 @@ Future<(FlupFlapSession, CatalogAdapter)> app(
   double width, {
   bool guest = false,
   double scale = 1,
-  String status = 'PENDING',
+  String? status,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 900);
@@ -158,7 +198,9 @@ Future<(FlupFlapSession, CatalogAdapter)> app(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-  final adapter = CatalogAdapter()..transactionStatus = status;
+  final adapter = CatalogAdapter()
+    ..transactionStatus = (status ?? 'PENDING')
+    ..includeHistory = status != null;
   final session = FlupFlapSession(
     dio: Dio(BaseOptions(baseUrl: 'https://api.example.test/api'))
       ..httpClientAdapter = adapter,
@@ -295,7 +337,7 @@ void main() {
         tester.widget<TextField>(find.byType(TextField).first).controller!.text,
         recipient['phone'],
       );
-      await tap(tester, find.text('Detect operator'));
+      await tap(tester, find.text('Continue'));
       final detection = adapter.requests.singleWhere(
         (r) => r.path.endsWith('/operators/detect'),
       );
@@ -304,7 +346,7 @@ void main() {
         'phone': recipient['phone'],
       });
       await tap(tester, find.text(terms['productName'] as String));
-      await tap(tester, find.text('Review recharge'));
+      await tap(tester, find.text('Continue'));
       final quote = adapter.requests.singleWhere(
         (r) => r.path.endsWith('/quotes'),
       );
@@ -314,19 +356,20 @@ void main() {
         'operatorId': 255,
         'productId': 'fixture-product',
       });
-      expect(find.text(r'$6.24 USD'), findsOneWidget);
+      expect(find.text('6.24 USD'), findsOneWidget);
       await screenshot(tester, 'review-390');
-      await tap(tester, find.text('Confirm sandbox recharge'));
+      await tap(tester, find.byType(CheckboxListTile));
+      await tap(tester, find.text('Confirm MOCK test recharge'));
       final purchase = adapter.requests.singleWhere(
         (r) => r.path.endsWith('/transactions') && r.method == 'POST',
       );
       expect(purchase.data, {
         'quoteId': 'quote-fixture',
-        'recipientId': 'new-recipient',
+        'recipientId': 'recipient-fixture',
       });
       expect(purchase.headers['Idempotency-Key'], isNotEmpty);
-      expect(find.text('Recharge pending'), findsOneWidget);
-      expect(find.text('Recharge delivered'), findsNothing);
+      expect(find.text('Pending'), findsOneWidget);
+      expect(find.text('Delivered'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -343,10 +386,17 @@ void main() {
     ) async {
       final (_, adapter) = await app(tester, 360, status: status);
       await tap(tester, find.widgetWithText(NavigationDestination, 'History'));
-      await tap(tester, find.text('View receipt'));
-      expect(find.text('Recharge ${status.toLowerCase()}'), findsOneWidget);
+
+      expect(
+        find.text(
+          status == 'REFUNDED'
+              ? 'Refund confirmed'
+              : '${status[0]}${status.substring(1).toLowerCase()}',
+        ),
+        findsOneWidget,
+      );
       if (status != 'DELIVERED') {
-        expect(find.text('Recharge delivered'), findsNothing);
+        expect(find.text('Delivered'), findsNothing);
       }
       expect(
         adapter.requests.where(
@@ -496,7 +546,7 @@ void main() {
     (tester) async {
       final (_, adapter) = await app(tester, 390, status: 'DELIVERED');
       await tap(tester, find.widgetWithText(NavigationDestination, 'History'));
-      await tap(tester, find.text('Repeat'));
+      await tap(tester, find.text('Repeat with a new quote'));
       expect(
         adapter.requests
             .where((r) => r.path.endsWith('/transaction-fixture/repeat'))
@@ -504,7 +554,7 @@ void main() {
         1,
       );
       await tester.scrollUntilVisible(
-        find.text(r'$6.24 USD'),
+        find.text('6.24 USD'),
         200,
         scrollable: find
             .byWidgetPredicate(
@@ -512,7 +562,7 @@ void main() {
             )
             .last,
       );
-      expect(find.text(r'$6.24 USD'), findsOneWidget);
+      expect(find.text('6.24 USD'), findsOneWidget);
       expect(
         adapter.requests.where(
           (r) => r.method == 'POST' && r.path.endsWith('/transactions'),
@@ -529,12 +579,53 @@ void main() {
       final (_, adapter) = await app(tester, 375);
       adapter.unavailable = true;
       await tap(tester, find.widgetWithText(NavigationDestination, 'Recharge'));
-      expect(find.textContaining('Recharge is unavailable'), findsOneWidget);
+      expect(
+        find.textContaining('Unable to complete this request'),
+        findsOneWidget,
+      );
       expect(find.text('Confirm sandbox recharge'), findsNothing);
       adapter.unavailable = false;
-      await tap(tester, find.text('Check again'));
-      expect(find.text('Destination country'), findsOneWidget);
+      await tap(tester, find.text('Retry'));
+      expect(find.text('Country'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'Android return strips capability from route and only reads backend status',
+    (tester) async {
+      final adapter = CatalogAdapter();
+      final session = FlupFlapSession(
+        dio: Dio(BaseOptions(baseUrl: 'https://api.example.test/api'))
+          ..httpClientAdapter = adapter,
+        storage: MemoryStorage(),
+      );
+      await session.initialize();
+      await tester.pumpWidget(FlupFlapApp(session: session));
+      await tester.pumpAndSettle();
+      final router = GoRouter.of(tester.element(find.byType(AuthScreen)));
+      router.go('flupflap://checkout-return?checkoutResumeToken=${'a' * 43}');
+      await tester.pumpAndSettle();
+      expect(
+        router.routeInformationProvider.value.uri.toString(),
+        '/checkout-return',
+      );
+      expect(find.text('Pending'), findsOneWidget);
+      expect(session.authenticated, false);
+      router.go('flupflap://checkout-return?checkoutResumeToken=${'b' * 43}');
+      await tester.pumpAndSettle();
+      final calls = adapter.requests
+          .where((r) => r.path.endsWith('/checkout-resume'))
+          .toList();
+      expect(calls.length, 2);
+      expect(calls.last.data, {'resumeToken': 'b' * 43});
+      expect(
+        adapter.requests.where(
+          (r) => r.method == 'POST' && !r.path.endsWith('/checkout-resume'),
+        ),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 }

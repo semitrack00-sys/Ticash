@@ -3,7 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ticash/providers/mobile_top_up_provider.dart';
-import 'package:ticash/screens/topup/mobile_top_up_screen.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:ticash/localization/app_localizations.dart';
+import 'account_parity.dart';
+import 'checkout_contract.dart';
+import 'recharge_journey.dart';
+import 'recharge_screen.dart';
+import 'parity_strings.dart';
 import 'package:ticash/services/mobile_top_up_service.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'session.dart';
@@ -60,6 +66,52 @@ class FlupFlapApp extends StatefulWidget {
 }
 
 class _FlupFlapAppState extends State<FlupFlapApp> {
+  late FlupFlapClient client;
+  late RechargeJourney journey;
+  late RechargeJourney resumeJourney;
+  String? owner;
+  AppLanguage language = AppLanguage.english;
+  @override
+  void initState() {
+    super.initState();
+    _resetJourney();
+    resumeJourney = RechargeJourney(
+      FlupFlapClient(widget.session.dio),
+      guest: () => true,
+      storedBillingCountry: () => null,
+    );
+    widget.session.addListener(_sessionChanged);
+  }
+
+  void _resetJourney({bool preserveClient = false}) {
+    owner = widget.session.user?['id'] as String?;
+    if (!preserveClient) client = FlupFlapClient(widget.session.dio);
+    journey = RechargeJourney(
+      client,
+      guest: () => widget.session.guest,
+      storedBillingCountry: () =>
+          widget.session.user?['countryCode'] as String?,
+    );
+  }
+
+  void _sessionChanged() {
+    if (owner != widget.session.user?['id']) {
+      final signingIn = owner == null && widget.session.user != null;
+      journey.dispose();
+      if (!signingIn) {
+        client.clearCapabilities();
+        resumeJourney.dispose();
+        resumeJourney = RechargeJourney(
+          FlupFlapClient(widget.session.dio),
+          guest: () => true,
+          storedBillingCountry: () => null,
+        );
+      }
+      _resetJourney(preserveClient: signingIn);
+      if (signingIn) client.claim().catchError((Object _) {});
+    }
+  }
+
   static const paths = [
     '/',
     '/recharge',
@@ -72,6 +124,26 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
     initialLocation: '/',
     redirect: (context, state) {
       final uri = state.uri;
+      if (uri.scheme == 'flupflap' && uri.host == 'join') {
+        final referral = uri.queryParameters['r'];
+        final promo = uri.queryParameters['promo'];
+        if (referral != null || promo != null) {
+          client
+              .visit(referral: referral, promo: promo)
+              .catchError((Object _) => <String, dynamic>{});
+        }
+        return '/login';
+      }
+      if (uri.scheme == 'flupflap' && uri.host == 'checkout-return') {
+        final token = uri.queryParameters['checkoutResumeToken'];
+        // A second return may resolve to the same route, so notify the
+        // memory-only controller directly rather than relying on a rebuild.
+        Future.microtask(() {
+          if (mounted) resumeJourney.resume(token ?? '');
+        });
+        return '/checkout-return';
+      }
+      if (state.matchedLocation == '/checkout-return') return null;
       if (uri.scheme == 'flupflap') {
         return uri.host == 'reset-password'
             ? '/reset-password?${uri.query}'
@@ -92,13 +164,27 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
     },
     routes: [
       GoRoute(
+        path: '/checkout-return',
+        builder: (_, __) {
+          return RechargeJourneyScreen(
+            journey: resumeJourney,
+            returnOnly: true,
+          );
+        },
+      ),
+      GoRoute(
         path: '/loading',
         builder: (_, __) =>
             const Scaffold(body: Center(child: CircularProgressIndicator())),
       ),
       GoRoute(
         path: '/login',
-        builder: (_, __) => AuthScreen(session: widget.session),
+        builder: (_, __) => AuthScreen(
+          session: widget.session,
+          client: client,
+          language: language,
+          onLanguage: (v) => setState(() => language = v),
+        ),
       ),
       GoRoute(
         path: '/reset-password',
@@ -119,31 +205,31 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
               indicatorColor: const Color(0xFFE4EEFF),
               selectedIndex: paths.indexOf(state.matchedLocation).clamp(0, 4),
               onDestinationSelected: (i) => context.go(paths[i]),
-              destinations: const [
+              destinations: [
                 NavigationDestination(
-                  icon: Icon(Icons.home_outlined),
-                  selectedIcon: Icon(Icons.home_rounded),
-                  label: 'Home',
+                  icon: const Icon(Icons.home_outlined),
+                  selectedIcon: const Icon(Icons.home_rounded),
+                  label: context.ft('Home'),
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.phone_iphone_outlined),
-                  selectedIcon: Icon(Icons.phone_iphone_rounded),
-                  label: 'Recharge',
+                  icon: const Icon(Icons.phone_iphone_outlined),
+                  selectedIcon: const Icon(Icons.phone_iphone_rounded),
+                  label: context.ft('Recharge'),
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.receipt_long_outlined),
-                  selectedIcon: Icon(Icons.receipt_long_rounded),
-                  label: 'History',
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  selectedIcon: const Icon(Icons.receipt_long_rounded),
+                  label: context.ft('history'),
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.people_outline_rounded),
-                  selectedIcon: Icon(Icons.people_rounded),
-                  label: 'Recipients',
+                  icon: const Icon(Icons.people_outline_rounded),
+                  selectedIcon: const Icon(Icons.people_rounded),
+                  label: context.ft('Recipients'),
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.person_outline_rounded),
-                  selectedIcon: Icon(Icons.person_rounded),
-                  label: 'Account',
+                  icon: const Icon(Icons.person_outline_rounded),
+                  selectedIcon: const Icon(Icons.person_rounded),
+                  label: context.ft('Account'),
                 ),
               ],
             ),
@@ -153,8 +239,8 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
           GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
           GoRoute(
             path: '/recharge',
-            builder: (_, state) => MobileTopUpScreen(
-              customerPresentation: true,
+            builder: (_, state) => RechargeJourneyScreen(
+              journey: journey,
               initialRecipient: state.extra is MobileTopUpRecipient
                   ? state.extra as MobileTopUpRecipient
                   : null,
@@ -162,10 +248,8 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
           ),
           GoRoute(
             path: '/history',
-            builder: (_, __) => const MobileTopUpScreen(
-              initialHistory: true,
-              customerPresentation: true,
-            ),
+            builder: (_, __) =>
+                RechargeJourneyScreen(journey: journey, history: true),
           ),
           GoRoute(
             path: '/recipients',
@@ -173,7 +257,12 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
           ),
           GoRoute(
             path: '/account',
-            builder: (_, __) => AccountScreen(session: widget.session),
+            builder: (_, __) => AccountScreen(
+              session: widget.session,
+              client: client,
+              language: language,
+              onLanguage: (v) => setState(() => language = v),
+            ),
           ),
         ],
       ),
@@ -182,6 +271,10 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
 
   @override
   void dispose() {
+    widget.session.removeListener(_sessionChanged);
+    journey.dispose();
+    client.clearCapabilities();
+    resumeJourney.dispose();
     router.dispose();
     super.dispose();
   }
@@ -199,74 +292,82 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
           ),
         ),
       ],
-      child: MaterialApp.router(
-        title: 'FlupFlap',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          fontFamily: 'Roboto',
-          scaffoldBackgroundColor: _surface,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: _blue,
-            primary: _blue,
-            surface: Colors.white,
-          ),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: _surface,
-            foregroundColor: _navy,
-            elevation: 0,
-            centerTitle: false,
-            titleTextStyle: TextStyle(
-              fontFamily: 'Roboto',
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: _navy,
-            ),
-          ),
-          cardTheme: const CardThemeData(
-            color: Colors.white,
-            elevation: 0,
-            margin: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.all(Radius.circular(20)),
-              side: BorderSide(color: Color(0xFFE5EAF2)),
-            ),
-          ),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: Colors.white,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 16,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFFDCE3EE)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFFDCE3EE)),
-            ),
-          ),
-          filledButtonTheme: FilledButtonThemeData(
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(54),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              textStyle: const TextStyle(
-                fontFamily: 'Roboto',
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
+      child: AppLocalizationScope(
+        language: language,
+        child: MaterialApp.router(
+          title: 'FlupFlap',
+          locale: language.materialLocale,
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          supportedLocales: const [
+            Locale('en'),
+            Locale('fr'),
+            Locale('es'),
+            Locale('pt'),
+          ],
+          debugShowCheckedModeBanner: false,
+          theme: flupFlapTheme(),
+          routerConfig: router,
         ),
-        routerConfig: router,
       ),
     ),
   );
 }
+
+ThemeData flupFlapTheme() => ThemeData(
+  useMaterial3: true,
+  fontFamily: 'Roboto',
+  scaffoldBackgroundColor: _surface,
+  colorScheme: ColorScheme.fromSeed(
+    seedColor: _blue,
+    primary: _blue,
+    surface: Colors.white,
+  ),
+  appBarTheme: const AppBarTheme(
+    backgroundColor: _surface,
+    foregroundColor: _navy,
+    elevation: 0,
+    centerTitle: false,
+    titleTextStyle: TextStyle(
+      fontFamily: 'Roboto',
+      fontSize: 22,
+      fontWeight: FontWeight.w800,
+      color: _navy,
+    ),
+  ),
+  cardTheme: const CardThemeData(
+    color: Colors.white,
+    elevation: 0,
+    margin: EdgeInsets.zero,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.all(Radius.circular(20)),
+      side: BorderSide(color: Color(0xFFE5EAF2)),
+    ),
+  ),
+  inputDecorationTheme: InputDecorationTheme(
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(color: Color(0xFFDCE3EE)),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(color: Color(0xFFDCE3EE)),
+    ),
+  ),
+  filledButtonTheme: FilledButtonThemeData(
+    style: FilledButton.styleFrom(
+      minimumSize: const Size.fromHeight(54),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      textStyle: const TextStyle(
+        fontFamily: 'Roboto',
+        fontSize: 16,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  ),
+);
 
 class Brand extends StatelessWidget {
   const Brand({super.key, this.compact = false});
@@ -281,9 +382,9 @@ class Brand extends StatelessWidget {
       ),
       if (!compact) ...[
         const SizedBox(height: 5),
-        const Text(
-          'Worldwide mobile recharge',
-          style: TextStyle(
+        Text(
+          context.ft('Worldwide mobile recharge'),
+          style: const TextStyle(
             color: _muted,
             fontSize: 13,
             fontWeight: FontWeight.w600,
@@ -295,9 +396,19 @@ class Brand extends StatelessWidget {
 }
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.session, this.resetToken});
+  const AuthScreen({
+    super.key,
+    required this.session,
+    this.resetToken,
+    this.client,
+    this.language = AppLanguage.english,
+    this.onLanguage,
+  });
   final FlupFlapSession session;
   final String? resetToken;
+  final FlupFlapClient? client;
+  final AppLanguage language;
+  final ValueChanged<AppLanguage>? onLanguage;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -330,8 +441,9 @@ class _AuthScreenState extends State<AuthScreen> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => message =
-              'Unable to complete this request. Check your details and try again.',
+          () => message = context.ft(
+            'Unable to complete this request. Check your details and try again.',
+          ),
         );
       }
     } finally {
@@ -348,6 +460,9 @@ class _AuthScreenState extends State<AuthScreen> {
         await widget.session.reset(widget.resetToken!, password.text);
         if (mounted) context.go('/login');
       } else if (registration) {
+        try {
+          await widget.client?.signupStarted();
+        } catch (_) {}
         await widget.session.register(
           firstName: firstName.text.trim(),
           lastName: lastName.text.trim(),
@@ -372,6 +487,22 @@ class _AuthScreenState extends State<AuthScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (widget.onLanguage != null)
+                  DropdownButton<AppLanguage>(
+                    value: widget.language,
+                    isExpanded: true,
+                    items: AppLanguage.values
+                        .map(
+                          (l) => DropdownMenuItem(
+                            value: l,
+                            child: Text(l.nativeName),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) widget.onLanguage!(v);
+                    },
+                  ),
                 const Brand(),
                 const SizedBox(height: 28),
                 Card(
@@ -382,10 +513,10 @@ class _AuthScreenState extends State<AuthScreen> {
                       children: [
                         Text(
                           widget.resetToken != null
-                              ? 'Reset FlupFlap password'
+                              ? context.ft('Reset FlupFlap password')
                               : registration
-                              ? 'Create FlupFlap account'
-                              : 'Sign in to FlupFlap',
+                              ? context.ft('Create FlupFlap account')
+                              : context.ft('Sign in to FlupFlap'),
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(
                                 fontWeight: FontWeight.w900,
@@ -395,10 +526,12 @@ class _AuthScreenState extends State<AuthScreen> {
                         const SizedBox(height: 6),
                         Text(
                           widget.resetToken != null
-                              ? 'Choose a new secure password.'
+                              ? context.ft('Choose a new secure password.')
                               : registration
-                              ? 'Recharge phones worldwide in a few taps.'
-                              : 'Sign in to continue to FlupFlap.',
+                              ? context.ft(
+                                  'Recharge phones worldwide in a few taps.',
+                                )
+                              : context.ft('Sign in to continue to FlupFlap.'),
                           style: const TextStyle(color: _muted),
                         ),
                         const SizedBox(height: 20),
@@ -408,9 +541,9 @@ class _AuthScreenState extends State<AuthScreen> {
                             controller: firstName,
                             textCapitalization: TextCapitalization.words,
                             autofillHints: const [AutofillHints.givenName],
-                            decoration: const InputDecoration(
-                              labelText: 'First name',
-                              prefixIcon: Icon(Icons.person_outline),
+                            decoration: InputDecoration(
+                              labelText: context.ft('First name'),
+                              prefixIcon: const Icon(Icons.person_outline),
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -419,9 +552,9 @@ class _AuthScreenState extends State<AuthScreen> {
                             controller: lastName,
                             textCapitalization: TextCapitalization.words,
                             autofillHints: const [AutofillHints.familyName],
-                            decoration: const InputDecoration(
-                              labelText: 'Last name',
-                              prefixIcon: Icon(Icons.person_outline),
+                            decoration: InputDecoration(
+                              labelText: context.ft('Last name'),
+                              prefixIcon: const Icon(Icons.person_outline),
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -432,10 +565,10 @@ class _AuthScreenState extends State<AuthScreen> {
                             autofillHints: const [
                               AutofillHints.telephoneNumber,
                             ],
-                            decoration: const InputDecoration(
-                              labelText: 'Phone number',
+                            decoration: InputDecoration(
+                              labelText: context.ft('Phone number'),
                               hintText: '+1 555 123 4567',
-                              prefixIcon: Icon(Icons.phone_outlined),
+                              prefixIcon: const Icon(Icons.phone_outlined),
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -446,9 +579,9 @@ class _AuthScreenState extends State<AuthScreen> {
                             controller: email,
                             keyboardType: TextInputType.emailAddress,
                             autofillHints: const [AutofillHints.email],
-                            decoration: const InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: Icon(Icons.email_outlined),
+                            decoration: InputDecoration(
+                              labelText: context.ft('Email'),
+                              prefixIcon: const Icon(Icons.email_outlined),
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -461,12 +594,12 @@ class _AuthScreenState extends State<AuthScreen> {
                           enableSuggestions: false,
                           autocorrect: false,
                           decoration: InputDecoration(
-                            labelText: 'Password',
+                            labelText: context.ft('Password'),
                             prefixIcon: const Icon(Icons.lock_outline),
                             suffixIcon: IconButton(
                               tooltip: obscure
-                                  ? 'Show password'
-                                  : 'Hide password',
+                                  ? context.ft('Show password')
+                                  : context.ft('Hide password'),
                               onPressed: () =>
                                   setState(() => obscure = !obscure),
                               icon: Icon(
@@ -487,12 +620,12 @@ class _AuthScreenState extends State<AuthScreen> {
                           onPressed: busy ? null : submit,
                           child: Text(
                             busy
-                                ? 'Please wait…'
+                                ? context.ft('Please wait…')
                                 : widget.resetToken != null
-                                ? 'Update password'
+                                ? context.ft('Update password')
                                 : registration
-                                ? 'Create account'
-                                : 'Sign in',
+                                ? context.ft('Create account')
+                                : context.ft('Sign in'),
                           ),
                         ),
                         if (widget.resetToken == null) ...[
@@ -500,7 +633,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             onPressed: busy
                                 ? null
                                 : () => run(() => widget.session.enterGuest()),
-                            child: const Text('Continue as guest'),
+                            child: Text(context.ft('Continue as guest')),
                           ),
                           TextButton(
                             onPressed: busy
@@ -510,8 +643,10 @@ class _AuthScreenState extends State<AuthScreen> {
                                   ),
                             child: Text(
                               registration
-                                  ? 'Already have an account? Sign in'
-                                  : 'Create account',
+                                  ? context.ft(
+                                      'Already have an account? Sign in',
+                                    )
+                                  : context.ft('Create account'),
                             ),
                           ),
                           if (!registration)
@@ -524,12 +659,13 @@ class _AuthScreenState extends State<AuthScreen> {
                                       );
                                       if (mounted) {
                                         setState(
-                                          () => message =
-                                              'If an account exists, reset instructions have been sent.',
+                                          () => message = context.ft(
+                                            'If an account exists, reset instructions have been sent.',
+                                          ),
                                         );
                                       }
                                     }),
-                              child: const Text('Forgot password?'),
+                              child: Text(context.ft('Forgot password?')),
                             ),
                         ],
                       ],
@@ -558,7 +694,7 @@ class HomeScreen extends ConsumerWidget {
           IconButton(
             onPressed: () => context.go('/account'),
             icon: const Icon(Icons.account_circle_outlined),
-            tooltip: 'Account',
+            tooltip: context.ft('Account'),
           ),
           const SizedBox(width: 8),
         ],
@@ -593,9 +729,9 @@ class HomeScreen extends ConsumerWidget {
                       color: Colors.white.withValues(alpha: .12),
                       borderRadius: BorderRadius.circular(30),
                     ),
-                    child: const Text(
-                      'FAST • SIMPLE • WORLDWIDE',
-                      style: TextStyle(
+                    child: Text(
+                      context.ft('FAST • SIMPLE • WORLDWIDE'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -603,9 +739,9 @@ class HomeScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  const Text(
-                    'Start recharge',
-                    style: TextStyle(
+                  Text(
+                    context.ft('Start recharge'),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 28,
                       height: 1.1,
@@ -614,7 +750,9 @@ class HomeScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Recharge family and friends with supported mobile operators around the world.',
+                    context.ft(
+                      'Recharge family and friends with supported mobile operators around the world.',
+                    ),
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: .82),
                       height: 1.4,
@@ -628,21 +766,21 @@ class HomeScreen extends ConsumerWidget {
                       foregroundColor: _navy,
                     ),
                     icon: const Icon(Icons.bolt_rounded),
-                    label: const Text('Send a recharge'),
+                    label: Text(context.ft('Send a recharge')),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
-            const _SectionTitle(title: 'Quick access'),
+            _SectionTitle(title: context.ft('Quick access')),
             const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
                   child: _QuickAction(
                     icon: Icons.phone_iphone_rounded,
-                    title: 'Recharge',
-                    subtitle: 'Send airtime',
+                    title: context.ft('Recharge'),
+                    subtitle: context.ft('Send airtime'),
                     onTap: () => context.go('/recharge'),
                   ),
                 ),
@@ -650,8 +788,8 @@ class HomeScreen extends ConsumerWidget {
                 Expanded(
                   child: _QuickAction(
                     icon: Icons.receipt_long_rounded,
-                    title: 'History',
-                    subtitle: 'Track recharges',
+                    title: context.ft('history'),
+                    subtitle: context.ft('Track recharges'),
                     onTap: () => context.go('/history'),
                   ),
                 ),
@@ -659,24 +797,25 @@ class HomeScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 24),
             _SectionTitle(
-              title: 'Recipients',
-              action: 'View all',
+              title: context.ft('Recipients'),
+              action: context.ft('View all'),
               onAction: () => context.go('/recipients'),
             ),
             const SizedBox(height: 12),
             recipients.when(
               loading: () => const _LoadingCard(),
-              error: (_, __) => const _EmptyCard(
+              error: (_, __) => _EmptyCard(
                 icon: Icons.people_outline,
-                title: 'Recipients unavailable',
-                subtitle: 'Pull down to try again.',
+                title: context.ft('Recipients unavailable'),
+                subtitle: context.ft('Pull down to try again.'),
               ),
               data: (items) => items.isEmpty
                   ? _EmptyCard(
                       icon: Icons.person_add_alt_1_outlined,
-                      title: 'No saved recipients yet',
-                      subtitle:
-                          'Save someone during a recharge for faster sending next time.',
+                      title: context.ft('No saved recipients yet'),
+                      subtitle: context.ft(
+                        'Save someone during a recharge for faster sending next time.',
+                      ),
                       action: 'Add recipient',
                       onTap: () => context.go('/recipients'),
                     )
@@ -735,23 +874,27 @@ class HomeScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 24),
             _SectionTitle(
-              title: 'Recent activity',
-              action: 'See history',
+              title: context.ft('Recent activity'),
+              action: context.ft('See history'),
               onAction: () => context.go('/history'),
             ),
             const SizedBox(height: 12),
             history.when(
               loading: () => const _LoadingCard(),
-              error: (_, __) => const _EmptyCard(
+              error: (_, __) => _EmptyCard(
                 icon: Icons.receipt_long_outlined,
-                title: 'Activity unavailable',
-                subtitle: 'Your recharge history could not be loaded.',
+                title: context.ft('Activity unavailable'),
+                subtitle: context.ft(
+                  'Your recharge history could not be loaded.',
+                ),
               ),
               data: (items) => items.isEmpty
-                  ? const _EmptyCard(
+                  ? _EmptyCard(
                       icon: Icons.receipt_long_outlined,
-                      title: 'No recharges yet',
-                      subtitle: 'Your latest recharge will appear here.',
+                      title: context.ft('No recharges yet'),
+                      subtitle: context.ft(
+                        'Your latest recharge will appear here.',
+                      ),
                     )
                   : Card(
                       child: InkWell(
@@ -789,7 +932,7 @@ class HomeScreen extends ConsumerWidget {
                                       ),
                                     ),
                                     Text(
-                                      '${items.first.status.name.toUpperCase()} · USD ${items.first.totalChargeUsd.toStringAsFixed(2)}',
+                                      '${context.ft(items.first.status.name.toUpperCase())} · USD ${items.first.totalChargeUsd.toStringAsFixed(2)}',
                                       style: const TextStyle(
                                         color: _navy,
                                         fontWeight: FontWeight.w700,
@@ -959,7 +1102,7 @@ class RecipientsScreen extends ConsumerWidget {
   const RecipientsScreen({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) => Scaffold(
-    appBar: AppBar(title: const Text('Recipients')),
+    appBar: AppBar(title: Text(context.ft('Recipients'))),
     body: ref
         .watch(mobileTopUpRecipientsProvider)
         .when(
@@ -967,8 +1110,8 @@ class RecipientsScreen extends ConsumerWidget {
           error: (_, __) => Center(
             child: _EmptyCard(
               icon: Icons.cloud_off_outlined,
-              title: 'Unable to load recipients',
-              subtitle: 'Check your connection and try again.',
+              title: context.ft('Unable to load recipients'),
+              subtitle: context.ft('Check your connection and try again.'),
               action: 'Retry',
               onTap: () => ref.invalidate(mobileTopUpRecipientsProvider),
             ),
@@ -979,10 +1122,11 @@ class RecipientsScreen extends ConsumerWidget {
                     padding: const EdgeInsets.all(20),
                     child: _EmptyCard(
                       icon: Icons.person_add_alt_1_rounded,
-                      title: 'Save people you recharge often',
-                      subtitle:
-                          'Recipients you save during checkout will appear here for quick access.',
-                      action: 'Start a recharge',
+                      title: context.ft('Save people you recharge often'),
+                      subtitle: context.ft(
+                        'Recipients you save during checkout will appear here for quick access.',
+                      ),
+                      action: context.ft('Start a recharge'),
                       onTap: () => context.go('/recharge'),
                     ),
                   ),
@@ -1035,7 +1179,7 @@ class RecipientsScreen extends ConsumerWidget {
         builder: (_) => const _AddRecipientDialog(),
       ),
       icon: const Icon(Icons.add_rounded),
-      label: const Text('Add recipient'),
+      label: Text(context.ft('Add recipient')),
     ),
   );
 }
@@ -1064,7 +1208,9 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
         nickname.text.trim().isEmpty ||
         phone.text.trim().isEmpty) {
       setState(
-        () => error = 'Enter a name, country and international phone number.',
+        () => error = context.ft(
+          'Enter a name, country and international phone number.',
+        ),
       );
       return;
     }
@@ -1085,8 +1231,9 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => error =
-              'Unable to save recipient. Check the details and try again.',
+          () => error = context.ft(
+            'Unable to save recipient. Check the details and try again.',
+          ),
         );
       }
     } finally {
@@ -1096,7 +1243,7 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Add recipient'),
+    title: Text(context.ft('Add recipient')),
     content: SizedBox(
       width: 360,
       child: SingleChildScrollView(
@@ -1107,7 +1254,9 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
               controller: nickname,
               enabled: !busy,
               textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(labelText: 'Recipient name'),
+              decoration: InputDecoration(
+                labelText: context.ft('Recipient name'),
+              ),
             ),
             const SizedBox(height: 12),
             ref
@@ -1117,13 +1266,13 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
                   error: (_, __) => TextButton(
                     onPressed: () =>
                         ref.invalidate(mobileTopUpCountriesProvider),
-                    child: const Text('Retry loading countries'),
+                    child: Text(context.ft('Retry loading countries')),
                   ),
                   data: (countries) => DropdownButtonFormField<String>(
                     isExpanded: true,
                     initialValue: countryCode,
-                    decoration: const InputDecoration(
-                      labelText: 'Destination country',
+                    decoration: InputDecoration(
+                      labelText: context.ft('Destination country'),
                     ),
                     items: countries
                         .map(
@@ -1149,9 +1298,7 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
               keyboardType: TextInputType.phone,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => save(),
-              decoration: const InputDecoration(
-                labelText: 'International phone number',
-              ),
+              decoration: InputDecoration(labelText: context.ft('phone')),
             ),
             if (error != null)
               Padding(
@@ -1168,19 +1315,30 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
     actions: [
       TextButton(
         onPressed: busy ? null : () => Navigator.of(context).pop(),
-        child: const Text('Cancel'),
+        child: Text(context.ft('Cancel')),
       ),
       TextButton(
         onPressed: busy ? null : save,
-        child: Text(busy ? 'Saving…' : 'Save recipient'),
+        child: Text(
+          busy ? context.ft('Saving…') : context.ft('Save recipient'),
+        ),
       ),
     ],
   );
 }
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key, required this.session});
+  const AccountScreen({
+    super.key,
+    required this.session,
+    required this.client,
+    required this.language,
+    required this.onLanguage,
+  });
   final FlupFlapSession session;
+  final FlupFlapClient client;
+  final AppLanguage language;
+  final ValueChanged<AppLanguage> onLanguage;
   @override
   State<AccountScreen> createState() => _AccountScreenState();
 }
@@ -1197,10 +1355,10 @@ class _AccountScreenState extends State<AccountScreen> {
   @override
   Widget build(BuildContext context) {
     final email = widget.session.guest
-        ? 'Guest recharge session'
+        ? context.ft('Guest recharge session')
         : widget.session.user?['email'] as String? ?? '';
     return Scaffold(
-      appBar: AppBar(title: const Text('FlupFlap account')),
+      appBar: AppBar(title: Text(context.ft('FlupFlap account'))),
       bottomNavigationBar: SafeArea(
         top: false,
         child: Padding(
@@ -1212,7 +1370,7 @@ class _AccountScreenState extends State<AccountScreen> {
               } catch (_) {}
             },
             icon: const Icon(Icons.logout_rounded),
-            label: const Text('Sign out'),
+            label: Text(context.ft('Sign out')),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size.fromHeight(52),
               shape: RoundedRectangleBorder(
@@ -1249,7 +1407,9 @@ class _AccountScreenState extends State<AccountScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.session.guest ? 'Guest' : 'FlupFlap customer',
+                          widget.session.guest
+                              ? context.ft('Guest')
+                              : context.ft('FlupFlap customer'),
                           style: const TextStyle(
                             color: _navy,
                             fontSize: 18,
@@ -1271,15 +1431,23 @@ class _AccountScreenState extends State<AccountScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'This account is separate from your TiCash remittance account.',
-            style: TextStyle(color: _muted, fontSize: 13),
+          Text(
+            context.ft(
+              'This account is separate from your TiCash remittance account.',
+            ),
+            style: const TextStyle(color: _muted, fontSize: 13),
           ),
           const SizedBox(height: 20),
+          AccountParity(
+            session: widget.session,
+            client: widget.client,
+            language: widget.language,
+            onLanguage: widget.onLanguage,
+          ),
           if (!widget.session.guest)
-            const Text(
-              'Profile',
-              style: TextStyle(
+            Text(
+              context.ft('Profile'),
+              style: const TextStyle(
                 color: _navy,
                 fontSize: 16,
                 fontWeight: FontWeight.w900,
@@ -1293,14 +1461,16 @@ class _AccountScreenState extends State<AccountScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Billing country',
-                      style: TextStyle(fontWeight: FontWeight.w800),
+                    Text(
+                      context.ft('Billing country'),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 5),
-                    const Text(
-                      'Use the 2-letter country code for your billing profile.',
-                      style: TextStyle(color: _muted, fontSize: 13),
+                    Text(
+                      context.ft(
+                        'Use the 2-letter country code for your billing profile.',
+                      ),
+                      style: const TextStyle(color: _muted, fontSize: 13),
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -1308,7 +1478,7 @@ class _AccountScreenState extends State<AccountScreen> {
                       maxLength: 2,
                       textCapitalization: TextCapitalization.characters,
                       decoration: InputDecoration(
-                        labelText: 'Country code',
+                        labelText: context.ft('Country code'),
                         hintText:
                             widget.session.user?['countryCode'] as String?,
                         prefixIcon: const Icon(Icons.public_rounded),
@@ -1322,17 +1492,21 @@ class _AccountScreenState extends State<AccountScreen> {
                             country.text.trim().toUpperCase(),
                           );
                           if (mounted) {
-                            setState(() => message = 'Profile updated');
+                            setState(
+                              () => message = context.ft('Profile updated'),
+                            );
                           }
                         } catch (_) {
                           if (mounted) {
                             setState(
-                              () => message = 'Unable to update profile',
+                              () => message = context.ft(
+                                'Unable to update profile',
+                              ),
                             );
                           }
                         }
                       },
-                      child: const Text('Save profile'),
+                      child: Text(context.ft('Save profile')),
                     ),
                     if (message != null)
                       Padding(
@@ -1344,30 +1518,34 @@ class _AccountScreenState extends State<AccountScreen> {
               ),
             ),
           const SizedBox(height: 20),
-          const Text(
-            'About',
-            style: TextStyle(
+          Text(
+            context.ft('About'),
+            style: const TextStyle(
               color: _navy,
               fontSize: 16,
               fontWeight: FontWeight.w900,
             ),
           ),
           const SizedBox(height: 10),
-          const Card(
+          Card(
             child: Column(
               children: [
                 ListTile(
-                  leading: Icon(Icons.shield_outlined, color: _blue),
-                  title: Text('Secure recharge'),
+                  leading: const Icon(Icons.shield_outlined, color: _blue),
+                  title: Text(context.ft('Secure recharge')),
                   subtitle: Text(
-                    'Payments and recharge processing use protected server connections.',
+                    context.ft(
+                      'Payments and recharge processing use protected server connections.',
+                    ),
                   ),
                 ),
-                Divider(height: 1, indent: 56),
+                const Divider(height: 1, indent: 56),
                 ListTile(
-                  leading: Icon(Icons.info_outline_rounded, color: _blue),
-                  title: Text('FlupFlap'),
-                  subtitle: Text('Worldwide Mobile Recharge by TiCash-App'),
+                  leading: const Icon(Icons.info_outline_rounded, color: _blue),
+                  title: const Text('FlupFlap'),
+                  subtitle: Text(
+                    context.ft('Worldwide Mobile Recharge by TiCash-App'),
+                  ),
                 ),
               ],
             ),

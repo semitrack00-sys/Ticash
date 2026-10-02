@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+
 import 'receiver_value_summary.dart';
 
 import 'package:dio/dio.dart';
@@ -12,8 +13,17 @@ import '../../providers/mobile_top_up_provider.dart';
 import '../../widgets/mobile_operator_logo.dart';
 
 class MobileTopUpScreen extends ConsumerStatefulWidget {
-  const MobileTopUpScreen({super.key, this.initialHistory = false});
+  const MobileTopUpScreen({
+    super.key,
+    this.initialHistory = false,
+    this.customerPresentation = false,
+    this.initialRecipient,
+  });
   final bool initialHistory;
+
+  /// Presentation only; transport, provider routing and payment rules are shared.
+  final bool customerPresentation;
+  final MobileTopUpRecipient? initialRecipient;
   @override
   ConsumerState<MobileTopUpScreen> createState() => _MobileTopUpScreenState();
 }
@@ -37,27 +47,33 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   bool _history = false;
   String? _error;
   late final ProviderSubscription<AsyncValue<List<MobileTopUpCountry>>>
-      _countriesSubscription;
+  _countriesSubscription;
 
   @override
   void initState() {
     super.initState();
     _history = widget.initialHistory;
-    _countriesSubscription = ref.listenManual(
-      mobileTopUpCountriesProvider,
-      (_, next) {
-        final countries = next.asData?.value;
-        if (countries == null || countries.isEmpty) return;
-        final resolvedCountryCode =
-            _countryCode != null &&
-                countries.any((item) => item.code == _countryCode)
-                ? _countryCode!
-                : countries.first.code;
-        if (mounted && _countryCode != resolvedCountryCode) {
-          setState(() => _countryCode = resolvedCountryCode);
-        }
-      },
-    );
+    final recipient = widget.initialRecipient;
+    if (recipient != null) {
+      _countryCode = recipient.countryCode;
+      _phone.text = recipient.phone;
+      _nickname.text = recipient.nickname;
+    }
+    _countriesSubscription = ref.listenManual(mobileTopUpCountriesProvider, (
+      _,
+      next,
+    ) {
+      final countries = next.asData?.value;
+      if (countries == null || countries.isEmpty) return;
+      final resolvedCountryCode =
+          _countryCode != null &&
+              countries.any((item) => item.code == _countryCode)
+          ? _countryCode!
+          : countries.first.code;
+      if (mounted && _countryCode != resolvedCountryCode) {
+        setState(() => _countryCode = resolvedCountryCode);
+      }
+    });
   }
 
   @override
@@ -78,8 +94,10 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     return 'Mobile Recharge is temporarily unavailable.';
   }
 
-  bool _paymentRecoveryPending(MobileTopUpTransaction transaction) =>
-      const {'REFUND_PENDING', 'VOID_PENDING'}.contains(transaction.paymentStatus);
+  bool _paymentRecoveryPending(MobileTopUpTransaction transaction) => const {
+    'REFUND_PENDING',
+    'VOID_PENDING',
+  }.contains(transaction.paymentStatus);
 
   void _syncReceiptRefreshTimer() {
     final receipt = _receipt;
@@ -88,7 +106,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
       _receiptRefreshTimer = null;
       return;
     }
-    _receiptRefreshTimer ??= Timer.periodic(const Duration(seconds: 5), (_) async {
+    _receiptRefreshTimer ??= Timer.periodic(const Duration(seconds: 5), (
+      _,
+    ) async {
       final current = _receipt;
       if (!mounted || current == null || !_paymentRecoveryPending(current)) {
         _receiptRefreshTimer?.cancel();
@@ -144,7 +164,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
 
   Future<void> _detect(String countryCode) => _run(() async {
     final service = ref.read(mobileTopUpServiceProvider);
-    final preferredProvider = _providerSelection == 'AUTO' ? null : _providerSelection;
+    final preferredProvider = _providerSelection == 'AUTO'
+        ? null
+        : _providerSelection;
     List<MobileTopUpOperator> operators;
     MobileTopUpOperator selected;
     try {
@@ -202,7 +224,9 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
   Future<void> _purchase() => _run(() async {
     final quote = _quote;
     if (quote == null) return;
-    final logoUrl = _operator?.id == quote.operatorId ? _operator?.logoUrl : null;
+    final logoUrl = _operator?.id == quote.operatorId
+        ? _operator?.logoUrl
+        : null;
     String? recipientId;
     if (_nickname.text.trim().isNotEmpty) {
       final saved = await ref
@@ -247,18 +271,20 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
     _clearRechargeState(clearPhone: true, clearNickname: true);
   });
 
-  bool _matchesProductFilter(MobileTopUpProduct product) => switch (_productFilter) {
-    'AIRTIME' => product.kind == MobileTopUpKind.airtime,
-    'DATA' => product.kind == MobileTopUpKind.data,
-    'BUNDLE' => product.kind == MobileTopUpKind.bundle,
-    _ => true,
-  };
+  bool _matchesProductFilter(MobileTopUpProduct product) =>
+      switch (_productFilter) {
+        'AIRTIME' => product.kind == MobileTopUpKind.airtime,
+        'DATA' => product.kind == MobileTopUpKind.data,
+        'BUNDLE' => product.kind == MobileTopUpKind.bundle,
+        _ => true,
+      };
 
-  String _productTypeLabel(MobileTopUpProduct product) => switch (product.kind) {
-    MobileTopUpKind.airtime => 'Prepaid airtime',
-    MobileTopUpKind.data => 'Internet / data plan',
-    MobileTopUpKind.bundle => 'Combo bundle',
-  };
+  String _productTypeLabel(MobileTopUpProduct product) =>
+      switch (product.kind) {
+        MobileTopUpKind.airtime => 'Prepaid airtime',
+        MobileTopUpKind.data => 'Internet / data plan',
+        MobileTopUpKind.bundle => 'Combo bundle',
+      };
 
   String _productDetails(MobileTopUpProduct product) {
     final details = <String>[_productTypeLabel(product)];
@@ -333,18 +359,28 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
             child: availability.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (_, __) => _TopUpUnavailable(
-                message: 'The TiCash API could not load Mobile Recharge.',
-                onRetry: () => ref.invalidate(mobileTopUpAvailabilityProvider),
+                message: widget.customerPresentation
+                    ? 'Recharge is unavailable. Check your connection and try again.'
+                    : 'The TiCash API could not load Mobile Recharge.',
+                onRetry: _retryCatalog,
               ),
               data: (status) => !status.enabled
                   ? _TopUpUnavailable(
-                      message:
-                          'Mobile Recharge Sandbox is not configured yet. Add backend-only Reloadly Sandbox credentials to enable it.',
+                      message: widget.customerPresentation
+                          ? 'Recharge is temporarily unavailable. Please try again later.'
+                          : 'Mobile Recharge Sandbox is not configured yet. Add backend-only Reloadly Sandbox credentials to enable it.',
                       onRetry: () =>
                           ref.invalidate(mobileTopUpAvailabilityProvider),
                     )
                   : _history
                   ? _History(
+                      customerPresentation: widget.customerPresentation,
+                      onDetails: (item) => setState(() {
+                        _history = false;
+                        _receipt = item;
+                        _receiptLogoUrl = null;
+                        _syncReceiptRefreshTimer();
+                      }),
                       onRepeat: (item) async {
                         final quote = await ref
                             .read(mobileTopUpServiceProvider)
@@ -376,6 +412,62 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
       ),
     );
   }
+
+  void _retryCatalog() {
+    ref.invalidate(mobileTopUpAvailabilityProvider);
+    ref.invalidate(mobileTopUpCountriesProvider);
+  }
+
+  Widget _providerPicker(
+    MobileTopUpAvailability status,
+  ) => DropdownButtonFormField<String>(
+    key: ValueKey('provider-$_providerSelection-${status.providers.join('-')}'),
+    isExpanded: true,
+    initialValue:
+        _providerSelection == 'AUTO' ||
+            status.providers.contains(_providerSelection)
+        ? _providerSelection
+        : 'AUTO',
+    decoration: const InputDecoration(
+      labelText: 'Recharge provider',
+      helperMaxLines: 4,
+      helperText:
+          'Automatic uses the best available provider. You can choose a specific provider.',
+      prefixIcon: Icon(Icons.hub_outlined),
+    ),
+    items: [
+      const DropdownMenuItem(
+        value: 'AUTO',
+        child: Text(
+          'Automatic · Best available',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      ...status.providers.map(
+        (provider) => DropdownMenuItem(
+          value: provider,
+          child: Text(
+            switch (provider) {
+              'DTONE' => 'DT One',
+              'RELOADLY' => 'Reloadly',
+              'DING' => 'Ding Connect',
+              _ => provider,
+            },
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    ],
+    onChanged: (value) {
+      if (value == null || value == _providerSelection) return;
+      setState(() {
+        _providerSelection = value;
+        _clearRechargeState();
+      });
+    },
+  );
 
   Widget _recharge(MobileTopUpAvailability status) {
     if (_receipt != null) {
@@ -412,8 +504,8 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
         }
         final selectedCountryCode =
             countries.any((item) => item.code == _countryCode)
-                ? _countryCode!
-                : countries.first.code;
+            ? _countryCode!
+            : countries.first.code;
         final selectedCountry = countries.firstWhere(
           (item) => item.code == selectedCountryCode,
         );
@@ -427,9 +519,11 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
               ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Send prepaid airtime or a provider-listed data plan to any supported Reloadly destination.',
-              style: TextStyle(color: AppTheme.muted, height: 1.4),
+            Text(
+              widget.customerPresentation
+                  ? 'Choose a country and phone number, select an available recharge, then review the total.'
+                  : 'Send prepaid airtime or a provider-listed data plan to any supported Reloadly destination.',
+              style: const TextStyle(color: AppTheme.muted, height: 1.4),
             ),
             const SizedBox(height: 20),
             savedRecipients.when(
@@ -446,7 +540,8 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                         ),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 44,
+                          height:
+                              32 + MediaQuery.textScalerOf(context).scale(24),
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
                             itemCount: items.length,
@@ -479,55 +574,18 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                       ],
                     ),
             ),
-            DropdownButtonFormField<String>(
-              key: ValueKey('provider-$_providerSelection-${status.providers.join('-')}'),
-              isExpanded: true,
-              initialValue: _providerSelection == 'AUTO' ||
-                      status.providers.contains(_providerSelection)
-                  ? _providerSelection
-                  : 'AUTO',
-              decoration: const InputDecoration(
-                labelText: 'Recharge provider',
-                helperText:
-                    'Automatic uses the best available provider. You can choose a specific provider.',
-                prefixIcon: Icon(Icons.hub_outlined),
-              ),
-              items: [
-                const DropdownMenuItem(
-                  value: 'AUTO',
-                  child: Text(
-                    'Automatic · Best available',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                ...status.providers.map(
-                  (provider) => DropdownMenuItem(
-                    value: provider,
-                    child: Text(
-                      switch (provider) {
-                        'DTONE' => 'DT One',
-                        'RELOADLY' => 'Reloadly',
-                        'DING' => 'Ding Connect',
-                        _ => provider,
-                      },
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: (value) {
-                if (value == null || value == _providerSelection) return;
-                setState(() {
-                  _providerSelection = value;
-                  _clearRechargeState();
-                });
-              },
-            ),
+            // AUTO remains the default. Provider controls are available on demand.
+            if (widget.customerPresentation)
+              ExpansionTile(
+                title: const Text('Advanced routing options'),
+                children: [_providerPicker(status)],
+              )
+            else
+              _providerPicker(status),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               key: ValueKey(selectedCountryCode),
+              isExpanded: true,
               initialValue: selectedCountryCode,
               decoration: const InputDecoration(
                 labelText: 'Destination country',
@@ -537,7 +595,11 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
                   .map(
                     (item) => DropdownMenuItem(
                       value: item.code,
-                      child: Text('${item.name} (${item.code})'),
+                      child: Text(
+                        '${item.name} (${item.code})',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   )
                   .toList(),
@@ -554,6 +616,7 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Mobile number',
+                helperMaxLines: 4,
                 helperText:
                     'Include the full international number for ${selectedCountry.name}',
                 prefixIcon: const Icon(Icons.phone_outlined),
@@ -567,200 +630,223 @@ class _MobileTopUpScreenState extends ConsumerState<MobileTopUpScreen> {
               icon: const Icon(Icons.search),
               label: const Text('Detect operator'),
             ),
-        if (_operators.length > 1) ...[
-          const SizedBox(height: 12),
-          DropdownButtonFormField<MobileTopUpOperator>(
-            initialValue: _operator,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Operator'),
-            items: _operators
-                .map(
-                  (item) => DropdownMenuItem(
-                    value: item,
-                    child: Row(
-                      children: [
-                        MobileOperatorLogo(logoUrl: item.logoUrl),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            if (_operators.length > 1) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<MobileTopUpOperator>(
+                initialValue: _operator,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Operator'),
+                items: _operators
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item,
+                        child: Row(
+                          children: [
+                            MobileOperatorLogo(logoUrl: item.logoUrl),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                item.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                )
-                .toList(),
-            onChanged: (value) {
-              if (value != null) {
-                setState(() => _operator = value);
-                _run(() async {
-                  final items = await ref
-                      .read(mobileTopUpServiceProvider)
-                      .products(value.countryCode, value.id);
-                  if (mounted) {
-                    setState(() {
-                      _products = items;
-                      _product = null;
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _operator = value);
+                    _run(() async {
+                      final items = await ref
+                          .read(mobileTopUpServiceProvider)
+                          .products(value.countryCode, value.id);
+                      if (mounted) {
+                        setState(() {
+                          _products = items;
+                          _product = null;
+                        });
+                      }
                     });
                   }
-                });
-              }
-            },
-          ),
-        ],
-        if (_operator != null) ...[
-          const SizedBox(height: 20),
-          _InfoRow(
-            leading: MobileOperatorLogo(logoUrl: _operator!.logoUrl),
-            label: 'Detected operator',
-            value: _operator!.provider == null
-                ? _operator!.name
-                : '${_operator!.name} · ${_operator!.provider == 'DTONE' ? 'DT One' : _operator!.provider == 'DING' ? 'Ding Connect' : 'Reloadly'}',
-          ),
-          const SizedBox(height: 18),
-          Text(
-            'Airtime & Internet Plans',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 10),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'ALL', label: Text('All')),
-                ButtonSegment(
-                  value: 'AIRTIME',
-                  icon: Icon(Icons.phone_android),
-                  label: Text('Airtime'),
-                ),
-                ButtonSegment(
-                  value: 'DATA',
-                  icon: Icon(Icons.wifi),
-                  label: Text('Internet Data'),
-                ),
-                ButtonSegment(
-                  value: 'BUNDLE',
-                  icon: Icon(Icons.all_inclusive),
-                  label: Text('Bundles'),
-                ),
-              ],
-              selected: {_productFilter},
-              onSelectionChanged: (value) => setState(() {
-                _productFilter = value.first;
-                if (_product != null && !_matchesProductFilter(_product!)) {
-                  _product = null;
-                  _quote = null;
-                }
-              }),
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (_products.where(_matchesProductFilter).isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(18),
-                child: Text(
-                  'No plans in this category are currently returned by the provider.',
+                },
+              ),
+            ],
+            if (_operator != null) ...[
+              const SizedBox(height: 20),
+              _InfoRow(
+                leading: MobileOperatorLogo(logoUrl: _operator!.logoUrl),
+                label: 'Detected operator',
+                value:
+                    widget.customerPresentation || _operator!.provider == null
+                    ? _operator!.name
+                    : '${_operator!.name} · ${_operator!.provider == 'DTONE'
+                          ? 'DT One'
+                          : _operator!.provider == 'DING'
+                          ? 'Ding Connect'
+                          : 'Reloadly'}',
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Airtime & Internet Plans',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'ALL', label: Text('All')),
+                    ButtonSegment(
+                      value: 'AIRTIME',
+                      icon: Icon(Icons.phone_android),
+                      label: Text('Airtime'),
+                    ),
+                    ButtonSegment(
+                      value: 'DATA',
+                      icon: Icon(Icons.wifi),
+                      label: Text('Internet Data'),
+                    ),
+                    ButtonSegment(
+                      value: 'BUNDLE',
+                      icon: Icon(Icons.all_inclusive),
+                      label: Text('Bundles'),
+                    ),
+                  ],
+                  selected: {_productFilter},
+                  onSelectionChanged: (value) => setState(() {
+                    _productFilter = value.first;
+                    if (_product != null && !_matchesProductFilter(_product!)) {
+                      _product = null;
+                      _quote = null;
+                    }
+                  }),
                 ),
               ),
-            ),
-          ..._products.where(_matchesProductFilter).map(
-            (item) => Card(
-              child: ListTile(
-                isThreeLine: item.benefits.isNotEmpty ||
-                    item.validityLabel != null ||
-                    (item.description?.isNotEmpty ?? false),
-                selected: _product?.id == item.id,
-                onTap: () => setState(() {
-                  _product = item;
-                  _quote = null;
-                }),
-                title: Text(
-                  item.name,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+              const SizedBox(height: 10),
+              if (_products.where(_matchesProductFilter).isEmpty)
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text(
+                      'No plans in this category are currently returned by the provider.',
+                    ),
+                  ),
                 ),
-                subtitle: Text(_productDetails(item)),
-                trailing: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      item.amountType == 'RANGE'
-                          ? '${item.minimumAmount}-${item.maximumAmount} ${item.priceCurrency}'
-                          : '${item.price.toStringAsFixed(2)} ${item.priceCurrency}',
-                      style: const TextStyle(
-                        color: AppTheme.navy,
-                        fontWeight: FontWeight.w900,
+              ..._products
+                  .where(_matchesProductFilter)
+                  .map(
+                    (item) => Card(
+                      child: ListTile(
+                        isThreeLine:
+                            item.benefits.isNotEmpty ||
+                            item.validityLabel != null ||
+                            (item.description?.isNotEmpty ?? false),
+                        selected: _product?.id == item.id,
+                        onTap: () => setState(() {
+                          _product = item;
+                          _quote = null;
+                        }),
+                        title: Text(
+                          item.name,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_productDetails(item)),
+                            const SizedBox(height: 8),
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.amountType == 'RANGE'
+                                      ? '${item.minimumAmount}-${item.maximumAmount} ${item.priceCurrency}'
+                                      : '${item.price.toStringAsFixed(2)} ${item.priceCurrency}',
+                                  style: const TextStyle(
+                                    color: AppTheme.navy,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                if (_product?.id == item.id)
+                                  const Icon(
+                                    Icons.check_circle,
+                                    color: AppTheme.success,
+                                    size: 18,
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    if (_product?.id == item.id)
-                      const Icon(
-                        Icons.check_circle,
-                        color: AppTheme.success,
-                        size: 18,
-                      ),
-                  ],
+                  ),
+            ],
+            if (_product?.amountType == 'RANGE') ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _customAmount,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'Recharge amount (${_product!.priceCurrency})',
                 ),
               ),
-            ),
-          ),
-        ],
-        if (_product?.amountType == 'RANGE') ...[
-          const SizedBox(height: 10),
-          TextField(
-            controller: _customAmount,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: 'Recharge amount (${_product!.priceCurrency})',
-            ),
-          ),
-        ],
-        if (_product != null) ...[
-          const SizedBox(height: 14),
-          OutlinedButton.icon(
-            onPressed: _busy ? null : _review,
-            icon: const Icon(Icons.fact_check_outlined),
-            label: const Text('Review recharge'),
-          ),
-        ],
-        if (_quote != null) ...[
-          const SizedBox(height: 20),
-          _ReviewCard(
-            quote: _quote!,
-            logoUrl: _operator?.id == _quote!.operatorId ? _operator?.logoUrl : null,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _nickname,
-            decoration: const InputDecoration(
-              labelText: 'Save family member / recipient nickname (optional)',
-              prefixIcon: Icon(Icons.bookmark_outline),
-            ),
-          ),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: _busy ? null : _purchase,
-            icon: const Icon(Icons.lock_outline),
-            label: const Text('Confirm sandbox recharge'),
-          ),
-        ],
-        if (_busy)
-          const Padding(
-            padding: EdgeInsets.only(top: 18),
-            child: LinearProgressIndicator(),
-          ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: Text(
-              _error!,
-              style: const TextStyle(
-                color: AppTheme.error,
-                fontWeight: FontWeight.w700,
+            ],
+            if (_product != null) ...[
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _review,
+                icon: const Icon(Icons.fact_check_outlined),
+                label: const Text('Review recharge'),
               ),
-            ),
-          ),
+            ],
+            if (_quote != null) ...[
+              const SizedBox(height: 20),
+              _ReviewCard(
+                quote: _quote!,
+                logoUrl: _operator?.id == _quote!.operatorId
+                    ? _operator?.logoUrl
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nickname,
+                decoration: const InputDecoration(
+                  labelText:
+                      'Save family member / recipient nickname (optional)',
+                  prefixIcon: Icon(Icons.bookmark_outline),
+                ),
+              ),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: _busy ? null : _purchase,
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Confirm sandbox recharge'),
+              ),
+            ],
+            if (_busy)
+              const Padding(
+                padding: EdgeInsets.only(top: 18),
+                child: LinearProgressIndicator(),
+              ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 14),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(
+                    color: AppTheme.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -836,7 +922,10 @@ class _ReviewCard extends StatelessWidget {
             '\$${quote.totalChargeUsd.toStringAsFixed(2)} USD',
             strong: true,
           ),
-          ReceiverValueSummary(amount: quote.deliveredValue, currency: quote.deliveredCurrency),
+          ReceiverValueSummary(
+            amount: quote.deliveredValue,
+            currency: quote.deliveredCurrency,
+          ),
           if (quote.receiverQuote != null)
             Text('Provider value as of ${quote.receiverQuote!['quotedAt']}'),
           const SizedBox(height: 8),
@@ -857,8 +946,11 @@ class _ReviewCard extends StatelessWidget {
         MobileOperatorLogo(logoUrl: logoUrl),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(name, textAlign: TextAlign.right,
-              style: const TextStyle(fontWeight: FontWeight.w700)),
+          child: Text(
+            name,
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
       ],
     ),
@@ -869,29 +961,28 @@ class _ReviewCard extends StatelessWidget {
     String value, {
     bool strong = false,
     Color? valueColor,
-  }) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(label, style: const TextStyle(color: AppTheme.muted)),
-            ),
-            const SizedBox(width: 12),
-            Flexible(
-              child: Text(
-                value,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
-                  color: valueColor,
-                ),
-              ),
-            ),
-          ],
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(label, style: const TextStyle(color: AppTheme.muted)),
         ),
-      );
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
+              color: valueColor,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 Color _mobileTopUpStatusColor(MobileTopUpStatus status) {
@@ -960,10 +1051,12 @@ class _Receipt extends StatelessWidget {
           ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 6),
-        const Text(
-          'Sandbox receipt — no real airtime or data was purchased.',
+        Text(
+          transaction.testMode
+              ? 'Sandbox receipt — no real airtime or data was purchased.'
+              : 'Status reflects the latest confirmed recharge result.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: AppTheme.muted),
+          style: const TextStyle(color: AppTheme.muted),
         ),
         if (paymentRecoveryPending || recoveryCompleted) ...[
           const SizedBox(height: 12),
@@ -990,10 +1083,10 @@ class _Receipt extends StatelessWidget {
                     refundCompleted
                         ? 'Refund completed. Your payment provider has confirmed the refund.'
                         : voidCompleted
-                            ? 'Payment voided. The charge was cancelled before settlement.'
-                            : refundPending
-                                ? 'Refund processing. TiCash is checking the payment provider automatically.'
-                                : 'Payment cancellation processing. TiCash is checking automatically.',
+                        ? 'Payment voided. The charge was cancelled before settlement.'
+                        : refundPending
+                        ? 'Refund processing. TiCash is checking the payment provider automatically.'
+                        : 'Payment cancellation processing. TiCash is checking automatically.',
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -1021,7 +1114,8 @@ class _Receipt extends StatelessWidget {
                   isReceipt: true,
                   confirmed: delivered,
                   quotedAmount: transaction.receiverQuote?['amount'] as num?,
-                  quotedCurrency: transaction.receiverQuote?['currency'] as String?,
+                  quotedCurrency:
+                      transaction.receiverQuote?['currency'] as String?,
                   discrepancy: transaction.receiverDiscrepancy,
                 ),
                 _ReviewCard._line(
@@ -1051,7 +1145,8 @@ class _Receipt extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        if ((!delivered && transaction.status != MobileTopUpStatus.failed) || paymentRecoveryPending)
+        if ((!delivered && transaction.status != MobileTopUpStatus.failed) ||
+            paymentRecoveryPending)
           OutlinedButton.icon(
             onPressed: onRefresh,
             icon: const Icon(Icons.refresh),
@@ -1067,7 +1162,13 @@ class _Receipt extends StatelessWidget {
 }
 
 class _History extends ConsumerWidget {
-  const _History({required this.onRepeat});
+  const _History({
+    required this.onRepeat,
+    required this.onDetails,
+    required this.customerPresentation,
+  });
+  final ValueChanged<MobileTopUpTransaction> onDetails;
+  final bool customerPresentation;
   final Future<void> Function(MobileTopUpTransaction) onRepeat;
   @override
   Widget build(BuildContext context, WidgetRef ref) => ref
@@ -1100,10 +1201,90 @@ class _History extends ConsumerWidget {
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final item = items[index];
+                    if (customerPresentation) {
+                      final failed = item.status == MobileTopUpStatus.failed;
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    _mobileTopUpStatusIcon(item.status),
+                                    color: _mobileTopUpStatusColor(item.status),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      item.status.name.toUpperCase(),
+                                      style: TextStyle(
+                                        color: _mobileTopUpStatusColor(
+                                          item.status,
+                                        ),
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                item.operatorName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(item.phone),
+                              Text(item.productName),
+                              Text(
+                                'USD ${item.totalChargeUsd.toStringAsFixed(2)} · ${item.createdAt.toLocal().toString().split('.').first}',
+                              ),
+                              if (failed)
+                                const Text(
+                                  'Recharge failed. Check the receipt for payment recovery status.',
+                                ),
+                              Wrap(
+                                spacing: 8,
+                                children: [
+                                  TextButton(
+                                    onPressed: () => onDetails(item),
+                                    child: const Text('View receipt'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      try {
+                                        await onRepeat(item);
+                                      } catch (_) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Unable to repeat recharge. Please try again.',
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    },
+                                    child: const Text('Repeat'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
                     return Card(
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: _mobileTopUpStatusColor(item.status).withValues(alpha: 0.12),
+                          backgroundColor: _mobileTopUpStatusColor(
+                            item.status,
+                          ).withValues(alpha: 0.12),
                           child: Icon(
                             _mobileTopUpStatusIcon(item.status),
                             color: _mobileTopUpStatusColor(item.status),

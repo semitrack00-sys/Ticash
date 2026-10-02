@@ -707,7 +707,13 @@ export class MobileTopUpService {
       throw new MobileTopUpError('RESUME_TOKEN_NOT_FOUND', 'Checkout resume token was not found', 404);
     }
     const publicFailures = ['INSUFFICIENT_FUNDS', 'PAYMENT_DECLINED', 'PAYMENT_CANCELLED', 'PAYMENT_EXPIRED'] as const;
+    const providerFailure = record.status === 'FAILED' && (
+      record.failureCode === 'TOPUP_PROVIDER_FAILED' ||
+      record.failureCode?.startsWith('PROVIDER_') ||
+      record.providerStatus === 'FAILED'
+    );
     const failureReason = record.failureCode === 'CANCELLED_BY_CUSTOMER' ? 'PAYMENT_CANCELLED' :
+      providerFailure ? 'RECHARGE_PROVIDER_FAILED' :
       publicFailures.find(code => code === record.failureCode) ?? null;
     // Construct the public DTO explicitly so new repository fields cannot leak by default.
     return {
@@ -956,7 +962,12 @@ export class MobileTopUpService {
       ...(confirmedValue ? { receiverValueConfirmed: true, deliveredValue: result.deliveredAmount, deliveredCurrency: result.deliveredAmountCurrencyCode } : {}),
       ...(status === 'DELIVERED' ? { receiverDiscrepancy } : {}),
       ...(status === 'DELIVERED' ? { deliveredAt: timestamp } : {}),
-      ...(status === 'FAILED' ? { failedAt: timestamp } : {}),
+      ...(status === 'FAILED' ? {
+        failedAt: timestamp,
+        failureCode: result.providerFailureCode
+          ? `PROVIDER_${result.providerFailureCode}`.slice(0, 120)
+          : 'TOPUP_PROVIDER_FAILED',
+      } : {}),
       ...(status === 'REFUNDED' ? { refundedAt: timestamp } : {}),
     });
     if (status === 'DELIVERED') await this.repository.postDeliveredLedger(updated);

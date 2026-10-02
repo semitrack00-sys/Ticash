@@ -1,5 +1,5 @@
 import { productReceiverQuote, validateReceiverQuote, validReceiverValue } from './receiver-value.js';
-import { receiverLanguage, receiverLanguages, ReceiverNotificationService } from './receiver-notification.js';
+import { receiverLanguage, receiverLanguages, ReceiverNotificationService, type ReceiverSmsProvider } from './receiver-notification.js';
 import { decodeOperatorId } from './provider-identity.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { getCountryCallingCode, isSupportedCountry, type CountryCode } from 'libphonenumber-js';
@@ -66,6 +66,7 @@ export class MobileTopUpService {
   private readonly audit: AuditRecorder;
   private readonly clock: () => Date;
   private readonly stripeProvider?: StripeHostedCheckoutProvider;
+  private readonly receiverSmsProvider?: ReceiverSmsProvider;
 
   constructor(
     config: MobileTopUpConfig,
@@ -75,6 +76,7 @@ export class MobileTopUpService {
     audit: AuditRecorder,
     clock: () => Date = () => new Date(),
     stripeProvider?: StripeHostedCheckoutProvider,
+    receiverSmsProvider?: ReceiverSmsProvider,
   ) {
     this.config = config;
     this.provider = provider;
@@ -83,6 +85,7 @@ export class MobileTopUpService {
     this.audit = audit;
     this.clock = clock;
     this.stripeProvider = stripeProvider;
+    this.receiverSmsProvider = receiverSmsProvider;
   }
 
   private runtimeEnvironment(): MobileTopUpRuntimeEnvironment {
@@ -1346,7 +1349,7 @@ export class MobileTopUpService {
 
   async retryReceiverNotification(id: string) {
     // Only called through staff permission-protected routes. It cannot choose a phone or message.
-    await new ReceiverNotificationService(this.repository).retry(id);
+    await new ReceiverNotificationService(this.repository, this.receiverSmsProvider).retry(id);
     return this.notificationStatus(id);
   }
 

@@ -235,6 +235,27 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
   for (final width in [360.0, 375.0, 390.0, 412.0, 430.0]) {
+    testWidgets('abandoned reservation opens Destination directly at $width', (
+      t,
+    ) async {
+      t.view.physicalSize = Size(width, 900);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.resetPhysicalSize);
+      addTearDown(t.view.resetDevicePixelRatio);
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      a.transactionStatus = a.paymentStatus = 'PENDING';
+      await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+      await t.pumpAndSettle();
+      expect(j.locked, false);
+      expect(j.step, RechargeStep.destination);
+      expect(find.text('Country'), findsOneWidget);
+      expect(find.text('Pending payment'), findsNothing);
+      expect(find.text('Check status'), findsNothing);
+      expect(j.history.single.terminal, true);
+      expect(t.takeException(), isNull);
+      await t.pumpWidget(const SizedBox());
+    });
     testWidgets('pending recovery cancellation and Back at $width', (t) async {
       t.view.physicalSize = Size(width, 900);
       t.view.devicePixelRatio = 1;
@@ -267,7 +288,7 @@ void main() {
     });
   }
   testWidgets('pending recovery actions use all five languages', (t) async {
-    final (a, _, j) = fixture();
+    final (a, _, j) = fixture(autoDispose: false);
     a.pendingHistory = true;
     await t.runAsync(j.initialize);
     for (final language in AppLanguage.values) {
@@ -286,6 +307,7 @@ void main() {
       expect(t.takeException(), isNull);
     }
     await t.pumpWidget(const SizedBox());
+    j.dispose();
   });
   test('native checkout rejects wrong host before platform call', () async {
     await expectLater(

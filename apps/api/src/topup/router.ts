@@ -169,6 +169,13 @@ export function createMobileTopUpRouter(options: {
     res.json({ transaction: await options.service.cancelTransaction(req.userId!, id) });
   }));
 
+  // Separate endpoint fails closed against older servers, which must never
+  // interpret automatic cleanup as permission to expire a real checkout.
+  router.post('/transactions/:id/cancel-abandoned', ...protectedRoute, asyncRoute(async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    res.json({ transaction: await options.service.cancelTransaction(req.userId!, id, true) });
+  }));
+
   router.delete('/transactions/:id', ...protectedRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
     await options.service.deleteCancelledTransactionFromHistory(req.userId!, id);

@@ -203,18 +203,31 @@ class ParityAdapter implements HttpClientAdapter {
       data = {
         'transactions': historyRows ?? (pendingHistory ? [transaction] : []),
       };
-    } else if (o.path.endsWith('/cancel')) {
+    } else if (o.path.endsWith('/cancel') ||
+        o.path.endsWith('/cancel-abandoned')) {
       if (cancelCode != null) {
         code = 409;
         data = {'code': cancelCode};
       } else {
-        transactionStatus = 'FAILED';
-        paymentStatus = 'FAILED';
-        failureCode = 'CANCELLED_BY_CUSTOMER';
+        final id = o.path.split('/').reversed.elementAt(1);
+        final cancelled = {
+          ...?transactionById[id],
+          ...transaction,
+          'id': id,
+          'status': 'FAILED',
+          'paymentStatus': 'FAILED',
+          'failureCode': 'CANCELLED_BY_CUSTOMER',
+        };
+        transactionById[id] = cancelled;
+        if (id == responseTransactionId) {
+          transactionStatus = 'FAILED';
+          paymentStatus = 'FAILED';
+          failureCode = 'CANCELLED_BY_CUSTOMER';
+        }
         historyRows = historyRows
-            ?.map((r) => r['id'] == responseTransactionId ? transaction : r)
+            ?.map((r) => r['id'] == id ? cancelled : r)
             .toList();
-        data = {'transaction': transaction};
+        data = {'transaction': cancelled};
       }
     } else if (o.path.contains('/transactions')) {
       await statusGate;
@@ -260,6 +273,7 @@ class ParityAdapter implements HttpClientAdapter {
 
 (ParityAdapter, FlupFlapClient, RechargeJourney) fixture({
   bool guest = true,
+  bool autoDispose = true,
   DateTime Function()? clock,
 }) {
   final a = ParityAdapter();
@@ -273,7 +287,7 @@ class ParityAdapter implements HttpClientAdapter {
     storedBillingCountry: () => 'CA',
     clock: clock,
   );
-  addTearDown(j.dispose);
+  if (autoDispose) addTearDown(j.dispose);
   return (a, c, j);
 }
 
@@ -574,6 +588,151 @@ void main() {
     );
   });
   test(
+    'orphan PENDING is refreshed and auto-cancelled without showing recovery',
+    () async {
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      a.transactionStatus = a.paymentStatus = 'PENDING';
+      j.error = 'requestFailed';
+      j.phone = '+50937000000';
+      j.result = RechargeResult(a.transaction);
+      final steps = <RechargeStep>[];
+      j.addListener(() => steps.add(j.step));
+      await j.initialize();
+      expect(steps, isNot(contains(RechargeStep.recovery)));
+      expect(j.step, RechargeStep.destination);
+      expect(j.locked, false);
+      expect(j.result, isNull);
+      expect(j.hosted, isNull);
+      expect(j.quote, isNull);
+      expect(j.phone, isEmpty);
+      expect(j.error, isNull);
+      expect(j.history.single.data['failureCode'], 'CANCELLED_BY_CUSTOMER');
+      final paths = a.requests.map((r) => r.path).toList();
+      expect(
+        paths.indexWhere((p) => p.endsWith('/$txnId')),
+        lessThan(paths.indexWhere((p) => p.endsWith('/cancel-abandoned'))),
+      );
+      expect(a.requests.where((r) => r.path.endsWith('/cancel')), isEmpty);
+    },
+  );
+  for (final activity in <Map<String, dynamic>>[
+    {'paymentStatus': 'SESSION_CREATED', 'paymentSessionId': 'cs_test_active'},
+    {'paymentSessionId': 'cs_test_unknown'},
+    {'paymentStartedAt': '2026-10-01T00:00:00Z'},
+    {'paymentProviderTransactionId': 'pi_active'},
+    {'paymentAuthorizationId': 'auth_active'},
+    {'providerTransactionId': 'provider_active'},
+    {'fulfillmentStartedAt': '2026-10-01T00:00:00Z'},
+    {'paymentRecoveryCode': 'STRIPE_SESSION_UNKNOWN'},
+    {'paymentStatus': 'UNKNOWN'},
+  ]) {
+    test(
+      'historical activity $activity remains locked without auto-cancel',
+      () async {
+        final (a, _, j) = fixture();
+        final record = {
+          ...a.transaction,
+          'status': 'PENDING',
+          'paymentStatus': 'PENDING',
+          ...activity,
+        };
+        a.historyRows = [record];
+        a.transactionById[txnId] = record;
+        await j.initialize();
+        expect(j.locked, true);
+        expect(j.step, RechargeStep.recovery);
+        expect(a.requests.where((r) => r.path.contains('/cancel')), isEmpty);
+      },
+    );
+  }
+  for (final failedRefresh in [true, false]) {
+    test(
+      'orphan ${failedRefresh ? 'refresh' : 'auto-cancel'} failure stays locked',
+      () async {
+        final (a, _, j) = fixture();
+        a.pendingHistory = true;
+        a.transactionStatus = a.paymentStatus = 'PENDING';
+        a.failStatus = failedRefresh;
+        if (!failedRefresh) a.cancelCode = 'TOPUP_CANCELLATION_UNRESOLVED';
+        await j.initialize();
+        expect(j.locked, true);
+        expect(j.step, RechargeStep.recovery);
+        expect(j.history.single.terminal, false);
+        expect(j.error, isNotNull);
+        expect(
+          a.requests.where((r) => r.path.endsWith('/cancel-abandoned')).length,
+          failedRefresh ? 0 : 1,
+        );
+        expect(
+          a.requests.where((r) => r.path.endsWith('/payment-sessions')),
+          isEmpty,
+        );
+      },
+    );
+  }
+  for (final orphanFirst in [true, false]) {
+    test(
+      'mixed pending history clears only orphan, orphanFirst=$orphanFirst',
+      () async {
+        final (a, _, j) = fixture();
+        const activeId = '12345678-1234-4234-8234-123456789abf';
+        final orphan = {
+          ...a.transaction,
+          'status': 'PENDING',
+          'paymentStatus': 'PENDING',
+        };
+        final active = {
+          ...orphan,
+          'id': activeId,
+          'paymentStatus': 'SESSION_CREATED',
+          'paymentSessionId': 'cs_test_active',
+        };
+        a.historyRows = orphanFirst ? [orphan, active] : [active, orphan];
+        a.transactionById.addAll({txnId: orphan, activeId: active});
+        await j.initialize();
+        expect(j.locked, true);
+        expect(j.step, RechargeStep.recovery);
+        expect(j.result?.id, activeId);
+        expect(j.history.singleWhere((r) => r.id == txnId).terminal, true);
+        expect(j.history.singleWhere((r) => r.id == activeId).terminal, false);
+        expect(
+          a.requests
+              .singleWhere((r) => r.path.endsWith('/cancel-abandoned'))
+              .path,
+          '/flupflap/mobile-topups/transactions/$txnId/cancel-abandoned',
+        );
+      },
+    );
+  }
+  test(
+    'Recharge entry rechecks history and clears a newly discovered orphan',
+    () async {
+      final (a, _, j) = fixture();
+      await j.initialize();
+      a.pendingHistory = true;
+      a.transactionStatus = a.paymentStatus = 'PENDING';
+      await j.enterRecharge();
+      expect(j.locked, false);
+      expect(j.step, RechargeStep.destination);
+      expect(j.history.single.terminal, true);
+    },
+  );
+  test(
+    'history load failure locks entry until an authoritative retry succeeds',
+    () async {
+      final (a, _, j) = fixture();
+      a.failHistory = true;
+      await j.initialize();
+      expect(j.locked, true);
+      expect(j.step, RechargeStep.recovery);
+      a.failHistory = false;
+      await j.refresh();
+      expect(j.locked, false);
+      expect(j.step, RechargeStep.destination);
+    },
+  );
+  test(
     'terminal startup history leaves Destination accessible and remains in history',
     () async {
       final (a, _, j) = fixture();
@@ -707,14 +866,14 @@ void main() {
       final (a, _, j) = fixture();
       await reviewed(j);
       await j.pay();
-      j.enterRecharge();
+      await j.enterRecharge();
       expect(j.locked, true);
       expect(j.hosted, isNotNull);
       a.transactionStatus = 'DELIVERED';
       a.paymentStatus = 'CAPTURED';
       await j.refresh();
       expect(j.result?.terminal, true);
-      j.enterRecharge();
+      await j.enterRecharge();
       expect(j.step, RechargeStep.destination);
       expect(j.result, isNull);
       expect(j.quote, isNull);

@@ -368,7 +368,7 @@ void main() {
         'recipientId': 'recipient-fixture',
       });
       expect(purchase.headers['Idempotency-Key'], isNotEmpty);
-      expect(find.text('Pending'), findsOneWidget);
+      expect(find.text('Pending payment'), findsOneWidget);
       expect(find.text('Delivered'), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -406,6 +406,41 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     });
+  }
+
+  for (final status in ['DELIVERED', 'FAILED', 'REFUNDED']) {
+    testWidgets(
+      '$status history does not replace Destination on Home or Recharge entry',
+      (tester) async {
+        final (_, adapter) = await app(tester, 390, status: status);
+        await tap(tester, find.text('Send a recharge'));
+        expect(find.text('Country'), findsOneWidget);
+        await tap(
+          tester,
+          find.widgetWithText(NavigationDestination, 'History'),
+        );
+        expect(
+          find.text(
+            status == 'REFUNDED'
+                ? 'Refund confirmed'
+                : '${status[0]}${status.substring(1).toLowerCase()}',
+          ),
+          findsOneWidget,
+        );
+        await tap(
+          tester,
+          find.widgetWithText(NavigationDestination, 'Recharge'),
+        );
+        expect(find.text('Country'), findsOneWidget);
+        expect(
+          adapter.requests.where(
+            (r) => r.method == 'POST' && r.path.contains('mobile-topups'),
+          ),
+          isEmpty,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
   }
 
   testWidgets(
@@ -609,7 +644,7 @@ void main() {
         router.routeInformationProvider.value.uri.toString(),
         '/checkout-return',
       );
-      expect(find.text('Pending'), findsOneWidget);
+      expect(find.text('Pending payment'), findsOneWidget);
       expect(session.authenticated, false);
       router.go('flupflap://checkout-return?checkoutResumeToken=${'b' * 43}');
       await tester.pumpAndSettle();

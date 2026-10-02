@@ -314,7 +314,19 @@ class FlupFlapClient {
   Future<RechargeResult> transaction(String id) async => RechargeResult(
     object(
       object(
-        (await dio.get('$base/transactions/${Uri.encodeComponent(id)}')).data,
+        (await dio.get(
+          '$base/transactions/${Uri.encodeComponent(id)}',
+          queryParameters: {'refresh': true},
+        )).data,
+      )['transaction'],
+    ),
+  );
+  Future<RechargeResult> cancelTransaction(String id) async => RechargeResult(
+    object(
+      object(
+        (await dio.post(
+          '$base/transactions/${Uri.encodeComponent(id)}/cancel',
+        )).data,
       )['transaction'],
     ),
   );

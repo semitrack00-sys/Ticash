@@ -55,3 +55,23 @@ Tests use fixtures only. The two external-provider enable flags must be disabled
 9. Check 360/375/390/412/430/768 widths, 1.0/1.5 text, keyboard and small/large real Android devices. Automated widget coverage supplements but does not replace this physical-device QA.
 
 No real payment, recharge, provider purchase, SMS, production environment change, migration or installation was performed.
+
+## Pending-checkout recovery follow-up
+
+Baseline: merged PR #93, `41a559268fc00261fcdf864916daa3a821d9617e`.
+Branch: `codex/flupflap-pending-checkout-recovery`.
+
+- Validate Stripe availability and explicit billing country before consuming a quote or reserving a transaction. Provider-response and reservation-dependent checks remain in their original flow.
+- Read authenticated Android transaction status with `refresh=true`. FlupFlap status and public resume reconciliation may read bound Stripe/provider state and record confirmed outcomes, but cannot submit airtime, capture, void or refund. Paid-session fulfillment remains with verified webhooks and server reconciliation workers. TiCash's existing reconciliation behavior is unchanged.
+- Public resume still requires the existing single-transaction capability, hash binding, hosted-session binding and expiry. Its customer-safe DTO is unchanged; read failures retain the last confirmed state. No session/access token is persisted or exposed.
+- Startup refreshes historical unresolved records before deciding whether to unlock Destination. Terminal history remains accessible through History; it does not replace the new recharge form. Unknown status, failed reconciliation and refund/void recovery remain locked.
+- Pending recovery offers Check status and authenticated cancellation through the existing `/transactions/:id/cancel` endpoint. Stripe can be reopened only when a validated hosted session remains in memory. Public capability-only return screens cannot cancel an authenticated transaction.
+- Cancellation of an untouched reservation competes atomically with payment creation using the existing payment-operation claim. In-flight/unknown Stripe creation is not cancellable. A hosted session must be confirmed expired by Stripe; otherwise cancellation remains blocked. Successful cancellation is followed by a history refresh, so a second unresolved record cannot be bypassed.
+- Failed history refresh after cancellation stays locked and can be retried. Home, Recharge, and Recharge another phone reach clean Destination state when no blocker remains, including cleared phone/amount fields. Back cannot bypass unresolved payment state.
+- All new recovery copy is localized in English, Haitian Creole, French, Spanish and Portuguese. Tests cover 360/375/390/412/430px, with existing 768px and enlarged-text coverage retained.
+
+Recovery screenshots are optional widget-test artifacts outside the repository, under the task's `artifacts/pending-recovery-screenshots` directory. They use mocked data only. Physical-device return/restart/network QA is still required; no real provider transaction or production record repair was performed.
+
+Validation: 796/796 API tests, 106/106 FlupFlap tests, 76/76 shared-mobile tests; FlupFlap analysis, backend typecheck/lint/build, Prisma schema validation and diff-check passed. The first concurrent full API run hit five-second timeouts in the unchanged guest-proxy/password-recovery tests; the full suite passed when rerun without competing builds. No tests were skipped or timeouts changed.
+
+Debug APK build passed with `FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api`. Local Android user-cache configuration and cleaning stale generated SDK dependency paths were needed; no Gradle, SDK-version or signing-source changes were made. Existing Gradle/AGP/Kotlin future-support warnings remain. APK: `apps/flupflap/build/app/outputs/flutter-apk/app-debug.apk` (ignored QA artifact, not committed or installed).

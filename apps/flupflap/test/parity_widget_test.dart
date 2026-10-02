@@ -186,7 +186,7 @@ void main() {
           expect(j.locked, true);
           await t.runAsync(j.refresh);
           await t.pumpAndSettle();
-          expect(find.text('Processing'), findsOneWidget);
+          expect(find.text('Pending payment'), findsOneWidget);
           expect(find.text('Delivered'), findsNothing);
           if (scale == 1) await capture(t, 'processing-${width.toInt()}');
           a.transactionStatus = 'DELIVERED';
@@ -197,6 +197,13 @@ void main() {
           expect(j.locked, false);
           expect(t.takeException(), isNull);
           if (scale == 1) await capture(t, 'delivered-${width.toInt()}');
+          await press(t, find.text(flupFlapStrings['en']!['another']!));
+          expect(j.step, RechargeStep.destination);
+          expect(j.phone, isEmpty);
+          expect(
+            t.widget<TextField>(find.byType(TextField).first).controller!.text,
+            isEmpty,
+          );
           await t.pumpWidget(const SizedBox());
         },
       );
@@ -222,6 +229,59 @@ void main() {
       expect(
         find.text(flupFlapStrings[language.code]!['operatorProduct']!),
         findsWidgets,
+      );
+      expect(t.takeException(), isNull);
+    }
+    await t.pumpWidget(const SizedBox());
+  });
+  for (final width in [360.0, 375.0, 390.0, 412.0, 430.0]) {
+    testWidgets('pending recovery cancellation and Back at $width', (t) async {
+      t.view.physicalSize = Size(width, 900);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.resetPhysicalSize);
+      addTearDown(t.view.resetDevicePixelRatio);
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      await t.runAsync(j.initialize);
+      await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+      await t.pumpAndSettle();
+      expect(find.text('Pending payment'), findsOneWidget);
+      expect(find.text('Open secure Stripe checkout'), findsNothing);
+      expect(j.canBack, false);
+      await capture(t, 'pending-recovery-${width.toInt()}');
+      a.cancelCode = 'TOPUP_CANCELLATION_UNRESOLVED';
+      await press(t, find.text(flupFlapStrings['en']!['cancelPending']!));
+      expect(j.locked, true);
+      expect(
+        find.text(flupFlapStrings['en']!['cancellationUnresolved']!),
+        findsOneWidget,
+      );
+      a.cancelCode = null;
+      await press(t, find.text(flupFlapStrings['en']!['cancelPending']!));
+      expect(j.locked, false);
+      expect(j.step, RechargeStep.destination);
+      expect(find.text('Country'), findsOneWidget);
+      expect(t.takeException(), isNull);
+      await capture(t, 'pending-cancelled-${width.toInt()}');
+      await t.pumpWidget(const SizedBox());
+    });
+  }
+  testWidgets('pending recovery actions use all five languages', (t) async {
+    final (a, _, j) = fixture();
+    a.pendingHistory = true;
+    await t.runAsync(j.initialize);
+    for (final language in AppLanguage.values) {
+      await t.pumpWidget(
+        shell(RechargeJourneyScreen(journey: j), language: language),
+      );
+      await t.pumpAndSettle();
+      expect(
+        find.text(flupFlapStrings[language.code]!['pendingPayment']!),
+        findsOneWidget,
+      );
+      expect(
+        find.text(flupFlapStrings[language.code]!['cancelPending']!),
+        findsOneWidget,
       );
       expect(t.takeException(), isNull);
     }

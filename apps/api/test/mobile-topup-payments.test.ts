@@ -563,7 +563,60 @@ describe('Stripe sandbox flow',()=>{
     const quote = await f.service.createQuote('guest', quoteInput);
     await expect(f.service.createPaymentSession('guest', { quoteId: quote.id }, 'guest-country-required', billingCountry))
       .rejects.toMatchObject({ code: 'BILLING_COUNTRY_REQUIRED' });
+    expect(await f.repository.listTransactions('guest')).toEqual([]);
+    expect((await f.repository.getQuote('guest', quote.id))?.consumedAt).toBeUndefined();
     expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('does not reserve or consume the quote when Stripe is unconfigured', async () => {
+    const f = stripeFixture(undefined, { configured: false });
+    const quote = await f.service.createQuote('customer', quoteInput);
+    await expect(f.service.createPaymentSession('customer', { quoteId: quote.id }, 'missing-stripe-provider', 'US'))
+      .rejects.toMatchObject({ code: 'PAYMENT_PROVIDER_DISABLED' });
+    expect(await f.repository.listTransactions('customer')).toEqual([]);
+    expect((await f.repository.getQuote('customer', quote.id))?.consumedAt).toBeUndefined();
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('cancels an untouched Stripe orphan, and the cancelled reservation cannot start a session', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const orphan = await f.service.purchase('customer', { quoteId: quote.id }, 'legacy-orphan-reservation');
+    expect(orphan).toMatchObject({ status: 'PENDING', paymentStatus: 'PENDING', paymentProvider: 'STRIPE' });
+    const cancelled = await f.service.cancelTransaction('customer', orphan.id);
+    expect(cancelled).toMatchObject({ status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' });
+    await expect(f.service.createPaymentSession('customer', { quoteId: quote.id }, 'legacy-orphan-reservation', 'US'))
+      .rejects.toMatchObject({ code: 'PAYMENT_SESSION_IN_PROGRESS' });
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('cancellation loses atomically if payment creation claims an orphan first', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const orphan = await f.service.purchase('customer', { quoteId: quote.id }, 'orphan-cancel-race');
+    const claim = f.repository.claimOperation.bind(f.repository);
+    vi.spyOn(f.repository, 'claimOperation').mockImplementationOnce(async (id, op, when) => {
+      expect(await claim(id, op, when)).toBe(true); // concurrent session creation wins
+      return claim(id, op, when);
+    });
+    await expect(f.service.cancelTransaction('customer', orphan.id)).rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
+    expect((await f.repository.getTransactionById(orphan.id))?.paymentStatus).toBe('PENDING');
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('refuses cancellation after an unknown Stripe session-creation outcome', async () => {
+    const transport = vi.fn(async () => { throw new Error('lost response'); });
+    const f = stripeFixture(transport);
+    const quote = await f.service.createQuote('customer', quoteInput);
+    await expect(f.service.createPaymentSession('customer', { quoteId: quote.id }, 'unknown-session-cancel', 'US')).rejects.toBeDefined();
+    const [record] = await f.repository.listTransactions('customer');
+    await expect(f.service.cancelTransaction('customer', record!.id)).rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
+    expect((await f.repository.getTransactionById(record!.id))?.paymentStatus).toBe('PENDING');
+    expect(transport).toHaveBeenCalledTimes(1);
     expect(f.submit).not.toHaveBeenCalled();
   });
 
@@ -630,6 +683,90 @@ describe('Stripe sandbox flow',()=>{
     return { ...f, app, identities, repository, quote, session, guest,
       expireQuote: () => { now = new Date(now.getTime() + 600_000); } };
   }
+
+  it.each(['expired', 'declined', 'paid'] as const)('FlupFlap refresh/resume reconcile %s without external mutations', async outcome => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    const session = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201);
+    const payload = new URLSearchParams(transportRequest(f.transport).body);
+    const token = new URL(payload.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+    const state = vi.spyOn(f.stripeProvider!, 'getHostedCheckoutPaymentState').mockResolvedValue({
+      id: session.body.checkoutSession.id,
+      status: outcome === 'expired' ? 'expired' : outcome === 'paid' ? 'complete' : 'open',
+      paymentStatus: outcome === 'paid' ? 'paid' : 'unpaid',
+      paymentIntentId: outcome === 'expired' ? undefined : 'pi_recovery_bound',
+    });
+    vi.spyOn(f.stripeProvider!, 'getPayment').mockResolvedValue({
+      id: 'pi_recovery_bound', amount: 624, amount_received: outcome === 'paid' ? 624 : 0,
+      currency: 'usd', status: outcome === 'paid' ? 'succeeded' : 'requires_payment_method',
+      metadata: { transactionId: session.body.transactionId }, last_payment_error: { decline_code: 'insufficient_funds' },
+    });
+    const read = await request(f.app).get(`/api/flupflap/mobile-topups/transactions/${session.body.transactionId}?refresh=true`)
+      .auth(guest.accessToken, { type: 'bearer' }).expect(200);
+    const resumed = await request(f.app).post('/api/flupflap/mobile-topups/checkout-resume').send({ resumeToken: token }).expect(200);
+    const expected = outcome === 'paid' ? { status: 'PENDING', paymentStatus: 'SESSION_CREATED' } : { status: 'FAILED', paymentStatus: 'FAILED' };
+    expect(read.body.transaction).toMatchObject(expected);
+    expect(resumed.body.transaction).toMatchObject(expected);
+    expect(state).toHaveBeenCalledWith(session.body.checkoutSession.id);
+    expect(f.transport).toHaveBeenCalledTimes(1); // only original session POST; reads stubbed above
+    expect(f.submit).not.toHaveBeenCalled();
+    expect(JSON.stringify(resumed.body)).not.toContain(token);
+    expect(resumed.body.transaction).not.toHaveProperty('id');
+    expect(resumed.body.transaction).not.toHaveProperty('paymentSessionId');
+  });
+
+  it.each(['CAPTURED', 'AUTHORIZED'] as const)('FlupFlap status/resume leaves %s recovery to server workers without capture/void/refund', async paymentStatus => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    const session = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201);
+    const payload = new URLSearchParams(transportRequest(f.transport).body);
+    const token = new URL(payload.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+    await f.repository.updateTransaction(session.body.transactionId, {
+      status: 'PROCESSING', paymentStatus, paymentProviderTransactionId: 'pi_recovery_bound',
+      providerTransactionId: 'provider-failure',
+    });
+    vi.spyOn(f.provider, 'getTopUpStatus').mockResolvedValue({ transactionId: 'provider-failure', status: 'FAILED' });
+    vi.spyOn(f.stripeProvider!, 'getPayment').mockResolvedValue({
+      id: 'pi_recovery_bound', amount: 624, currency: 'usd',
+      status: paymentStatus === 'CAPTURED' ? 'succeeded' : 'requires_capture',
+      amount_received: paymentStatus === 'CAPTURED' ? 624 : 0,
+      amount_capturable: paymentStatus === 'AUTHORIZED' ? 624 : 0,
+    });
+    vi.spyOn(f.stripeProvider!, 'getRecoveryStatus').mockResolvedValue('PENDING');
+    const capture = vi.spyOn(f.stripeProvider!, 'capture');
+    const refund = vi.spyOn(f.stripeProvider!, 'refund');
+    const voidPayment = vi.spyOn(f.stripeProvider!, 'void');
+    const read = await request(f.app).get(`/api/flupflap/mobile-topups/transactions/${session.body.transactionId}?refresh=true`)
+      .auth(guest.accessToken, { type: 'bearer' }).expect(200);
+    const resumed = await request(f.app).post('/api/flupflap/mobile-topups/checkout-resume').send({ resumeToken: token }).expect(200);
+    const expected = { status: 'FAILED', paymentStatus: paymentStatus === 'CAPTURED' ? 'REFUND_PENDING' : 'VOID_PENDING' };
+    expect(read.body.transaction).toMatchObject(expected);
+    expect(resumed.body.transaction).toMatchObject(expected);
+    expect(capture).not.toHaveBeenCalled();
+    expect(refund).not.toHaveBeenCalled();
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+    expect(f.transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('FlupFlap cancellation confirms session expiration and fails closed when Stripe cannot confirm', async () => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    const session = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201);
+    const expire = vi.spyOn(f.stripeProvider!, 'expireHostedCheckoutSession').mockRejectedValueOnce(new Error('unknown'));
+    const path = `/api/flupflap/mobile-topups/transactions/${session.body.transactionId}/cancel`;
+    const blocked = await request(f.app).post(path).auth(guest.accessToken, { type: 'bearer' }).expect(409);
+    expect(blocked.body.code).toBe('TOPUP_CANCELLATION_UNRESOLVED');
+    expect((await f.repository.getTransactionById(session.body.transactionId))?.paymentStatus).toBe('SESSION_CREATED');
+    expire.mockResolvedValueOnce(undefined);
+    const cancelled = await request(f.app).post(path).auth(guest.accessToken, { type: 'bearer' }).expect(200);
+    expect(cancelled.body.transaction).toMatchObject({ status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' });
+    expect(expire).toHaveBeenCalledWith(session.body.checkoutSession.id, session.body.transactionId);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
 
   it('uses the Android-only HTTPS handoff without leaking capabilities or fulfilling a recharge', async () => {
     const f = flupFlapStripeFixture();
@@ -904,7 +1041,8 @@ describe('Stripe sandbox flow',()=>{
     const beforeResume = f.transport.mock.calls.length;
     expect(await f.service.resumeCheckout(b.token)).toMatchObject({ status: 'DELIVERED', paymentStatus: 'CAPTURED', failureReason: null, deliveredValue: 805 });
     expect(await f.service.resumeCheckout(a.token)).toMatchObject({ status: 'FAILED', failureReason: 'INSUFFICIENT_FUNDS', deliveredValue: null });
-    expect(f.transport).toHaveBeenCalledTimes(beforeResume);
+    expect(f.transport).toHaveBeenCalledTimes(beforeResume + 1);
+    expect(transportRequest(f.transport, beforeResume).init.method).toBe('GET');
     expect(f.submit).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(await f.service.resumeCheckout(b.token))).not.toMatch(/pi_attempt|cs_test|private Stripe|checkoutResumeToken|transactionId/);
   });
@@ -981,7 +1119,8 @@ describe('Stripe sandbox flow',()=>{
       .send({ resumeToken }).expect(200);
     expect(resumed.body).toEqual(response.body);
     expect((await f.repository.getTransactionById(session.transactionId))?.paymentStatus).toBe('SESSION_CREATED');
-    expect(f.transport).toHaveBeenCalledTimes(1); // Only initial session creation; resume never calls Stripe.
+    expect(f.transport).toHaveBeenCalledTimes(3); // Creation plus two read-only session queries.
+    expect(f.transport.mock.calls.slice(1).every(([, init]) => init?.method === 'GET')).toBe(true);
     expect(f.submit).not.toHaveBeenCalled();
 
     const expiredService = new MobileTopUpService(
@@ -1023,7 +1162,8 @@ describe('Stripe sandbox flow',()=>{
     });
     expect((await f.repository.getTransactionById(session.transactionId))?.paymentStatus).toBe('SESSION_CREATED');
     expect(f.submit).not.toHaveBeenCalled();
-    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(f.transport).toHaveBeenCalledTimes(2);
+    expect(transportRequest(f.transport, 1).init.method).toBe('GET');
   });
 
   it('expires checkout resume strictly at the dedicated TTL boundary', async () => {
@@ -1075,7 +1215,8 @@ describe('Stripe sandbox flow',()=>{
         expect(response.text).not.toContain(secret);
       }
     }
-    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(f.transport).toHaveBeenCalledTimes(5);
+    expect(f.transport.mock.calls.slice(1).every(([, init]) => init?.method === 'GET')).toBe(true);
     expect(f.submit).not.toHaveBeenCalled();
   });
 

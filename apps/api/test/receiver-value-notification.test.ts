@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { MemoryMobileTopUpRepository, resetMobileTopUpStore } from '../src/topup/repository.js';
 import { MobileTopUpService } from '../src/topup/service.js';
 import { MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpOperator, type MobileTopUpProvider } from '../src/topup/types.js';
-import { ReceiverNotificationService, receiverLanguage, receiverMessage } from '../src/topup/receiver-notification.js';
+import { ReceiverNotificationService, TelnyxReceiverSmsProvider, loadTelnyxSmsConfig, receiverLanguage, receiverMessage } from '../src/topup/receiver-notification.js';
 import { ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
 import { GlobalRechargeProviderRouter } from '../src/topup/provider-router.js';
 import { reloadlyProducts } from '../src/topup/product-catalog.js';
@@ -162,5 +162,32 @@ describe('Reloadly receiver quote contract (mock transport only)', () => {
     const provider = new ReloadlySandboxTopUpProvider(config, transport);
     const product = reloadlyProducts({ ...operator, denominationType: 'RANGE', minAmount: 5, maxAmount: 20 })[0]!;
     await expect(provider.quoteReceiverValue(product, 7)).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' });
+  });
+});
+
+
+describe('Telnyx recharge SMS adapter', () => {
+  const telnyx = { apiKey: 'test-secret', fromNumber: '+17409108880', messagingProfileId: '11111111-1111-4111-8111-111111111111', baseUrl: 'https://api.telnyx.com/v2' };
+  it('requires complete server-only configuration', () => {
+    expect(loadTelnyxSmsConfig({})).toBeUndefined();
+    expect(() => loadTelnyxSmsConfig({ TELNYX_API_KEY: 'x' })).toThrow(/configured together/);
+    expect(() => loadTelnyxSmsConfig({ TELNYX_API_KEY: 'x', TELNYX_FROM_NUMBER: '7409108880', TELNYX_MESSAGING_PROFILE_ID: telnyx.messagingProfileId })).toThrow(/E.164/);
+  });
+  it('sends one V2 request and records provider acceptance as SENT, not delivered', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { id: 'telnyx-message-1' } }), { status: 200 }));
+    const provider = new TelnyxReceiverSmsProvider(telnyx, transport);
+    await expect(provider.send({ to: '+50937123456', message: 'FlupFlap test', idempotencyKey: 'recharge-receiver:fixture' }))
+      .resolves.toEqual({ status: 'SENT', messageId: 'telnyx-message-1' });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(String(transport.mock.calls[0]![0])).toBe('https://api.telnyx.com/v2/messages');
+    const init = transport.mock.calls[0]![1]!;
+    expect(init.headers).toEqual({ Authorization: 'Bearer test-secret', 'Content-Type': 'application/json' });
+    expect(JSON.parse(String(init.body))).toEqual({ from: '+17409108880', to: '+50937123456', text: 'FlupFlap test', messaging_profile_id: telnyx.messagingProfileId });
+  });
+  it('treats explicit rejection as retryable but ambiguous network failure as unknown', async () => {
+    const rejected = new TelnyxReceiverSmsProvider(telnyx, vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status: 400 })));
+    await expect(rejected.send({ to: '+50937123456', message: 'x', idempotencyKey: 'k' })).resolves.toEqual({ status: 'NOT_SENT', category: 'PROVIDER_REJECTED' });
+    const uncertain = new TelnyxReceiverSmsProvider(telnyx, vi.fn<typeof fetch>().mockRejectedValue(new Error('timeout')));
+    await expect(uncertain.send({ to: '+50937123456', message: 'x', idempotencyKey: 'k' })).rejects.toThrow('timeout');
   });
 });

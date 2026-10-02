@@ -54,9 +54,13 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
         return state.matchedLocation == '/loading' ? null : '/loading';
       }
       if (!widget.session.authenticated &&
-          !['/login', '/reset-password'].contains(state.matchedLocation)) return '/login';
+          !['/login', '/reset-password'].contains(state.matchedLocation)) {
+        return '/login';
+      }
       if (widget.session.authenticated &&
-          ['/loading', '/login'].contains(state.matchedLocation)) return '/';
+          ['/loading', '/login'].contains(state.matchedLocation)) {
+        return '/';
+      }
       return null;
     },
     routes: [
@@ -122,7 +126,7 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
           appBarTheme: const AppBarTheme(backgroundColor: _surface, foregroundColor: _navy,
             elevation: 0, centerTitle: false, titleTextStyle: TextStyle(
               fontSize: 22, fontWeight: FontWeight.w800, color: _navy)),
-          cardTheme: CardThemeData(color: Colors.white, elevation: 0,
+          cardTheme: const CardThemeData(color: Colors.white, elevation: 0,
             margin: EdgeInsets.zero, shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.all(Radius.circular(20)),
               side: BorderSide(color: Color(0xFFE5EAF2)))),
@@ -177,9 +181,15 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> run(Future<void> Function() action) async {
     setState(() { busy = true; message = null; });
     try { await action(); } catch (_) {
-      if (mounted) setState(() => message =
-        'Unable to complete this request. Check your details and try again.');
-    } finally { if (mounted) setState(() => busy = false); }
+      if (mounted) {
+        setState(() => message =
+          'Unable to complete this request. Check your details and try again.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => busy = false);
+      }
+    }
   }
   @override Widget build(BuildContext context) => Scaffold(
     body: SafeArea(child: Center(child: ConstrainedBox(
@@ -251,8 +261,10 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Text(registration ? 'Already have an account? Sign in' : 'Create an account')),
                 if (!registration) TextButton(onPressed: busy ? null : () => run(() async {
                   await widget.session.forgot(email.text.trim());
-                  if (mounted) setState(() => message =
-                    'If an account exists, reset instructions have been sent.');
+                  if (mounted) {
+                    setState(() => message =
+                      'If an account exists, reset instructions have been sent.');
+                  }
                 }), child: const Text('Forgot password?')),
               ],
             ],
@@ -320,7 +332,7 @@ class HomeScreen extends ConsumerWidget {
           const SizedBox(height: 12),
           recipients.when(
             loading: () => const _LoadingCard(),
-            error: (_, __) => _EmptyCard(icon: Icons.people_outline,
+            error: (_, __) => const _EmptyCard(icon: Icons.people_outline,
               title: 'Recipients unavailable', subtitle: 'Pull down to try again.'),
             data: (items) => items.isEmpty
               ? _EmptyCard(icon: Icons.person_add_alt_1_outlined, title: 'No saved recipients yet',
@@ -515,7 +527,7 @@ class _AccountScreenState extends State<AccountScreen> {
         const SizedBox(height: 20),
         const Text('About', style: TextStyle(color: _navy, fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
-        Card(child: Column(children: const [
+        const Card(child: Column(children: [
           ListTile(leading: Icon(Icons.shield_outlined, color: _blue), title: Text('Secure recharge'),
             subtitle: Text('Payments and recharge processing use protected server connections.')),
           Divider(height: 1, indent: 56),

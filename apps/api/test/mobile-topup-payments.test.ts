@@ -890,6 +890,29 @@ describe('Stripe sandbox flow',()=>{
     expect(f.transport).toHaveBeenCalledTimes(1); expect(f.submit).not.toHaveBeenCalled();
   });
 
+  it('returns a generic customer-safe provider failure after a refunded recharge', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'provider-failure-resume', 'US');
+    const params = new URLSearchParams(transportRequest(f.transport).body);
+    const resumeToken = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+    await f.repository.updateTransaction(session.transactionId, {
+      status: 'FAILED',
+      paymentStatus: 'REFUNDED',
+      providerStatus: 'FAILED',
+      failureCode: 'PROVIDER_RECIPIENT_NOT_FOUND',
+      failedAt: new Date().toISOString(),
+    });
+
+    expect(await f.service.resumeCheckout(resumeToken)).toMatchObject({
+      status: 'FAILED',
+      paymentStatus: 'REFUNDED',
+      failureReason: 'RECHARGE_PROVIDER_FAILED',
+      deliveredValue: null,
+    });
+    expect(JSON.stringify(await f.service.resumeCheckout(resumeToken))).not.toContain('RECIPIENT_NOT_FOUND');
+  });
+
   it('resolves checkout resumes without granting payment authority', async () => {
     const f = stripeFixture();
     const app = createApp({

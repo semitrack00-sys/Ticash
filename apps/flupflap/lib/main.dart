@@ -199,8 +199,8 @@ class _AuthScreenState extends State<AuthScreen> {
           const Brand(), const SizedBox(height: 28),
           Card(child: Padding(padding: const EdgeInsets.all(22), child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text(widget.resetToken != null ? 'Reset your password' :
-                registration ? 'Create your account' : 'Welcome back',
+              Text(widget.resetToken != null ? 'Reset FlupFlap password' :
+                registration ? 'Create FlupFlap account' : 'Sign in to FlupFlap',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w900, color: _navy)),
               const SizedBox(height: 6),
@@ -482,7 +482,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final email = widget.session.guest ? 'Guest recharge session' :
       widget.session.user?['email'] as String? ?? '';
     return Scaffold(
-      appBar: AppBar(title: const Text('Account')),
+      appBar: AppBar(title: const Text('FlupFlap account')),
       body: ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 32), children: [
         Card(child: Padding(padding: const EdgeInsets.all(20), child: Row(children: [
           Container(width: 58, height: 58, decoration: BoxDecoration(

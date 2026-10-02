@@ -335,7 +335,7 @@ void main() {
       await tap(tester, find.text(recipient['nickname']!));
       expect(
         tester.widget<TextField>(find.byType(TextField).first).controller!.text,
-        recipient['phone'],
+        '5551234567',
       );
       await tap(tester, find.text('Continue'));
       final detection = adapter.requests.singleWhere(

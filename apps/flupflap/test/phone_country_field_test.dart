@@ -224,4 +224,32 @@ void main() {
     );
     expect(t.widget<TextField>(find.byType(TextField)).enabled, isFalse);
   });
+
+  testWidgets(
+    'saved E.164 and programmatic recipient updates show one prefix without emitting edits',
+    (t) async {
+      final controller = TextEditingController(text: '+50937000000');
+      addTearDown(controller.dispose);
+      Widget form(String code) => phoneShell(
+        home: Scaffold(
+          body: PhoneCountryField(
+            controller: controller,
+            countryCode: code,
+            onChanged: (_) =>
+                fail('Prefill must retain the journey and recipient ID'),
+          ),
+        ),
+      );
+      await t.pumpWidget(form('HT'));
+      expect(controller.text, '37000000');
+      expect(find.text('+509'), findsOneWidget);
+      controller.text = '+18095551234';
+      await t.pumpWidget(form('DO'));
+      expect(controller.text, '8095551234');
+      expect(find.text('+1'), findsOneWidget);
+      controller.text = '+18295551234';
+      await t.pumpAndSettle();
+      expect(controller.text, '8295551234');
+    },
+  );
 }

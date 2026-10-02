@@ -131,35 +131,72 @@ class _PhoneCountryFieldState extends State<PhoneCountryField> {
   PhoneCountry get country => _country!;
 
   @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(controllerChanged);
+  }
+
+  void controllerChanged() {
+    if (!PhoneEntry.isInternational(widget.controller.text)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !PhoneEntry.isInternational(widget.controller.text)) {
+        return;
+      }
+      setState(syncInternationalDisplay);
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(controllerChanged);
+    super.dispose();
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _country ??=
         PhoneCountry.find(widget.countryCode) ??
         PhoneCountry.fromLocales(View.of(context).platformDispatcher.locales);
-    if (PhoneEntry.isInternational(widget.controller.text)) {
-      _country = PhoneEntry.parse(widget.controller.text, country).country;
-    }
+    syncInternationalDisplay();
   }
 
   @override
   void didUpdateWidget(covariant PhoneCountryField oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(controllerChanged);
+      widget.controller.addListener(controllerChanged);
+    }
     if (oldWidget.countryCode != widget.countryCode) {
       _country =
           PhoneCountry.find(widget.countryCode) ??
           PhoneCountry.fromLocales(View.of(context).platformDispatcher.locales);
     }
+    syncInternationalDisplay();
+  }
+
+  // A restored journey or saved recipient already holds E.164. Display its
+  // national part without notifying the parent or invalidating its saved ID.
+  void syncInternationalDisplay() {
+    if (!PhoneEntry.isInternational(widget.controller.text)) return;
+    final entry = PhoneEntry.parse(widget.controller.text, country);
+    _country = entry.country;
+    displayNational(entry);
+  }
+
+  void displayNational(PhoneEntry entry) {
+    if (entry.number?.isValidLength() != true) return;
+    final national = entry.number!.nsn;
+    widget.controller.value = TextEditingValue(
+      text: national,
+      selection: TextSelection.collapsed(offset: national.length),
+    );
   }
 
   void changed(String value) {
     final entry = PhoneEntry.parse(value, country);
-    if (PhoneEntry.isInternational(value) && entry.number?.isValid() == true) {
-      final national = entry.number!.nsn;
-      widget.controller.value = TextEditingValue(
-        text: national,
-        selection: TextSelection.collapsed(offset: national.length),
-      );
-    }
+    if (PhoneEntry.isInternational(value)) displayNational(entry);
     setState(() => _country = entry.country);
     widget.onChanged(entry);
   }

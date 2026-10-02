@@ -696,12 +696,24 @@ export class MobileTopUpService {
     }
     const record = await this.repository.getTransactionByCheckoutResumeTokenHash(this.checkoutResumeTokenHash(resumeToken));
     if (!record) throw new MobileTopUpError('RESUME_TOKEN_NOT_FOUND', 'Checkout resume token was not found', 404);
-    if (!record.checkoutResumeTokenExpiresAt || new Date(record.checkoutResumeTokenExpiresAt) <= this.clock()) {
+    if (!record.checkoutResumeTokenExpiresAt || !Number.isFinite(Date.parse(record.checkoutResumeTokenExpiresAt)) || new Date(record.checkoutResumeTokenExpiresAt) <= this.clock()) {
       throw new MobileTopUpError('RESUME_TOKEN_EXPIRED', 'Checkout resume token has expired', 410);
     }
+    // The capability resolves exactly one stored hosted reservation, never a user's latest transaction.
+    this.assertTransactionEnvironment(record);
+    if (record.checkoutResumeTokenHash !== this.checkoutResumeTokenHash(resumeToken) || record.paymentProvider !== 'STRIPE' ||
+        !/^cs_(?:test|live)_[A-Za-z0-9_]+$/.test(record.paymentSessionId ?? '') ||
+        (record.paymentProviderTransactionId && !/^pi_[A-Za-z0-9_]+$/.test(record.paymentProviderTransactionId))) {
+      throw new MobileTopUpError('RESUME_TOKEN_NOT_FOUND', 'Checkout resume token was not found', 404);
+    }
+    const publicFailures = ['INSUFFICIENT_FUNDS', 'PAYMENT_DECLINED', 'PAYMENT_CANCELLED', 'PAYMENT_EXPIRED'] as const;
+    const failureReason = record.failureCode === 'CANCELLED_BY_CUSTOMER' ? 'PAYMENT_CANCELLED' :
+      publicFailures.find(code => code === record.failureCode) ?? null;
     // Construct the public DTO explicitly so new repository fields cannot leak by default.
     return {
       status: record.status,
+      paymentStatus: record.paymentStatus,
+      failureReason: record.status === 'FAILED' ? failureReason : null,
       countryCode: record.countryCode,
       receiverQuote: record.receiverQuote ?? null,
       deliveredValue: record.status === 'DELIVERED' ? record.deliveredValue ?? null : null,
@@ -898,11 +910,11 @@ export class MobileTopUpService {
     }
 
     const transitionMap = {
-      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED'], to: 'CAPTURED' },
-      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED'], to: 'CAPTURED' },
+      'checkout.session.completed': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'], to: 'CAPTURED' },
+      'checkout.session.async_payment_succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'], to: 'CAPTURED' },
       'checkout.session.async_payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'checkout.session.expired': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
-      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED'], to: 'CAPTURED' },
+      'payment_intent.succeeded': { from: ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'], to: 'CAPTURED' },
       'payment_intent.payment_failed': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.canceled': { from: ['PENDING', 'SESSION_CREATED'], to: 'FAILED' },
       'payment_intent.processing': { from: ['PENDING', 'SESSION_CREATED'], to: 'PENDING' },
@@ -914,15 +926,15 @@ export class MobileTopUpService {
     if (!transition) return;
     const changed = await this.repository.transitionPayment(record.id, [...transition.from], {
       paymentStatus: transition.to,
-      paymentProviderTransactionId: event.paymentId,
+      ...(/^pi_[A-Za-z0-9_]+$/.test(event.paymentId) ? { paymentProviderTransactionId: event.paymentId } : {}),
       ...(transition.to === 'FAILED'
-        ? { status: 'FAILED', failureCode: 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() }
+        ? { status: 'FAILED', failureCode: event.failureReason ?? 'PAYMENT_DECLINED', failedAt: this.clock().toISOString() }
         : transition.to === 'CAPTURED'
           ? { status: 'PENDING', failureCode: 'PAYMENT_RECOVERED' }
           : {}),
     });
     if (changed) await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + transition.to, 'MobileTopUpTransaction', record.id, { provider: record.paymentProvider });
-    if (transition.to === 'CAPTURED') await this.fulfillPaidRecharge(record.id);
+    if (transition.to === 'CAPTURED' && (changed || record.paymentStatus === 'CAPTURED' && record.status === 'PENDING')) await this.fulfillPaidRecharge(record.id);
     await this.repository.completePaymentEvent(event.eventId);
   }
 
@@ -1079,6 +1091,9 @@ export class MobileTopUpService {
     this.assertTransactionEnvironment(record);
     try {
       const session = await this.stripeProvider.getHostedCheckoutPaymentState(record.paymentSessionId);
+      if (record.paymentProviderTransactionId && session.paymentIntentId && record.paymentProviderTransactionId !== session.paymentIntentId) {
+        throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Stripe session payment binding changed', 502);
+      }
       const paymentId = session.paymentIntentId ?? record.paymentProviderTransactionId;
       if (paymentId) {
         const payment = await this.stripeProvider.getPayment(paymentId);
@@ -1134,7 +1149,8 @@ export class MobileTopUpService {
               paymentStatus: 'FAILED',
               paymentProviderTransactionId: paymentId,
               status: 'FAILED',
-              failureCode: 'PAYMENT_DECLINED',
+              failureCode: payment.status === 'canceled' ? 'PAYMENT_CANCELLED' :
+                (lastPaymentError as Record<string, unknown>).decline_code === 'insufficient_funds' ? 'INSUFFICIENT_FUNDS' : 'PAYMENT_DECLINED',
               failedAt: this.clock().toISOString(),
             },
           );

@@ -29,6 +29,7 @@ export interface VerifiedStripeEvent {
   checkoutSessionId: string;
   paymentIntentId?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
+  failureReason?: 'INSUFFICIENT_FUNDS' | 'PAYMENT_DECLINED' | 'PAYMENT_CANCELLED' | 'PAYMENT_EXPIRED';
   payloadHash: string;
   amountMinor: number;
   currency: 'USD';
@@ -86,6 +87,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
       currency: z.string().min(3).max(3).optional(),
       metadata: z.record(z.string(), z.string()).optional(),
       payment_intent: z.string().regex(/^pi_[A-Za-z0-9_]+$/).optional(),
+      last_payment_error: z.object({ decline_code: z.string().optional() }).passthrough().nullish(),
       payment_status: z.enum(['paid', 'unpaid', 'no_payment_required']).optional(),
     }).passthrough() }).passthrough(),
   }).safeParse(body);
@@ -95,7 +97,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
   const metadata = object.metadata ?? {};
   const transactionId = metadata.transactionId ?? metadata.transaction_id ?? metadata.rechargeId ?? metadata.recharge_id;
   const isCheckoutSession = parsed.data.type.startsWith('checkout.session.');
-  const amountMinor = Number(isCheckoutSession ? object.amount_total : object.amount_received ?? object.amount ?? 0);
+  const amountMinor = Number(isCheckoutSession ? object.amount_total : object.amount ?? object.amount_received ?? 0);
   const paymentIntentId = object.payment_intent;
   if (!transactionId || !Number.isFinite(amountMinor) || amountMinor <= 0) {
     throw new MobileTopUpError('INVALID_PAYMENT_EVENT', 'Payment event is missing a server-bound transaction reference', 400);
@@ -120,6 +122,9 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
     checkoutSessionId: object.id,
     ...(paymentIntentId ? { paymentIntentId } : {}),
     ...(isCheckoutSession ? { paymentStatus: object.payment_status } : {}),
+    ...(parsed.data.type === 'payment_intent.payment_failed' ? { failureReason: object.last_payment_error?.decline_code === 'insufficient_funds' ? 'INSUFFICIENT_FUNDS' as const : 'PAYMENT_DECLINED' as const } :
+      parsed.data.type === 'payment_intent.canceled' ? { failureReason: 'PAYMENT_CANCELLED' as const } :
+      parsed.data.type === 'checkout.session.expired' ? { failureReason: 'PAYMENT_EXPIRED' as const } : {}),
     amountMinor,
     currency: 'USD',
     payloadHash: createHash('sha256').update(raw).digest('hex'),

@@ -820,6 +820,76 @@ describe('Stripe sandbox flow',()=>{
     expect(JSON.stringify(transport.mock.calls)).not.toContain('cs_test_secret_value');
   });
 
+  it('isolates failed A and paid B capabilities, duplicate webhooks and delayed failures', async () => {
+    let sessions = 0;
+    const f = stripeFixture(vi.fn(async () => {
+      sessions += 1;
+      return stripeResponse({ id: `cs_test_attempt_${sessions}`, url: `https://checkout.stripe.com/c/pay/cs_test_attempt_${sessions}` });
+    }));
+    f.submit.mockResolvedValue({ transactionId: 'provider-B', status: 'SUCCESSFUL', requestedAmount: 5,
+      requestedAmountCurrencyCode: 'USD', deliveredAmount: 805, deliveredAmountCurrencyCode: 'JMD' } as never);
+    async function attempt(key: string) {
+      const quote = await f.service.createQuote('customer', quoteInput);
+      const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, key, 'US');
+      const params = new URLSearchParams(transportRequest(f.transport, sessions - 1).body);
+      const token = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+      return { session, token };
+    }
+    function event(attempt: Awaited<ReturnType<typeof attempt>>, paid: boolean, eventId: string) {
+      const raw = Buffer.from(JSON.stringify({ id: eventId, livemode: false,
+        type: paid ? 'checkout.session.completed' : 'payment_intent.payment_failed',
+        data: { object: { id: paid ? attempt.session.checkoutSession.id : 'pi_attempt_A',
+          amount: attempt.session.amountMinor, amount_received: 0, amount_total: attempt.session.amountMinor,
+          currency: 'usd', ...(paid ? { payment_intent: 'pi_attempt_B', payment_status: 'paid' } :
+            { last_payment_error: { code: 'card_declined', decline_code: 'insufficient_funds', message: 'private Stripe details' } }),
+          metadata: { transactionId: attempt.session.transactionId } } } }));
+      const timestamp = Math.floor(Date.now() / 1000);
+      return verifyStripeEvent(raw, `t=${timestamp},v1=${createHmac('sha256', stripeEnv.STRIPE_WEBHOOK_SECRET).update(`${timestamp}.${raw.toString('utf8')}`).digest('hex')}`, stripeEnv.STRIPE_WEBHOOK_SECRET);
+    }
+    const a = await attempt('attempt-A');
+    const failed = event(a, false, 'evt_attempt_A_failed');
+    await f.service.acceptVerifiedPaymentEvent(failed);
+    await f.service.acceptVerifiedPaymentEvent(failed);
+    expect(f.submit).not.toHaveBeenCalled();
+    expect(await f.service.resumeCheckout(a.token)).toMatchObject({ status: 'FAILED', paymentStatus: 'FAILED', failureReason: 'INSUFFICIENT_FUNDS', deliveredValue: null });
+    const b = await attempt('attempt-B');
+    expect(b.session.transactionId).not.toBe(a.session.transactionId);
+    expect(b.token).not.toBe(a.token);
+    const paid = event(b, true, 'evt_attempt_B_paid');
+    await f.service.acceptVerifiedPaymentEvent(paid);
+    const delivered = await f.repository.getTransactionById(b.session.transactionId);
+    expect(delivered).toMatchObject({ status: 'DELIVERED', paymentStatus: 'CAPTURED' });
+    await f.service.acceptVerifiedPaymentEvent(paid);
+    await f.service.acceptVerifiedPaymentEvent(event(b, true, 'evt_attempt_B_paid_duplicate'));
+    await f.service.acceptVerifiedPaymentEvent(event(a, false, 'evt_attempt_A_delayed_failed'));
+    expect(await f.repository.getTransactionById(b.session.transactionId)).toEqual(delivered);
+    expect(f.submit).toHaveBeenCalledTimes(1);
+    const beforeResume = f.transport.mock.calls.length;
+    expect(await f.service.resumeCheckout(b.token)).toMatchObject({ status: 'DELIVERED', paymentStatus: 'CAPTURED', failureReason: null, deliveredValue: 805 });
+    expect(await f.service.resumeCheckout(a.token)).toMatchObject({ status: 'FAILED', failureReason: 'INSUFFICIENT_FUNDS', deliveredValue: null });
+    expect(f.transport).toHaveBeenCalledTimes(beforeResume);
+    expect(f.submit).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(await f.service.resumeCheckout(b.token))).not.toMatch(/pi_attempt|cs_test|private Stripe|checkoutResumeToken|transactionId/);
+  });
+
+  it('resume rejects a mismatched capability lookup or missing hosted binding without provider requests', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'resume-binding-check', 'US');
+    const params = new URLSearchParams(transportRequest(f.transport).body);
+    const token = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
+    const stored = (await f.repository.getTransactionById(session.transactionId))!;
+    const lookup = vi.spyOn(f.repository, 'getTransactionByCheckoutResumeTokenHash');
+    for (const invalid of [{ ...stored, checkoutResumeTokenHash: 'f'.repeat(64) }, { ...stored, paymentSessionId: undefined },
+      { ...stored, paymentProviderTransactionId: 'cs_not_a_payment_intent' }]) {
+      lookup.mockResolvedValueOnce(invalid);
+      await expect(f.service.resumeCheckout(token)).rejects.toMatchObject({ code: 'RESUME_TOKEN_NOT_FOUND' });
+    }
+    lookup.mockResolvedValueOnce({ ...stored, checkoutResumeTokenExpiresAt: 'invalid' });
+    await expect(f.service.resumeCheckout(token)).rejects.toMatchObject({ code: 'RESUME_TOKEN_EXPIRED' });
+    expect(f.transport).toHaveBeenCalledTimes(1); expect(f.submit).not.toHaveBeenCalled();
+  });
+
   it('resolves checkout resumes without granting payment authority', async () => {
     const f = stripeFixture();
     const app = createApp({
@@ -840,7 +910,7 @@ describe('Stripe sandbox flow',()=>{
 
     expect(response.body).toEqual({ transaction: {
       countryCode: 'JM', receiverQuote: quote.receiverQuote, deliveredValue: null, deliveredCurrency: null, receiverDiscrepancy: false,
-      status: 'PENDING', testMode: true, recipientPhone: quote.recipientPhone,
+      status: 'PENDING', paymentStatus: 'SESSION_CREATED', failureReason: null, testMode: true, recipientPhone: quote.recipientPhone,
       operatorName: quote.operatorName, productName: quote.productName,
       providerAmount: 5, providerCurrency: 'USD', feeUsd: 0.99, totalChargeUsd: 5.99,
     } });
@@ -933,7 +1003,7 @@ describe('Stripe sandbox flow',()=>{
       mobileTopUpRepository: f.repository,
       mobileTopUpStripeProvider: f.stripeProvider });
     const record = (await f.repository.getTransactionById(session.transactionId))!;
-    const allowed = ['countryCode', 'receiverQuote', 'deliveredValue', 'deliveredCurrency', 'receiverDiscrepancy', 'status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
+    const allowed = ['paymentStatus', 'failureReason', 'countryCode', 'receiverQuote', 'deliveredValue', 'deliveredCurrency', 'receiverDiscrepancy', 'status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
     for (const path of ['/api/mobile-topups/checkout-resume', '/api/flupflap/mobile-topups/checkout-resume']) {
       const response = await request(app).post(path).send({ resumeToken }).expect(200);
       expect(Object.keys(response.body.transaction).sort()).toEqual([...allowed].sort());
@@ -1150,6 +1220,20 @@ describe('Stripe sandbox flow',()=>{
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects a different PaymentIntent returned for an already-bound Checkout Session', async () => {
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_bound', url: 'https://checkout.stripe.com/c/pay/cs_test_bound' }))
+      .mockResolvedValueOnce(stripeResponse({ id: 'cs_test_bound', status: 'complete', payment_status: 'paid', payment_intent: 'pi_other' }));
+    const f = stripeFixture(transport);
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'stripe-session-binding-guard', 'US');
+    await f.repository.updateTransaction(session.transactionId, { paymentProviderTransactionId: 'pi_original' });
+    const before = await f.repository.getTransactionById(session.transactionId);
+    await f.service.getTransaction('customer', session.transactionId, true);
+    expect(await f.repository.getTransactionById(session.transactionId)).toEqual(before);
+    expect(transport).toHaveBeenCalledTimes(2); expect(f.submit).not.toHaveBeenCalled();
+  });
+
   it('reconciles an insufficient-funds Stripe attempt out of pending and permits a later successful retry', async () => {
     let paid = false;
     const transport = vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -1186,7 +1270,7 @@ describe('Stripe sandbox flow',()=>{
     expect(failed).toMatchObject({
       status: 'FAILED',
       paymentStatus: 'FAILED',
-      failureCode: 'PAYMENT_DECLINED',
+      failureCode: 'INSUFFICIENT_FUNDS',
       paymentProviderTransactionId: 'pi_declined_fixture',
     });
     expect(f.submit).not.toHaveBeenCalled();
@@ -1371,7 +1455,7 @@ describe('Stripe sandbox flow',()=>{
       expect(await f.repository.getTransactionById(f.session.transactionId)).toMatchObject({
         status: 'FAILED',
         paymentStatus: 'FAILED',
-        failureCode: 'PAYMENT_DECLINED',
+        failureCode: type === 'payment_intent.canceled' ? 'PAYMENT_CANCELLED' : 'PAYMENT_DECLINED',
         paymentProviderTransactionId: 'pi_binding',
       });
       expect(f.submit).not.toHaveBeenCalled();

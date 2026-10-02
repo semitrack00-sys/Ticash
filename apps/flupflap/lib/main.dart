@@ -258,7 +258,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 'Update password' : registration ? 'Create account' : 'Sign in')),
               if (widget.resetToken == null) ...[
                 if (!registration) TextButton(
-                  onPressed: busy ? null : () => run(() => widget.session.guestLogin()),
+                  onPressed: busy ? null : () => run(() => widget.session.enterGuest()),
                   child: const Text('Continue as guest'),
                 ),
                 TextButton(onPressed: busy ? null : () => setState(() => registration = !registration),

@@ -262,7 +262,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: const Text('Continue as guest'),
                 ),
                 TextButton(onPressed: busy ? null : () => setState(() => registration = !registration),
-                  child: Text(registration ? 'Already have an account? Sign in' : 'Create an account')),
+                  child: Text(registration ? 'Already have an account? Sign in' : 'Create account')),
                 if (!registration) TextButton(onPressed: busy ? null : () => run(() async {
                   await widget.session.forgot(email.text.trim());
                   if (mounted) {
@@ -309,7 +309,7 @@ class HomeScreen extends ConsumerWidget {
                 child: const Text('FAST • SIMPLE • WORLDWIDE',
                   style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800))),
               const SizedBox(height: 18),
-              const Text('Send airtime in seconds', style: TextStyle(
+              const Text('Start recharge', style: TextStyle(
                 color: Colors.white, fontSize: 28, height: 1.1, fontWeight: FontWeight.w900)),
               const SizedBox(height: 8),
               Text('Recharge family and friends with supported mobile operators around the world.',
@@ -542,6 +542,7 @@ class _AccountScreenState extends State<AccountScreen> {
             subtitle: Text('Worldwide Mobile Recharge by TiCash-App')),
         ])),
         const SizedBox(height: 20),
+        const SizedBox(height: 1),
         OutlinedButton.icon(onPressed: () async {
           try { await widget.session.logout(); } catch (_) {}
         }, icon: const Icon(Icons.logout_rounded), label: const Text('Sign out'),

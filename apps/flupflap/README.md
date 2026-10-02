@@ -27,7 +27,7 @@ Output: `build/app/outputs/flutter-apk/app-debug.apk`. Release signing requires 
 - Deep-link namespace: `flupflap://recharge` and `flupflap://reset-password?token=…`.
 - Password recovery requires a separately configured HTTPS FlupFlap landing page. Production verified Android app links and ownership verification require approved domain/signing configuration before release. Custom-scheme links alone are not verified app links.
 - Tokens are not shared with TiCash. Logout clears local credentials even when the server is unreachable; in-flight refresh cannot restore a signed-out session.
-- The reused mobile checkout uses the existing MOCK purchase route. It does not collect card details or implement a native Stripe payment UI. Stripe sandbox remains supported by the existing website/shared backend. Native Stripe UI is a separate capability, not silently enabled here.
+- Checkout uses server-created hosted Stripe Checkout when the backend reports complete STRIPE_SANDBOX or STRIPE_LIVE availability. Only explicit safe MOCK mode uses the existing purchase route. No card fields or provider credentials enter Flutter. See WEB_PARITY.md for return handoff and validation.
 
 All verification uses test doubles or disposable local data. No real payment/provider transaction is needed to validate this target.
 
@@ -59,9 +59,7 @@ flutter analyze
 flutter test
 ```
 
-FlupFlap opts into customer presentation on the shared screen. AUTO routing stays
-the default; explicit provider controls remain available under Advanced routing
-options. Saved-recipient navigation supplies only the existing recipient metadata;
+FlupFlap uses its own step controller with shared recharge models/client. Provider routing remains backend-controlled; the app does not override it. Saved-recipient navigation supplies only the existing recipient metadata;
 operator detection and quote creation still use the backend. History opens stored
 receipts and Repeat requests a fresh quote without automatically purchasing.
 

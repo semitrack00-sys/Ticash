@@ -631,6 +631,43 @@ describe('Stripe sandbox flow',()=>{
       expireQuote: () => { now = new Date(now.getTime() + 600_000); } };
   }
 
+  it('uses the Android-only HTTPS handoff without leaking capabilities or fulfilling a recharge', async () => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    const body = { quoteId: quote.id, billingCountry: 'US', returnTarget: 'FLUPFLAP_ANDROID' };
+    const session = await f.session(guest.accessToken, body, 'android-checkout-test').expect(201);
+    const payload = new URLSearchParams(transportRequest(f.transport).body);
+    const success = new URL(payload.get('success_url')!);
+    expect(success.origin + success.pathname).toBe('https://ticash-api.onrender.com/api/flupflap/mobile-topups/checkout-return');
+    expect(payload.get('cancel_url')).toBe(success.toString());
+    const token = success.searchParams.get('checkoutResumeToken')!;
+    expect(session.text).not.toContain(token);
+    expect(session.body.amountMinor).toBe(624);
+    const handoff = await request(f.app).get(success.pathname).query({ checkoutResumeToken: token }).expect(200);
+    expect(handoff.headers['cache-control']).toBe('no-store');
+    expect(handoff.headers['referrer-policy']).toBe('no-referrer');
+    expect(handoff.headers['content-security-policy']).toContain("default-src 'none'");
+    expect(handoff.text).toContain('package=com.ticash.flupflap;end');
+    expect(handoff.text).toContain('https://www.flupflap.com/?checkoutResumeToken=');
+    expect(handoff.text).not.toContain('<script');
+    const resumed = await request(f.app).post('/api/flupflap/mobile-topups/checkout-resume').send({ resumeToken: token }).expect(200);
+    expect(resumed.body.transaction.paymentStatus).toBe('SESSION_CREATED');
+    expect(f.submit).not.toHaveBeenCalled();
+    await request(f.app).get(success.pathname).query({ checkoutResumeToken: '<script>bad</script>' }).expect(400);
+    await f.session(guest.accessToken, { ...body, returnTarget: 'https://attacker.invalid' }, 'android-invalid-target').expect(400);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('rejects Android handoff for TiCash identities even when calling the service directly', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    await expect(f.service.createPaymentSession('customer', { quoteId: quote.id }, 'ticash-no-android', 'US', true))
+      .rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
   it.each(['US', 'us'])('creates a guest HT recharge / %s billing session without changing the guest profile', async billingCountry => {
     const f = flupFlapStripeFixture();
     const guest = await f.guest();

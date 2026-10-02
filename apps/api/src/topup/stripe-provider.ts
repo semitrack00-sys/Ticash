@@ -1,3 +1,4 @@
+import { ANDROID_CHECKOUT_RETURN_URL } from './android-checkout-return.js';
 import { MobileTopUpError, type HostedCheckoutSession, type HostedCheckoutSessionBaseContract, type MobileTopUpPaymentCapture, type MobileTopUpPaymentQuery, type MobileTopUpPaymentRecovery, type MobileTopUpSessionProvider, type PaymentSessionInput } from './types.js';
 import { validateStripeConfig, type StripeConfig } from './stripe-config.js';
 
@@ -64,14 +65,14 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return url.toString();
   }
 
-  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string }) {
+  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean }) {
     if (input.currency !== 'USD' || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0 || !/^[A-Za-z0-9_-]{43,512}$/.test(input.resumeToken) || !/^[A-Z]{2}$/.test(input.billingCountry ?? '')) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Server-verified billing country and USD amount are required', 400);
     }
     const { data } = await this.request('/v1/checkout/sessions', 'POST', {
       mode: 'payment',
-      success_url: this.buildReturnUrl(this.config.successUrl!, input.resumeToken),
-      cancel_url: this.buildReturnUrl(this.config.failureUrl!, input.resumeToken),
+      success_url: this.buildReturnUrl(input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.successUrl!, input.resumeToken),
+      cancel_url: this.buildReturnUrl(input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.failureUrl!, input.resumeToken),
       client_reference_id: input.transactionId,
       metadata: {
         transactionId: input.transactionId,

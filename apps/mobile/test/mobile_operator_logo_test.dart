@@ -56,8 +56,7 @@ class _FakeRechargeService extends MobileTopUpService {
   Future<List<MobileTopUpOperator>> operators(
     String countryCode, {
     String? provider,
-  }) async =>
-      const [_first, _second];
+  }) async => const [_first, _second];
   @override
   Future<List<MobileTopUpProduct>> products(
     String countryCode,
@@ -82,6 +81,7 @@ class _FakeRechargeService extends MobileTopUpService {
     required int operatorId,
     required String productId,
     double? amount,
+    String? catalogVersion,
   }) async => MobileTopUpQuote.fromJson({
     ..._terms,
     'id': 'fixture-quote',
@@ -190,8 +190,17 @@ void main() {
       );
       expect(find.text('\$8.50 USD'), findsOneWidget);
       // Receiver-value disclosure makes the review taller; build the lazily listed action by scrolling.
-      await tester.scrollUntilVisible(find.text('Confirm sandbox recharge'), 200,
-        scrollable: find.byWidgetPredicate((widget) => widget is Scrollable && widget.axisDirection == AxisDirection.down).first);
+      await tester.scrollUntilVisible(
+        find.text('Confirm sandbox recharge'),
+        200,
+        scrollable: find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            )
+            .first,
+      );
       await tester.tap(find.text('Confirm sandbox recharge'));
       await tester.pumpAndSettle();
       expect(find.text('Recharge delivered'), findsOneWidget);

@@ -1272,6 +1272,7 @@ export function createApp(options: CreateAppOptions = {}) {
     authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,
     service: mobileTopUpService, isGuest: flupFlap.isGuest, billingCountryForUser: flupFlap.billingCountryForUser,
     supportedCountriesPath: '/api/flupflap/mobile-topups/countries',
+    allowAndroidReturn: true,
     quotePresentation: marketing ? async (owner, id) => marketing.quotePresentation(id, owner.slice('flupflap:'.length)) : undefined,
   }));
 

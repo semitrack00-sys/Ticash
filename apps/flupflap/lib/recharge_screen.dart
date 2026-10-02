@@ -1,0 +1,816 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
+import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash/widgets/mobile_operator_logo.dart';
+import 'billing_countries.dart';
+import 'checkout_contract.dart';
+import 'native_actions.dart';
+import 'parity_strings.dart';
+import 'recharge_journey.dart';
+
+class CountryFlag extends StatelessWidget {
+  const CountryFlag(this.code, {super.key});
+  final String code;
+  @override
+  Widget build(BuildContext context) {
+    final fallback = Text(
+      code,
+      style: const TextStyle(fontWeight: FontWeight.w700),
+    );
+    return SizedBox(
+      width: 30,
+      height: 22,
+      child: RegExp(r'^[A-Z]{2}$').hasMatch(code)
+          ? SvgPicture.asset(
+              'assets/flags/${code.toLowerCase()}.svg',
+              fit: BoxFit.contain,
+              semanticsLabel: code,
+              placeholderBuilder: (_) => fallback,
+              errorBuilder: (_, __, ___) => fallback,
+            )
+          : fallback,
+    );
+  }
+}
+
+Future<String?> pickCountry(
+  BuildContext context,
+  List<MobileTopUpCountry> countries,
+) => showModalBottomSheet<String>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  builder: (context) => _CountryPicker(countries),
+);
+
+class _CountryPicker extends StatefulWidget {
+  const _CountryPicker(this.countries);
+  final List<MobileTopUpCountry> countries;
+  @override
+  State<_CountryPicker> createState() => _CountryPickerState();
+}
+
+class _CountryPickerState extends State<_CountryPicker> {
+  String query = '';
+  @override
+  Widget build(BuildContext context) {
+    final list = widget.countries
+        .where(
+          (c) =>
+              '${c.name} ${c.code}'.toLowerCase().contains(query.toLowerCase()),
+        )
+        .toList();
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * .65,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: TextField(
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: context.ft('search'),
+                  prefixIcon: const Icon(Icons.search),
+                ),
+                onChanged: (v) => setState(() => query = v),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: list.length,
+                itemBuilder: (context, i) {
+                  final c = list[i];
+                  return ListTile(
+                    leading: CountryFlag(c.code),
+                    title: Text(c.name),
+                    subtitle: Text(c.code),
+                    onTap: () => Navigator.pop(context, c.code),
+                  );
+                },
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(context.ft('close')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RechargeJourneyScreen extends StatefulWidget {
+  const RechargeJourneyScreen({
+    super.key,
+    required this.journey,
+    this.initialRecipient,
+    this.history = false,
+    this.resumeToken,
+    this.returnOnly = false,
+  });
+  final RechargeJourney journey;
+  final MobileTopUpRecipient? initialRecipient;
+  final bool history;
+  final String? resumeToken;
+  final bool returnOnly;
+  @override
+  State<RechargeJourneyScreen> createState() => _RechargeJourneyScreenState();
+}
+
+class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
+    with WidgetsBindingObserver {
+  final phone = TextEditingController(),
+      amount = TextEditingController(),
+      promo = TextEditingController(),
+      nickname = TextEditingController();
+  RechargeJourney get j => widget.journey;
+  String? uiError;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    phone.text = j.phone;
+    amount.text = j.amount;
+    nickname.text = j.nickname;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (widget.resumeToken != null) {
+        await j.resume(widget.resumeToken!);
+        return;
+      }
+      if (widget.returnOnly) {
+        if (!j.locked && j.result == null && j.error == null) {
+          setState(() => uiError = 'resumeUnavailable');
+        }
+        return;
+      }
+      if (!j.initialized && !j.busy) await j.initialize();
+      if (!mounted) return;
+      if (widget.initialRecipient != null && !j.locked && !j.busy) {
+        j.selectRecipient(widget.initialRecipient!);
+        phone.text = j.phone;
+      }
+      if (widget.history) await j.loadHistory();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant RechargeJourneyScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.resumeToken != null &&
+        widget.resumeToken != oldWidget.resumeToken) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) j.resume(widget.resumeToken!);
+      });
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && j.locked) j.refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    phone.dispose();
+    amount.dispose();
+    promo.dispose();
+    nickname.dispose();
+    super.dispose();
+  }
+
+  Future<void> openCheckout() async {
+    try {
+      await NativeActions.checkout(j.hosted!.url);
+    } catch (_) {
+      if (mounted) setState(() => uiError = 'requestFailed');
+    }
+  }
+
+  Widget card(List<Widget> children) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    ),
+  );
+  Widget row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: Text(context.ft(label))),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ),
+  );
+  String money(num value, [String currency = 'USD']) =>
+      '${value.toStringAsFixed(2)} $currency';
+  // Translate our shared model's labels, not the provider's product description.
+  String productDetail(String value) => value.replaceAllMapped(
+    RegExp(
+      r'No fixed expiry|\b(Unlimited|DATA|data|MINUTES|minutes|SMS|sms|hours?|days?|weeks?|months?|years?)\b',
+    ),
+    (m) {
+      final word = m[0]!;
+      final key = switch (word) {
+        'data' => 'DATA',
+        'MINUTES' || 'minutes' => 'Minutes',
+        'sms' => 'SMS',
+        'hour' => 'hours',
+        'day' => 'days',
+        'week' => 'weeks',
+        'month' => 'months',
+        'year' => 'years',
+        _ => word,
+      };
+      return context.ft(key);
+    },
+  );
+  Widget button(String label, VoidCallback? action) => Padding(
+    padding: const EdgeInsets.only(top: 16),
+    child: FilledButton(onPressed: action, child: Text(context.ft(label))),
+  );
+  Widget progress() => Wrap(
+    spacing: 8,
+    runSpacing: 8,
+    children: List.generate(
+      3,
+      (i) => Chip(
+        avatar: CircleAvatar(child: Text('${i + 1}')),
+        label: Text(
+          context.ft(['destination', 'operatorProduct', 'reviewConfirm'][i]),
+        ),
+        backgroundColor: j.step.index == i
+            ? const Color(0xFFE0EEFF)
+            : Colors.white,
+      ),
+    ),
+  );
+  Widget destination() {
+    final selected = j.countries.where((c) => c.code == j.country).firstOrNull;
+    return card([
+      Text(
+        context.ft('destination'),
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      const SizedBox(height: 16),
+      OutlinedButton(
+        onPressed: j.busy || j.locked
+            ? null
+            : () async {
+                final code = await pickCountry(context, j.countries);
+                if (code != null && !j.busy && !j.locked) {
+                  j.destination(code: code, number: phone.text);
+                }
+              },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              if (j.country != null) ...[
+                CountryFlag(j.country!),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Text(
+                  selected == null
+                      ? context.ft('country')
+                      : '${selected.name} (${selected.code})',
+                ),
+              ),
+              const Icon(Icons.expand_more),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        key: const ValueKey('destination-phone'),
+        controller: phone,
+        keyboardType: TextInputType.phone,
+        textInputAction: TextInputAction.done,
+        enabled: !j.busy && !j.locked,
+        decoration: InputDecoration(
+          labelText: context.ft('phone'),
+          prefixIcon: const Icon(Icons.phone_android),
+        ),
+        onChanged: (v) {
+          if (j.country != null) j.destination(code: j.country!, number: v);
+        },
+        onSubmitted: (_) {
+          if (!j.busy) j.continueDestination();
+        },
+      ),
+      if (j.recipients.isNotEmpty)
+        ExpansionTile(
+          title: Text(context.ft('saved')),
+          children: j.recipients
+              .map(
+                (r) => ListTile(
+                  leading: CountryFlag(r.countryCode),
+                  title: Text(r.nickname),
+                  subtitle: Text('${r.phone} · ${r.countryCode}'),
+                  onTap: j.busy || j.locked
+                      ? null
+                      : () {
+                          j.selectRecipient(r);
+                          phone.text = j.phone;
+                        },
+                ),
+              )
+              .toList(),
+        ),
+      button(
+        'continue',
+        j.busy || j.locked || j.country == null || phone.text.trim().isEmpty
+            ? null
+            : j.continueDestination,
+      ),
+    ]);
+  }
+
+  Widget product() {
+    final kinds = j.products.map((p) => p.kind.name.toUpperCase()).toSet();
+    return card([
+      Text(
+        context.ft('operatorProduct'),
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      const SizedBox(height: 16),
+      DropdownButtonFormField<int>(
+        isExpanded: true,
+        initialValue: j.operator?.id,
+        decoration: InputDecoration(labelText: context.ft('operator')),
+        items: j.operators
+            .map(
+              (o) => DropdownMenuItem(
+                value: o.id,
+                child: Row(
+                  children: [
+                    MobileOperatorLogo(logoUrl: o.logoUrl),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(o.name, overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: j.busy || j.locked
+            ? null
+            : (id) {
+                final op = j.operators.firstWhere((o) => o.id == id);
+                j.selectOperator(op);
+                amount.clear();
+              },
+      ),
+      if (j.operator != null) ...[
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            MobileOperatorLogo(logoUrl: j.operator!.logoUrl),
+            const SizedBox(width: 10),
+            Expanded(child: Text(j.operator!.name)),
+          ],
+        ),
+      ],
+      if (j.products.isEmpty && !j.busy)
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Text(context.ft('noProducts')),
+        ),
+      for (final kind in kinds) ...[
+        Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 8),
+          child: Text(
+            context.ft(kind),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+        for (final p in j.products.where(
+          (p) => p.kind.name.toUpperCase() == kind,
+        ))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                backgroundColor: j.product?.id == p.id
+                    ? const Color(0xFFE0EEFF)
+                    : null,
+              ),
+              onPressed: j.busy || j.locked
+                  ? null
+                  : () {
+                      j.selectProduct(p);
+                      amount.clear();
+                    },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: Text(p.name)),
+                        if (j.product?.id == p.id)
+                          const Icon(Icons.check_circle),
+                      ],
+                    ),
+                    if (p.description != null) Text(p.description!),
+                    if (p.amountType == 'FIXED')
+                      Text(money(p.price, p.priceCurrency)),
+                    if (p.amountType == 'RANGE')
+                      Text(
+                        '${context.ft('minimum')}: ${p.minimumAmount} ${p.priceCurrency} · ${context.ft('maximum')}: ${p.maximumAmount} ${p.priceCurrency}',
+                      ),
+                    for (final benefit in p.benefits)
+                      Text(productDetail(benefit)),
+                    if (p.validityLabel != null)
+                      Text(productDetail(p.validityLabel!)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+      if (j.product?.amountType == 'RANGE')
+        TextField(
+          key: const ValueKey('range-amount'),
+          controller: amount,
+          enabled: !j.busy && !j.locked,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: context.ft('amount')),
+          onChanged: j.setAmount,
+        ),
+      const SizedBox(height: 16),
+      TextField(
+        key: const ValueKey('promotion-code'),
+        controller: promo,
+        enabled: !j.busy && !j.locked,
+        textCapitalization: TextCapitalization.characters,
+        decoration: InputDecoration(labelText: context.ft('promo')),
+      ),
+      TextButton(
+        onPressed: j.busy || j.locked
+            ? null
+            : () => j.applyPromotion(promo.text),
+        child: Text(context.ft('apply')),
+      ),
+      button('continue', j.busy || j.product == null ? null : j.review),
+      TextButton(
+        onPressed: j.canBack ? j.back : null,
+        child: Text(context.ft('back')),
+      ),
+    ]);
+  }
+
+  Widget review() {
+    final q = j.quote!;
+    return card([
+      Text(
+        context.ft('reviewConfirm'),
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      Row(
+        children: [
+          CountryFlag(q.countryCode),
+          const SizedBox(width: 8),
+          Text(q.countryCode),
+        ],
+      ),
+      row('phone', q.phone),
+      Row(
+        children: [
+          MobileOperatorLogo(logoUrl: j.operator?.logoUrl),
+          const SizedBox(width: 8),
+          Expanded(child: Text(q.operatorName)),
+        ],
+      ),
+      row('product', q.productName),
+      row('amount', money(q.providerAmount, q.providerCurrency)),
+      row(
+        'receiver',
+        q.deliveredValue == null
+            ? context.ft('pendingValue')
+            : money(q.deliveredValue!, q.deliveredCurrency),
+      ),
+      if (j.promotion != null) ...[
+        row('promotion', j.promotion!['name']?.toString() ?? ''),
+        if (j.promotion!['originalFeeCents'] is num)
+          row(
+            'originalFee',
+            money((j.promotion!['originalFeeCents'] as num) / 100),
+          ),
+        if (j.promotion!['benefitCents'] is num)
+          row('benefit', money((j.promotion!['benefitCents'] as num) / 100)),
+        if (j.promotion!['firstRechargeOnly'] == true)
+          Text(context.ft('firstRecharge')),
+      ],
+      row('fee', money(q.feeUsd)),
+      const Divider(),
+      row('total', money(q.totalChargeUsd)),
+      Text('${context.ft('quoteExpiry')}: ${q.expiresAt.toLocal()}'),
+      if (!j.quoteValid) Text(context.ft('quoteExpired')),
+      const SizedBox(height: 16),
+      TextField(
+        controller: nickname,
+        enabled: !j.busy && !j.locked,
+        decoration: InputDecoration(labelText: context.ft('nickname')),
+        onChanged: (v) => j.nickname = v,
+      ),
+      if (j.payments?.mode != CheckoutMode.mock) ...[
+        const SizedBox(height: 16),
+        Text(context.ft('billingHelp')),
+        if (j.guest())
+          OutlinedButton(
+            onPressed: j.busy || j.locked
+                ? null
+                : () async {
+                    final code = await pickCountry(
+                      context,
+                      billingCountries
+                          .map(
+                            (c) => MobileTopUpCountry(
+                              code: c['code']!,
+                              name: c['name']!,
+                            ),
+                          )
+                          .toList(),
+                    );
+                    if (code != null && !j.locked && !j.busy) {
+                      j.setBillingCountry(code);
+                    }
+                  },
+            child: Text(
+              j.billingCountry == null
+                  ? context.ft('billing')
+                  : billingCountries.firstWhere(
+                      (c) => c['code'] == j.billingCountry,
+                    )['name']!,
+            ),
+          )
+        else ...[
+          row('billing', j.storedBillingCountry() ?? ''),
+          Text(context.ft('accountCountry')),
+        ],
+      ],
+      CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        value: j.reviewed,
+        onChanged: j.busy || j.locked
+            ? null
+            : (v) => j.confirmReview(v ?? false),
+        title: Text(context.ft('reviewCheck')),
+      ),
+      button(
+        j.payments?.mode == CheckoutMode.mock
+            ? 'mockPay'
+            : j.payments?.mode == CheckoutMode.stripeSandbox
+            ? 'testPay'
+            : 'pay',
+        j.canPay
+            ? () async {
+                await j.pay();
+                if (j.hosted != null) await openCheckout();
+              }
+            : null,
+      ),
+      if (!j.quoteValid)
+        TextButton(
+          onPressed: j.busy || j.locked ? null : j.review,
+          child: Text(context.ft('retry')),
+        ),
+      TextButton(
+        onPressed: j.canBack ? j.back : null,
+        child: Text(context.ft('back')),
+      ),
+    ]);
+  }
+
+  Widget payment() => card([
+    const Icon(Icons.lock_outline, size: 40),
+    Text(context.ft('pendingNotice')),
+    if (j.hosted != null) button('openCheckout', j.busy ? null : openCheckout),
+    if (j.hosted == null && j.result == null)
+      button('retrySame', j.busy ? null : j.retryPayment),
+    button('refresh', j.busy ? null : j.refresh),
+    TextButton(
+      onPressed: () => context.go('/history'),
+      child: Text(context.ft('history')),
+    ),
+  ]);
+  Widget receipt(RechargeResult r, {bool historical = false}) {
+    final d = r.data;
+    final state =
+        [
+          'PENDING',
+          'PROCESSING',
+          'DELIVERED',
+          'FAILED',
+          'REFUND_PENDING',
+          'REFUNDED',
+          'VOID_PENDING',
+          'VOIDED',
+        ].contains(r.displayState)
+        ? r.displayState
+        : 'unknownState';
+    final reason = switch (d['failureReason'] ?? d['failureCode']) {
+      'INSUFFICIENT_FUNDS' => 'insufficientFunds',
+      'PAYMENT_DECLINED' => 'paymentDeclined',
+      'PAYMENT_CANCELLED' || 'CANCELLED_BY_CUSTOMER' => 'paymentCancelled',
+      'RECHARGE_PROVIDER_FAILED' || 'TOPUP_PROVIDER_FAILED' => 'providerFailed',
+      _ => null,
+    };
+    return card([
+      Text(context.ft(state), style: Theme.of(context).textTheme.headlineSmall),
+      if (d['countryCode'] is String)
+        Row(
+          children: [
+            CountryFlag(d['countryCode'] as String),
+            const SizedBox(width: 10),
+            Text(d['countryCode'] as String),
+          ],
+        ),
+      row('phone', d['recipientPhone']?.toString() ?? ''),
+      Row(
+        children: [
+          MobileOperatorLogo(
+            logoUrl:
+                j.operator?.name == d['operatorName'] &&
+                    j.country == d['countryCode']
+                ? j.operator?.logoUrl
+                : null,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(d['operatorName']?.toString() ?? '')),
+        ],
+      ),
+      row('product', d['productName']?.toString() ?? ''),
+      row(
+        'amount',
+        money(
+          d['providerAmount'] as num,
+          d['providerCurrency']?.toString() ?? 'USD',
+        ),
+      ),
+      row('fee', money(d['feeUsd'] as num)),
+      row('total', money(d['totalChargeUsd'] as num)),
+      row(
+        'receiver',
+        r.status == 'DELIVERED' && d['deliveredValue'] is num
+            ? money(
+                d['deliveredValue'] as num,
+                d['deliveredCurrency']?.toString() ?? '',
+              )
+            : context.ft('unconfirmedValue'),
+      ),
+      if (d['receiverQuote'] is Map &&
+          d['receiverQuote']['amount'] is num &&
+          d['receiverQuote']['currency'] is String)
+        row(
+          'quotedReceiver',
+          '${d['receiverQuote']['amount']} ${d['receiverQuote']['currency']}',
+        ),
+      if (d['receiverDiscrepancy'] == true)
+        Text(context.ft('receiverMismatch')),
+      if (r.id != null) row('Reference', r.id!),
+      if (d['createdAt'] is String &&
+          DateTime.tryParse(d['createdAt'] as String) != null)
+        row(
+          'Updated',
+          DateTime.parse(d['createdAt'] as String).toLocal().toString(),
+        ),
+      if (reason != null) Text(context.ft(reason)),
+      if (!r.terminal) Text(context.ft('pendingNotice')),
+      if (!historical) button('refresh', j.busy ? null : j.refresh),
+      if (!historical && !r.terminal && j.hosted != null)
+        button('openCheckout', j.busy ? null : openCheckout),
+      if (historical && r.terminal)
+        button(
+          'repeat',
+          j.busy || j.locked
+              ? null
+              : () async {
+                  await j.repeat(r);
+                  if (mounted) context.go('/recharge');
+                },
+        ),
+      if (!historical && r.terminal)
+        button(
+          'another',
+          j.busy || j.locked
+              ? null
+              : () {
+                  if (widget.returnOnly) {
+                    context.go('/recharge');
+                  } else {
+                    j.startAnother();
+                  }
+                },
+        ),
+      if (!historical)
+        TextButton(
+          onPressed: () => context.go('/history'),
+          child: Text(context.ft('history')),
+        ),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: j,
+    builder: (context, _) => PopScope(
+      canPop: widget.history || (!j.canBack && !j.locked),
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && j.canBack) j.back();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(context.ft(widget.history ? 'history' : 'recharge')),
+        ),
+        body: SafeArea(
+          child: RefreshIndicator(
+            onRefresh: widget.history
+                ? j.loadHistory
+                : () async {
+                    if (j.locked) {
+                      await j.refresh();
+                    } else {
+                      await j.initialize();
+                    }
+                  },
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              children: [
+                if (!widget.history) progress(),
+                const SizedBox(height: 12),
+                if (j.payments?.mode == CheckoutMode.mock ||
+                    j.payments?.mode == CheckoutMode.stripeSandbox)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      context.ft(
+                        j.payments!.mode == CheckoutMode.mock
+                            ? 'mockMode'
+                            : 'sandboxMode',
+                      ),
+                    ),
+                  ),
+                if (j.busy) const LinearProgressIndicator(),
+                if (j.error != null || uiError != null)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      context.ft(j.error ?? uiError!),
+                      semanticsLabel: context.ft(j.error ?? uiError!),
+                    ),
+                  ),
+                if (j.notice != null)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(context.ft(j.notice!)),
+                  ),
+                if (!widget.returnOnly &&
+                    !j.initialized &&
+                    !j.busy &&
+                    !j.locked)
+                  button('retry', j.initialize),
+                if (widget.history) ...[
+                  if (j.history.isEmpty) Text(context.ft('emptyHistory')),
+                  for (final r in j.history) ...[
+                    receipt(r, historical: true),
+                    const SizedBox(height: 12),
+                  ],
+                ] else
+                  switch (j.step) {
+                    RechargeStep.destination => destination(),
+                    RechargeStep.product => product(),
+                    RechargeStep.review => review(),
+                    RechargeStep.payment => payment(),
+                    RechargeStep.result =>
+                      j.result == null ? payment() : receipt(j.result!),
+                  },
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}

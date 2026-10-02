@@ -16,6 +16,13 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "pendingPayment": "Pending payment",
+    "pendingRecoveryHelp":
+        "This payment is not resolved yet. Check its status or cancel it before starting another recharge.",
+    "cancelPending": "Cancel pending payment & start new recharge",
+    "cancelledStartNew": "Payment cancelled. You can start a new recharge.",
+    "cancellationUnresolved":
+        "This payment cannot be safely cancelled yet. Check its status before starting another recharge.",
     "unconfirmedValue": "Provider has not confirmed the delivered value.",
     "quotedReceiver": "Quoted receiver value",
     "receiverMismatch":
@@ -255,6 +262,13 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Email",
   },
   "ht": {
+    "pendingPayment": "Peman annatant",
+    "pendingRecoveryHelp":
+        "Peman sa a poko rezoud. Verifye estati li oswa anile li anvan ou kòmanse yon lòt rechaj.",
+    "cancelPending": "Anile peman annatant lan epi kòmanse yon nouvo rechaj",
+    "cancelledStartNew": "Peman an anile. Ou ka kòmanse yon nouvo rechaj.",
+    "cancellationUnresolved":
+        "Peman sa a poko ka anile san danje. Verifye estati li anvan ou kòmanse yon lòt rechaj.",
     "unconfirmedValue": "Founisè a poko konfime valè ki delivre a.",
     "quotedReceiver": "Valè reseptè ki nan devis la",
     "receiverMismatch": "Valè ki delivre a diferan de devis la. Kontakte sipò.",
@@ -492,6 +506,15 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Imèl",
   },
   "fr": {
+    "pendingPayment": "Paiement en attente",
+    "pendingRecoveryHelp":
+        "Ce paiement n’est pas encore résolu. Vérifiez son état ou annulez-le avant de commencer une autre recharge.",
+    "cancelPending":
+        "Annuler le paiement en attente et commencer une nouvelle recharge",
+    "cancelledStartNew":
+        "Paiement annulé. Vous pouvez commencer une nouvelle recharge.",
+    "cancellationUnresolved":
+        "Ce paiement ne peut pas encore être annulé en toute sécurité. Vérifiez son état avant de commencer une autre recharge.",
     "unconfirmedValue": "Le fournisseur n’a pas confirmé la valeur livrée.",
     "quotedReceiver": "Valeur prévue pour le bénéficiaire",
     "receiverMismatch":
@@ -731,6 +754,13 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "E-mail",
   },
   "es": {
+    "pendingPayment": "Pago pendiente",
+    "pendingRecoveryHelp":
+        "Este pago aún no está resuelto. Comprueba su estado o cancélalo antes de iniciar otra recarga.",
+    "cancelPending": "Cancelar el pago pendiente e iniciar una nueva recarga",
+    "cancelledStartNew": "Pago cancelado. Puedes iniciar una nueva recarga.",
+    "cancellationUnresolved":
+        "Este pago aún no se puede cancelar de forma segura. Comprueba su estado antes de iniciar otra recarga.",
     "unconfirmedValue": "El proveedor no ha confirmado el valor entregado.",
     "quotedReceiver": "Valor cotizado para el destinatario",
     "receiverMismatch":
@@ -967,6 +997,14 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Correo electrónico",
   },
   "pt": {
+    "pendingPayment": "Pagamento pendente",
+    "pendingRecoveryHelp":
+        "Este pagamento ainda não foi resolvido. Verifique o estado ou cancele-o antes de iniciar outra recarga.",
+    "cancelPending": "Cancelar o pagamento pendente e iniciar uma nova recarga",
+    "cancelledStartNew":
+        "Pagamento cancelado. Você pode iniciar uma nova recarga.",
+    "cancellationUnresolved":
+        "Este pagamento ainda não pode ser cancelado com segurança. Verifique o estado antes de iniciar outra recarga.",
     "unconfirmedValue": "O provedor não confirmou o valor entregue.",
     "quotedReceiver": "Valor cotado para o destinatário",
     "receiverMismatch":

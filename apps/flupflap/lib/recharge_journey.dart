@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'checkout_contract.dart';
 
-enum RechargeStep { destination, product, review, payment, result }
+enum RechargeStep { destination, product, review, payment, recovery, result }
 
 /// One session-owned controller survives tab navigation/browser handoff.
 /// A request that may have reserved a payment never gets a new key on retry.
@@ -46,7 +46,16 @@ class RechargeJourney extends ChangeNotifier {
   bool _attemptGuest = false, _disposed = false;
   int _revision = 0, _polls = 0;
   Timer? _timer, _quoteTimer;
+  Future<void>? _refreshFlight;
+  bool _cancelling = false;
+  bool _historyCheckRequired = false;
+  bool get canCancel =>
+      locked &&
+      result?.terminal != true &&
+      _transactionId != null &&
+      _resumeToken == null;
   bool get locked =>
+      _historyCheckRequired ||
       _attemptKey != null ||
       _resumeToken != null ||
       (result != null && !result!.terminal);
@@ -77,6 +86,8 @@ class RechargeJourney extends ChangeNotifier {
       'TOPUP_QUOTE_EXPIRED' || 'TOPUP_QUOTE_ALREADY_USED' => 'quoteExpired',
       'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
       'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
+      'TOPUP_NOT_CANCELLABLE' ||
+      'TOPUP_CANCELLATION_UNRESOLVED' => 'cancellationUnresolved',
       'GUEST_SCOPE_RESTRICTED' || 'FORBIDDEN' => 'accountRequired',
       'INSUFFICIENT_FUNDS' => 'insufficientFunds',
       'PAYMENT_DECLINED' => 'paymentDeclined',
@@ -106,25 +117,68 @@ class RechargeJourney extends ChangeNotifier {
   bool _current(int revision) => !_disposed && revision == _revision;
   Future<void> initialize() => _run((v) async {
     final status = await client.topups.availability();
-    final catalog = await client.topups.countries();
-    final saved = await client.topups.recipients();
     final existing = await client.history();
     if (!_current(v)) return;
     availability = status;
-    countries = catalog;
-    recipients = saved;
-    history = existing;
-    // Recover an unresolved reservation before enabling a new checkout after app restart.
-    final pending = existing.where((t) => !t.terminal).firstOrNull;
-    if (pending != null) {
-      result = pending;
-      _transactionId = pending.id;
-      step = RechargeStep.result;
-      _schedule();
-    }
+    await _recoverHistory(existing, v);
+    if (!_current(v)) return;
+    countries = await client.topups.countries();
+    recipients = await client.topups.recipients();
     payments = await client.methods(status);
     if (_current(v)) initialized = true;
   });
+
+  Future<void> _recoverHistory(List<RechargeResult> existing, int v) async {
+    history = existing;
+    _historyCheckRequired = true;
+    for (final pending in existing.where((t) => !t.terminal)) {
+      if (!_current(v)) return;
+      result = pending;
+      _transactionId = pending.id;
+      step = RechargeStep.recovery;
+      _emit();
+      // Fail closed on refresh errors or missing IDs; never unlock from a guess.
+      try {
+        if (pending.id == null) {
+          throw const FormatException('Missing transaction');
+        }
+        final updated = await client.transaction(pending.id!);
+        if (!_current(v)) return;
+        if (updated.id != pending.id) {
+          throw const FormatException('Transaction mismatch');
+        }
+        _updateHistory(updated);
+        result = updated;
+        if (!updated.terminal) {
+          _historyCheckRequired = false;
+          _schedule();
+          return;
+        }
+        result = null;
+        _transactionId = null;
+        step = RechargeStep.destination;
+      } catch (e) {
+        _historyCheckRequired = false;
+        error = safeError(e);
+        _schedule();
+        return;
+      }
+    }
+    _historyCheckRequired = false;
+  }
+
+  void _updateHistory(RechargeResult updated) {
+    history = history
+        .map((item) => item.id == updated.id ? updated : item)
+        .toList();
+  }
+
+  // Re-entering Recharge never reopens an old terminal receipt. Active steps
+  // and unresolved attempts are retained, including fresh repeat quotes.
+  void enterRecharge() {
+    if (!busy && !locked && result?.terminal == true) startAnother();
+  }
+
   void _editable() {
     if (locked || busy) throw StateError('Resolve pending checkout first');
   }
@@ -397,33 +451,100 @@ class RechargeJourney extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() async {
-    if (_disposed) return;
+  Future<void> refresh() {
+    if (_disposed || _cancelling) return Future.value();
+    return _refreshFlight ??= _refresh().whenComplete(
+      () => _refreshFlight = null,
+    );
+  }
+
+  Future<void> _refresh() async {
+    final v = _revision;
+    final recovering =
+        (step == RechargeStep.recovery || _historyCheckRequired) &&
+        _attemptKey == null &&
+        _resumeToken == null;
     try {
       final updated = _resumeToken != null
           ? await client.resume(_resumeToken!)
           : _transactionId != null
           ? await client.transaction(_transactionId!)
           : null;
-      if (_disposed || updated == null) return;
+      if (!_current(v) || updated == null) return;
+      if (_resumeToken == null && updated.id != _transactionId) {
+        throw const FormatException('Transaction mismatch');
+      }
       result = updated;
-      step = RechargeStep.result;
+      _updateHistory(updated);
+      step = updated.terminal ? RechargeStep.result : RechargeStep.recovery;
       if (updated.terminal) {
         _timer?.cancel();
         _resumeToken = null;
         _attemptKey = null;
         hosted = null;
+        if (recovering && (initialized || _historyCheckRequired)) {
+          // Check every historical blocker before allowing another reservation.
+          _historyCheckRequired = true;
+          step = RechargeStep.recovery;
+          final existing = await client.history();
+          if (!_current(v)) return;
+          await _recoverHistory(existing, v);
+          if (!_current(v)) return;
+          initialized = availability != null && payments != null;
+          if (!locked && !busy) startAnother();
+        }
       }
       _emit();
       _schedule();
     } catch (e) {
-      if (!_disposed) {
+      if (_current(v)) {
         error = safeError(e);
         _emit();
         _schedule();
       }
     }
   }
+
+  Future<void> cancelPending() => _run((v) async {
+    if (!canCancel) throw StateError('Authenticated transaction required');
+    final id = _transactionId!;
+    _cancelling = true;
+    _timer?.cancel();
+    try {
+      await _refreshFlight;
+      if (!_current(v) || !canCancel || _transactionId != id) return;
+      final cancelled = await client.cancelTransaction(id);
+      if (!_current(v)) return;
+      if (cancelled.id != id ||
+          cancelled.status != 'FAILED' ||
+          cancelled.paymentStatus != 'FAILED' ||
+          cancelled.data['failureCode'] != 'CANCELLED_BY_CUSTOMER') {
+        throw const FormatException('Cancellation not confirmed');
+      }
+      result = cancelled;
+      _updateHistory(cancelled);
+      _attemptKey = null;
+      _resumeToken = null;
+      hosted = null;
+      // Keep the lock if loading the remaining history fails.
+      initialized = false;
+      _historyCheckRequired = true;
+      step = RechargeStep.recovery;
+      final existing = await client.history();
+      if (!_current(v)) return;
+      _resetDestination();
+      await _recoverHistory(existing, v);
+      if (!_current(v)) return;
+      if (!locked) {
+        _resetDestination();
+        notice = 'cancelledStartNew';
+      }
+      initialized = availability != null && payments != null;
+    } finally {
+      _cancelling = false;
+      if (locked) _schedule();
+    }
+  });
 
   Future<void> resume(String token) async {
     if (!resumeTokenPattern.hasMatch(token)) {
@@ -432,17 +553,23 @@ class RechargeJourney extends ChangeNotifier {
       return;
     }
     _timer?.cancel();
+    final v = ++_revision;
     _resumeToken = token;
+    result = null;
+    hosted = null;
     _polls = 0;
-    step = RechargeStep.result;
-    await refresh();
+    step = RechargeStep.recovery;
+    _emit();
+    // An older status request cannot populate a newer return capability.
+    await _refreshFlight;
+    if (_current(v)) await refresh();
   }
 
   void _schedule() {
     if (_disposed ||
         _timer?.isActive == true ||
         _polls >= 24 ||
-        result?.terminal == true ||
+        (result?.terminal == true && !_historyCheckRequired) ||
         (_transactionId == null && _resumeToken == null)) {
       return;
     }
@@ -492,10 +619,20 @@ class RechargeJourney extends ChangeNotifier {
   void startAnother() {
     _editable();
     _revision++;
+    _resetDestination();
+    _emit();
+  }
+
+  void _resetDestination() {
     _timer?.cancel();
     _polls = 0;
     _transactionId = null;
     _attemptQuote = null;
+    _attemptKey = null;
+    _attemptRecipient = null;
+    _attemptCountry = null;
+    _attemptMode = null;
+    _resumeToken = null;
     result = null;
     hosted = null;
     country = null;
@@ -506,9 +643,11 @@ class RechargeJourney extends ChangeNotifier {
     operators = [];
     recipientId = null;
     nickname = '';
+    amount = '';
+    error = null;
+    notice = null;
     _invalidateQuote();
     step = RechargeStep.destination;
-    _emit();
   }
 
   @override

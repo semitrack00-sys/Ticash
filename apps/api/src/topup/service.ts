@@ -571,6 +571,16 @@ export class MobileTopUpService {
     androidReturn = false,
   ) {
     if (androidReturn && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
+    this.assertEnabled();
+    const stripeMode = this.config.paymentMode === 'stripe_sandbox' || this.config.paymentMode === 'stripe_live';
+    const country = billingCountry?.trim().toUpperCase();
+    // Deterministic prerequisites must not consume a quote or leave a reservation.
+    if (stripeMode) {
+      if (!this.stripeProvider) throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Stripe is not enabled', 503);
+      if (!country || !/^[A-Z]{2}$/.test(country)) {
+        throw new MobileTopUpError('BILLING_COUNTRY_REQUIRED', 'A verified billing country is required for Stripe checkout', 409);
+      }
+    }
     const reserved = await this.reservePayment(userId, input, key);
     this.assertTransactionEnvironment(reserved);
 
@@ -608,15 +618,6 @@ export class MobileTopUpService {
           'PAYMENT_PROVIDER_DISABLED',
           'Stripe is not enabled',
           503,
-        );
-      }
-
-      const country = billingCountry?.trim().toUpperCase();
-      if (!country || !/^[A-Z]{2}$/.test(country)) {
-        throw new MobileTopUpError(
-          'BILLING_COUNTRY_REQUIRED',
-          'A verified billing country is required for Stripe checkout',
-          409,
         );
       }
 
@@ -700,7 +701,7 @@ export class MobileTopUpService {
     if (!/^[A-Za-z0-9_-]{43,512}$/.test(resumeToken)) {
       throw new MobileTopUpError('INVALID_RESUME_TOKEN', 'Invalid checkout resume token', 400);
     }
-    const record = await this.repository.getTransactionByCheckoutResumeTokenHash(this.checkoutResumeTokenHash(resumeToken));
+    let record = await this.repository.getTransactionByCheckoutResumeTokenHash(this.checkoutResumeTokenHash(resumeToken));
     if (!record) throw new MobileTopUpError('RESUME_TOKEN_NOT_FOUND', 'Checkout resume token was not found', 404);
     if (!record.checkoutResumeTokenExpiresAt || !Number.isFinite(Date.parse(record.checkoutResumeTokenExpiresAt)) || new Date(record.checkoutResumeTokenExpiresAt) <= this.clock()) {
       throw new MobileTopUpError('RESUME_TOKEN_EXPIRED', 'Checkout resume token has expired', 410);
@@ -711,6 +712,18 @@ export class MobileTopUpService {
         !/^cs_(?:test|live)_[A-Za-z0-9_]+$/.test(record.paymentSessionId ?? '') ||
         (record.paymentProviderTransactionId && !/^pi_[A-Za-z0-9_]+$/.test(record.paymentProviderTransactionId))) {
       throw new MobileTopUpError('RESUME_TOKEN_NOT_FOUND', 'Checkout resume token was not found', 404);
+    }
+    // Reconcile only this capability's bound record. Customer status requests
+    // may read providers, but cannot submit airtime, capture, void or refund.
+    if (!(record.status === 'DELIVERED' && record.paymentStatus === 'CAPTURED') &&
+        !['REFUNDED', 'VOIDED'].includes(record.paymentStatus)) {
+      try {
+        record = await this.refreshTransaction(record, false);
+      } catch {
+        // A provider read failure never fabricates a terminal result or widens
+        // capability scope. Return the last confirmed state and keep it locked.
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', record.id);
+      }
     }
     const publicFailures = ['INSUFFICIENT_FUNDS', 'PAYMENT_DECLINED', 'PAYMENT_CANCELLED', 'PAYMENT_EXPIRED'] as const;
     const providerFailure = record.status === 'FAILED' && (
@@ -802,7 +815,7 @@ export class MobileTopUpService {
     return updated;
   }
 
-  private async recoverPayment(id: string, providerReversed = false) {
+  private async recoverPayment(id: string, providerReversed = false, allowExternalActions = true) {
     const initialRecord = await this.repository.getTransactionById(id);
     if (!initialRecord) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     this.assertTransactionEnvironment(initialRecord);
@@ -860,6 +873,7 @@ export class MobileTopUpService {
     }));
     this.assertTransactionEnvironment(record);
     await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + pending, 'MobileTopUpTransaction', id);
+    if (!allowExternalActions) return (await this.repository.getTransactionById(id))!;
     // No implicit fallback from a hosted provider to a mock refund.
     const recovery: MobileTopUpPaymentRecovery | undefined = record.paymentProvider === 'MOCK'
       ? this.paymentProvider
@@ -950,7 +964,7 @@ export class MobileTopUpService {
     await this.repository.completePaymentEvent(event.eventId);
   }
 
-  private async applyProviderResult(id: string, result: ProviderTopUpResult) {
+  private async applyProviderResult(id: string, result: ProviderTopUpResult, allowExternalActions = true) {
     const status = mapProviderStatus(result.status);
     const original = await this.repository.getTransactionById(id);
     if (!original || (original.providerTransactionId && original.providerTransactionId !== result.transactionId)) {
@@ -978,11 +992,11 @@ export class MobileTopUpService {
     });
     if (status === 'DELIVERED') await this.repository.postDeliveredLedger(updated);
     if (status === 'REFUNDED') await this.repository.postRefundLedger(updated);
-    if (status === 'FAILED' || status === 'REFUNDED') return this.recoverPayment(id, status === 'REFUNDED');
+    if (status === 'FAILED' || status === 'REFUNDED') return this.recoverPayment(id, status === 'REFUNDED', allowExternalActions);
     return updated;
   }
 
-  private async reconcilePaymentRecovery(record: MobileTopUpTransactionRecord) {
+  private async reconcilePaymentRecovery(record: MobileTopUpTransactionRecord, allowExternalActions = true) {
     if (!['REFUND_PENDING', 'VOID_PENDING'].includes(record.paymentStatus)) return record;
     this.assertTransactionEnvironment(record);
 
@@ -1026,6 +1040,7 @@ export class MobileTopUpService {
             correctedFrom: 'VOID_PENDING',
             stripeStatus: String(payment.status),
           });
+          if (!allowExternalActions) return (await this.repository.getTransactionById(record.id))!;
           try {
             const status = await this.stripeProvider.refund?.({
               paymentId,
@@ -1043,7 +1058,7 @@ export class MobileTopUpService {
           return (await this.repository.getTransactionById(record.id))!;
         }
 
-        if (!captured && record.paymentStatus === 'VOID_PENDING') {
+        if (allowExternalActions && !captured && record.paymentStatus === 'VOID_PENDING') {
           try {
             const status = await this.stripeProvider.void?.({ paymentId, transactionId: record.id });
             if (status === 'VOIDED') {
@@ -1080,7 +1095,7 @@ export class MobileTopUpService {
         })) {
           await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_' + status, 'MobileTopUpTransaction', record.id);
         }
-      } else if (kind === 'REFUND' && record.paymentProvider === 'STRIPE' && this.stripeProvider) {
+      } else if (allowExternalActions && kind === 'REFUND' && record.paymentProvider === 'STRIPE' && this.stripeProvider) {
         // If the original refund response was lost, replay the same idempotent
         // refund request. Stripe will not create a duplicate refund for the same key.
         try {
@@ -1097,7 +1112,7 @@ export class MobileTopUpService {
     return (await this.repository.getTransactionById(record.id))!;
   }
 
-  private async reconcileHostedStripePending(record: MobileTopUpTransactionRecord) {
+  private async reconcileHostedStripePending(record: MobileTopUpTransactionRecord, allowExternalActions = true) {
     if (
       record.paymentProvider !== 'STRIPE' ||
       !this.stripeProvider ||
@@ -1132,6 +1147,9 @@ export class MobileTopUpService {
         const captured = payment.status === 'succeeded' ||
           Number(payment.amount_received ?? 0) >= usdMinorUnits(record.totalChargeUsd);
         if (captured) {
+          // Paid recovery/fulfillment belongs to the verified webhook or server
+          // reconciliation worker, never a customer resume/status callback.
+          if (!allowExternalActions) return record;
           const changed = await this.repository.transitionPayment(
             record.id,
             ['PENDING', 'SESSION_CREATED', 'FAILED'],
@@ -1210,13 +1228,13 @@ export class MobileTopUpService {
     return (await this.repository.getTransactionById(record.id)) ?? record;
   }
 
-  private async refreshTransaction(record: MobileTopUpTransactionRecord) {
+  private async refreshTransaction(record: MobileTopUpTransactionRecord, allowExternalActions = true) {
     if (record.paymentProvider === 'STRIPE' && ['PENDING', 'SESSION_CREATED', 'FAILED'].includes(record.paymentStatus)) {
-      const reconciled = await this.reconcileHostedStripePending(record);
+      const reconciled = await this.reconcileHostedStripePending(record, allowExternalActions);
       if (reconciled !== record || reconciled.paymentStatus !== record.paymentStatus || reconciled.status !== record.status) return reconciled;
     }
     if (['REFUND_PENDING', 'VOID_PENDING'].includes(record.paymentStatus)) {
-      return this.reconcilePaymentRecovery(record);
+      return this.reconcilePaymentRecovery(record, allowExternalActions);
     }
     // DELIVERED remains refreshable: providers can later reverse/refund a top-up,
     // and a later status response can supply authoritative delivered-value data
@@ -1228,6 +1246,7 @@ export class MobileTopUpService {
       return this.applyProviderResult(
         record.id,
         await this.provider.getTopUpStatus(record.providerTransactionId, provider),
+        allowExternalActions,
       );
     }
     if (record.failureCode === 'TOPUP_SUBMISSION_UNKNOWN' &&
@@ -1237,7 +1256,7 @@ export class MobileTopUpService {
       if (recovered) {
         await this.audit(record.userId, 'MOBILE_TOPUP_PROVIDER_REFERENCE_RECOVERED', 'MobileTopUpTransaction', record.id,
           { provider, source: 'CUSTOM_IDENTIFIER' });
-        return this.applyProviderResult(record.id, recovered);
+        return this.applyProviderResult(record.id, recovered, allowExternalActions);
       }
       // Bump updatedAt so automatic reconciliation applies a cooldown before the
       // next read-only provider lookup. No airtime submission occurs here.
@@ -1252,7 +1271,7 @@ export class MobileTopUpService {
     this.assertEnabled();
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
-    return refresh ? this.refreshTransaction(record) : record;
+    return refresh ? this.refreshTransaction(record, !flupFlapCustomerId(userId)) : record;
   }
 
   async reconcilePendingTransactions(limit = 25) {
@@ -1301,11 +1320,23 @@ export class MobileTopUpService {
       throw new MobileTopUpError('TOPUP_NOT_CANCELLABLE', 'This recharge can no longer be cancelled', 409);
     }
 
+    if (record.paymentProvider === 'STRIPE' && record.paymentStatus === 'PENDING' &&
+        (record.paymentStartedAt || record.paymentSessionId || record.paymentRecoveryCode)) {
+      throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment creation may still be in progress', 409);
+    }
+
     if (record.paymentProvider === 'STRIPE' && record.paymentStatus === 'SESSION_CREATED') {
       if (!record.paymentSessionId || !this.stripeProvider) {
         throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment cancellation could not be confirmed', 409);
       }
-      await this.stripeProvider.expireHostedCheckoutSession(record.paymentSessionId, record.id);
+      try {
+        await this.stripeProvider.expireHostedCheckoutSession(record.paymentSessionId, record.id);
+      } catch {
+        throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment cancellation could not be confirmed', 409);
+      }
+    } else if (!await this.repository.claimOperation(record.id, 'payment', this.clock().toISOString())) {
+      // Atomic competition with session creation: only one operation may win.
+      throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment creation may still be in progress', 409);
     }
 
     const failedAt = this.clock().toISOString();

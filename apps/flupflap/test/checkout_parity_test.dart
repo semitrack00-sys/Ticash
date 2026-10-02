@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
@@ -52,6 +53,11 @@ class ParityAdapter implements HttpClientAdapter {
   bool failPayment = false, promoted = false, pendingHistory = false;
   int quoteCount = 0;
   String responseTransactionId = txnId;
+  String? cancelCode, failureCode;
+  bool failStatus = false, failHistory = false;
+  List<Map<String, dynamic>>? historyRows;
+  final transactionById = <String, Map<String, dynamic>>{};
+  Future<void>? statusGate;
   final products = <Map<String, dynamic>>[
     {
       'id': 'fixed',
@@ -101,6 +107,7 @@ class ParityAdapter implements HttpClientAdapter {
     'totalChargeUsd': 6.24,
     'status': transactionStatus,
     'paymentStatus': paymentStatus,
+    if (failureCode != null) 'failureCode': failureCode,
     'testMode': true,
   };
   Map<String, dynamic> quote(Map body) => {
@@ -184,13 +191,42 @@ class ParityAdapter implements HttpClientAdapter {
       }
       data = {...session(), 'transactionId': responseTransactionId};
     } else if (o.path.endsWith('/checkout-resume')) {
+      await statusGate;
       data = {'transaction': transaction};
     } else if (o.path.endsWith('/transactions') && o.method == 'GET') {
+      if (failHistory) {
+        throw DioException(
+          requestOptions: o,
+          type: DioExceptionType.connectionError,
+        );
+      }
       data = {
-        'transactions': pendingHistory ? [transaction] : [],
+        'transactions': historyRows ?? (pendingHistory ? [transaction] : []),
       };
+    } else if (o.path.endsWith('/cancel')) {
+      if (cancelCode != null) {
+        code = 409;
+        data = {'code': cancelCode};
+      } else {
+        transactionStatus = 'FAILED';
+        paymentStatus = 'FAILED';
+        failureCode = 'CANCELLED_BY_CUSTOMER';
+        historyRows = historyRows
+            ?.map((r) => r['id'] == responseTransactionId ? transaction : r)
+            .toList();
+        data = {'transaction': transaction};
+      }
     } else if (o.path.contains('/transactions')) {
-      data = {'transaction': transaction};
+      await statusGate;
+      if (failStatus) {
+        throw DioException(
+          requestOptions: o,
+          type: DioExceptionType.connectionError,
+        );
+      }
+      data = {
+        'transaction': transactionById[o.path.split('/').last] ?? transaction,
+      };
     } else if (o.path.endsWith('/visits')) {
       data = {'capability': 'a' * 43};
     } else if (o.path.endsWith('/attribution')) {
@@ -486,18 +522,204 @@ void main() {
       expect(a.requests.first.data, {'resumeToken': 'a' * 43});
     },
   );
+  test(
+    'a new return capability waits for but never reuses an older status response',
+    () async {
+      final (a, _, j) = fixture();
+      final gate = Completer<void>();
+      a.statusGate = gate.future;
+      final first = j.resume('a' * 43);
+      await Future<void>.delayed(Duration.zero);
+      final second = j.resume('b' * 43);
+      gate.complete();
+      await Future.wait([first, second]);
+      final calls = a.requests
+          .where((r) => r.path.endsWith('/checkout-resume'))
+          .toList();
+      expect(calls.length, 2);
+      expect(calls.last.data, {'resumeToken': 'b' * 43});
+      expect(j.locked, true);
+      expect(j.hosted, isNull);
+    },
+  );
+  test(
+    'cancellation does not target a transaction resolved by an in-flight status read',
+    () async {
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      await j.initialize();
+      final gate = Completer<void>();
+      a.statusGate = gate.future;
+      final refresh = j.refresh();
+      await Future<void>.delayed(Duration.zero);
+      final cancellation = j.cancelPending();
+      a.transactionStatus = 'DELIVERED';
+      a.paymentStatus = 'CAPTURED';
+      gate.complete();
+      await Future.wait([refresh, cancellation]);
+      expect(a.requests.where((r) => r.path.endsWith('/cancel')), isEmpty);
+      expect(j.locked, false);
+    },
+  );
   test('restart pending history prevents another attempt', () async {
     final (a, _, j) = fixture();
     a.pendingHistory = true;
     await j.initialize();
     expect(j.locked, true);
-    expect(j.step, RechargeStep.result);
+    expect(j.step, RechargeStep.recovery);
     await j.pay();
     expect(
       a.requests.where((r) => r.path.endsWith('/payment-sessions')),
       isEmpty,
     );
   });
+  test(
+    'terminal startup history leaves Destination accessible and remains in history',
+    () async {
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      a.transactionStatus = 'DELIVERED';
+      a.paymentStatus = 'CAPTURED';
+      await j.initialize();
+      expect(j.step, RechargeStep.destination);
+      expect(j.locked, false);
+      expect(j.result, isNull);
+      expect(j.history.single.terminal, true);
+      expect(a.requests.where((r) => r.path.endsWith('/$txnId')), isEmpty);
+    },
+  );
+  test(
+    'startup refresh resolves stale pending history before enabling Destination',
+    () async {
+      final (a, _, j) = fixture();
+      a.historyRows = [a.transaction];
+      a.transactionStatus = 'FAILED';
+      a.paymentStatus = 'FAILED';
+      await j.initialize();
+      expect(j.step, RechargeStep.destination);
+      expect(j.locked, false);
+      expect(j.history.single.terminal, true);
+      expect(
+        a.requests
+            .singleWhere((r) => r.path.endsWith('/$txnId'))
+            .queryParameters,
+        {'refresh': true},
+      );
+    },
+  );
+  test('failed authoritative refresh stays in locked recovery', () async {
+    final (a, _, j) = fixture();
+    a.pendingHistory = true;
+    a.failStatus = true;
+    await j.initialize();
+    expect(j.step, RechargeStep.recovery);
+    expect(j.locked, true);
+    expect(j.hosted, isNull);
+    expect(j.error, 'requestFailed');
+  });
+  test(
+    'safe server cancellation clears the attempt and returns to Destination',
+    () async {
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      await j.initialize();
+      expect(j.canCancel, true);
+      await j.cancelPending();
+      expect(j.error, isNull);
+      expect(j.locked, false);
+      expect(j.initialized, true);
+      expect(j.step, RechargeStep.destination);
+      expect(j.result, isNull);
+      expect(j.notice, 'cancelledStartNew');
+      expect(j.history.single.data['failureCode'], 'CANCELLED_BY_CUSTOMER');
+      final cancel = a.requests.singleWhere((r) => r.path.endsWith('/cancel'));
+      expect(cancel.method, 'POST');
+      expect(cancel.path, '/flupflap/mobile-topups/transactions/$txnId/cancel');
+      expect(
+        a.requests.where((r) => r.path.endsWith('/payment-sessions')),
+        isEmpty,
+      );
+    },
+  );
+  for (final code in [
+    'TOPUP_NOT_CANCELLABLE',
+    'TOPUP_CANCELLATION_UNRESOLVED',
+  ]) {
+    test(
+      'unsafe cancellation $code stays locked without another payment',
+      () async {
+        final (a, _, j) = fixture();
+        a.pendingHistory = true;
+        a.cancelCode = code;
+        await j.initialize();
+        await j.cancelPending();
+        expect(j.locked, true);
+        expect(j.step, RechargeStep.recovery);
+        expect(j.error, 'cancellationUnresolved');
+        expect(() => j.startAnother(), throwsStateError);
+        expect(
+          a.requests.where((r) => r.path.endsWith('/payment-sessions')),
+          isEmpty,
+        );
+      },
+    );
+  }
+  test(
+    'cancellation cannot unlock when remaining history cannot be verified',
+    () async {
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      await j.initialize();
+      a.failHistory = true;
+      await j.cancelPending();
+      expect(j.locked, true);
+      expect(j.canPay, false);
+      a.failHistory = false;
+      await j.refresh();
+      expect(j.locked, false);
+      expect(j.step, RechargeStep.destination);
+    },
+  );
+  test(
+    'cancelling one pending transaction never unlocks a second pending transaction',
+    () async {
+      final (a, _, j) = fixture();
+      const otherId = '12345678-1234-4234-8234-123456789abf';
+      final second = {...a.transaction, 'id': otherId};
+      a.historyRows = [a.transaction, second];
+      a.transactionById[otherId] = second;
+      await j.initialize();
+      await j.cancelPending();
+      expect(j.locked, true);
+      expect(j.result?.id, otherId);
+      expect(j.step, RechargeStep.recovery);
+      expect(j.history.first.terminal, true);
+      expect(j.history.last.terminal, false);
+      expect(
+        a.requests.where((r) => r.path.endsWith('/payment-sessions')),
+        isEmpty,
+      );
+    },
+  );
+  test(
+    'normal recharge entry clears terminal result, retains active checkout lock',
+    () async {
+      final (a, _, j) = fixture();
+      await reviewed(j);
+      await j.pay();
+      j.enterRecharge();
+      expect(j.locked, true);
+      expect(j.hosted, isNotNull);
+      a.transactionStatus = 'DELIVERED';
+      a.paymentStatus = 'CAPTURED';
+      await j.refresh();
+      expect(j.result?.terminal, true);
+      j.enterRecharge();
+      expect(j.step, RechargeStep.destination);
+      expect(j.result, isNull);
+      expect(j.quote, isNull);
+    },
+  );
   for (final pair in [
     ('PROCESSING', 'AUTHORIZED', false),
     ('DELIVERED', 'CAPTURED', true),

@@ -150,6 +150,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       }
       if (!j.initialized && !j.busy) await j.initialize();
       if (!mounted) return;
+      if (!widget.history) j.enterRecharge();
+      phone.text = j.phone;
+      amount.text = j.amount;
+      nickname.text = j.nickname;
       if (widget.initialRecipient != null && !j.locked && !j.busy) {
         j.selectRecipient(widget.initialRecipient!);
         phone.text = j.phone;
@@ -161,6 +165,16 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   @override
   void didUpdateWidget(covariant RechargeJourneyScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.history && !widget.history && !widget.returnOnly) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          j.enterRecharge();
+          phone.text = j.phone;
+          amount.text = j.amount;
+          nickname.text = j.nickname;
+        }
+      });
+    }
     if (widget.resumeToken != null &&
         widget.resumeToken != oldWidget.resumeToken) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -605,11 +619,29 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
 
   Widget payment() => card([
     const Icon(Icons.lock_outline, size: 40),
-    Text(context.ft('pendingNotice')),
+    Text(
+      context.ft('pendingPayment'),
+      style: Theme.of(context).textTheme.headlineSmall,
+    ),
+    Text(context.ft('pendingRecoveryHelp')),
     if (j.hosted != null) button('openCheckout', j.busy ? null : openCheckout),
     if (j.hosted == null && j.result == null)
       button('retrySame', j.busy ? null : j.retryPayment),
     button('refresh', j.busy ? null : j.refresh),
+    if (!widget.returnOnly && j.canCancel)
+      button(
+        'cancelPending',
+        j.busy
+            ? null
+            : () async {
+                await j.cancelPending();
+                if (mounted && !j.locked) {
+                  phone.text = j.phone;
+                  amount.text = j.amount;
+                  nickname.text = j.nickname;
+                }
+              },
+      ),
     TextButton(
       onPressed: () => context.go('/history'),
       child: Text(context.ft('history')),
@@ -721,6 +753,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                     context.go('/recharge');
                   } else {
                     j.startAnother();
+                    phone.text = j.phone;
+                    amount.text = j.amount;
+                    nickname.text = j.nickname;
                   }
                 },
         ),
@@ -803,6 +838,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                     RechargeStep.product => product(),
                     RechargeStep.review => review(),
                     RechargeStep.payment => payment(),
+                    RechargeStep.recovery => payment(),
                     RechargeStep.result =>
                       j.result == null ? payment() : receipt(j.result!),
                   },

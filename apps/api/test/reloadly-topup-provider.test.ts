@@ -267,6 +267,30 @@ describe('Reloadly Sandbox top-up provider', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('customIdentifier=ticash-topup-recover-me');
   });
 
+  it('preserves a sanitized Reloadly failure code from a failed status response', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))
+      .mockResolvedValueOnce(json({
+        transaction: {
+          transactionId: 32835653,
+          status: 'FAILED',
+          requestedAmount: 5,
+          requestedAmountCurrencyCode: 'USD',
+        },
+        status: 'FAILED',
+        errorCode: 'RECIPIENT_NOT_FOUND',
+        message: 'private provider message must not be exposed to the customer',
+      }));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetchMock);
+
+    await expect(provider.getTopUpStatus('32835653')).resolves.toMatchObject({
+      transactionId: '32835653',
+      status: 'FAILED',
+      rawStatus: 'FAILED',
+      providerFailureCode: 'RECIPIENT_NOT_FOUND',
+    });
+  });
+
   it('accepts the current Reloadly status response transaction field', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ access_token: 'token', expires_in: 3600 }))

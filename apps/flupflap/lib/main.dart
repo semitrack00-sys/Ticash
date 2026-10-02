@@ -257,6 +257,10 @@ class _AuthScreenState extends State<AuthScreen> {
               }), child: Text(busy ? 'Please wait…' : widget.resetToken != null ?
                 'Update password' : registration ? 'Create account' : 'Sign in')),
               if (widget.resetToken == null) ...[
+                if (!registration) TextButton(
+                  onPressed: busy ? null : () => run(() => widget.session.guestLogin()),
+                  child: const Text('Continue as guest'),
+                ),
                 TextButton(onPressed: busy ? null : () => setState(() => registration = !registration),
                   child: Text(registration ? 'Already have an account? Sign in' : 'Create an account')),
                 if (!registration) TextButton(onPressed: busy ? null : () => run(() async {
@@ -498,6 +502,9 @@ class _AccountScreenState extends State<AccountScreen> {
               style: const TextStyle(color: _muted)),
           ])),
         ]))),
+        const SizedBox(height: 12),
+        const Text('This account is separate from your TiCash remittance account.',
+          style: TextStyle(color: _muted, fontSize: 13)),
         const SizedBox(height: 20),
         const Text('Profile', style: TextStyle(color: _navy, fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),

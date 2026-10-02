@@ -76,7 +76,7 @@ export function loadTelnyxSmsConfig(env: NodeJS.ProcessEnv = process.env): Telny
   const messagingProfileId = env.TELNYX_MESSAGING_PROFILE_ID?.trim();
   if (!apiKey && !fromNumber && !messagingProfileId) return undefined;
   if (!apiKey || !fromNumber || !messagingProfileId) throw new Error('TELNYX_API_KEY, TELNYX_FROM_NUMBER and TELNYX_MESSAGING_PROFILE_ID must be configured together');
-  if (!/^\\+[1-9]\\d{7,14}$/.test(fromNumber)) throw new Error('TELNYX_FROM_NUMBER must be E.164');
+  if (!/^\+[1-9]\d{7,14}$/.test(fromNumber)) throw new Error('TELNYX_FROM_NUMBER must be E.164');
   if (!/^[0-9a-f-]{36}$/i.test(messagingProfileId)) throw new Error('TELNYX_MESSAGING_PROFILE_ID must be a UUID');
   return { apiKey, fromNumber, messagingProfileId, baseUrl: 'https://api.telnyx.com/v2' };
 }
@@ -87,7 +87,7 @@ export class TelnyxReceiverSmsProvider implements ReceiverSmsProvider {
   async send(input: { to: string; message: string; idempotencyKey: string }): Promise<
     { status: 'SENT'; messageId: string } | { status: 'NOT_SENT'; category: 'PROVIDER_REJECTED' }
   > {
-    if (!/^\\+[1-9]\\d{7,14}$/.test(input.to)) return { status: 'NOT_SENT', category: 'PROVIDER_REJECTED' };
+    if (!/^\+[1-9]\d{7,14}$/.test(input.to)) return { status: 'NOT_SENT', category: 'PROVIDER_REJECTED' };
     // Deliberately one HTTP attempt: Telnyx SMS sends have no server-side idempotency.
     // A network/timeout exception is allowed to escape so the outbox records an
     // ambiguous outcome and never blindly resends the SMS.

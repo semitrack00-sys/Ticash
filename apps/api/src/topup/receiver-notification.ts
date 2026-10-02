@@ -47,7 +47,7 @@ export function receiverMessage(record: Pick<ReceiverNotification, 'language' | 
     ht: `FlupFlap: Ou resevwa yon rechaj ${value} sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.`,
     es: `FlupFlap: Has recibido una recarga de ${value}. La transacción fue exitosa. Gracias por usar FlupFlap.`,
     pt: `FlupFlap: Você recebeu uma recarga de ${value}. A transação foi concluída com sucesso. Obrigado por usar o FlupFlap.`,
-    fr: `TiCash : Votre recharge de ${value} a réussi. Merci d'utiliser FlupFlap.`,
+    fr: `FlupFlap : Votre recharge de ${value} a réussi. Merci d'utiliser FlupFlap.`,
     sw: `FlupFlap: Umepokea salio la ${value}. Muamala umefanikiwa. Asante kwa kutumia FlupFlap.`,
   };
   return messages[record.language as ReceiverLanguage] ?? messages.en;
@@ -91,9 +91,9 @@ export class TelnyxReceiverSmsProvider implements ReceiverSmsProvider {
     // Deliberately one HTTP attempt: Telnyx SMS sends have no server-side idempotency.
     // A network/timeout exception is allowed to escape so the outbox records an
     // ambiguous outcome and never blindly resends the SMS.
-    const response = await this.transport(\`${this.config.baseUrl}/messages\`, {
+    const response = await this.transport(`${this.config.baseUrl}/messages`, {
       method: 'POST',
-      headers: { Authorization: \`Bearer ${this.config.apiKey}\`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${this.config.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         from: this.config.fromNumber,
         to: input.to,

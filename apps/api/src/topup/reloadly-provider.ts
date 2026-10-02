@@ -35,7 +35,7 @@ type ReloadlyDiagnosticFailureCategory =
 type ReloadlyDiagnostic = {
   provider: 'RELOADLY';
   environment: 'SANDBOX' | 'PRODUCTION';
-  operation: 'OAUTH_TOKEN' | 'COUNTRIES';
+  operation: 'OAUTH_TOKEN' | 'COUNTRIES' | 'OPERATORS' | 'OPERATOR_DETECT' | 'FX_RATE' | 'TOPUP_SUBMIT' | 'TOPUP_STATUS' | 'CATALOG';
   failureCategory?: ReloadlyDiagnosticFailureCategory;
   providerHttpStatus?: number;
   providerErrorCode?: string;
@@ -60,7 +60,7 @@ export function safeProviderErrorCode(value: unknown): string | undefined {
 }
 
 export function classifyReloadlyFailure(
-  operation: 'OAUTH_TOKEN' | 'COUNTRIES',
+  operation: ReloadlyDiagnostic['operation'],
   status?: number,
   code?: unknown,
   cause?: unknown,
@@ -182,7 +182,12 @@ function mapTopUp(raw: ReloadlyDocument): ProviderTopUpResult {
   const requestedAmount = Number(details.requestedAmount ?? details.amount ?? 0);
   const deliveredAmount = Number(details.deliveredAmount);
   const fee = Number(details.fee);
+  const providerFailureCode = safeProviderErrorCode(
+    details.errorCode ?? details.code ?? details.error ?? raw.errorCode ?? raw.code ?? raw.error,
+  );
   return {
+    rawStatus: String(status).toUpperCase(),
+    ...(providerFailureCode ? { providerFailureCode } : {}),
     transactionId: String(transactionId),
     status: String(status).toUpperCase(),
     operatorTransactionId: details.operatorTransactionId == null
@@ -269,6 +274,14 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
 
   private async request(path: string, init: RequestInit = {}): Promise<ReloadlyDocument> {
     const token = await this.accessToken();
+    const operation: ReloadlyDiagnostic['operation'] =
+      path === 'countries' ? 'COUNTRIES' :
+      path === 'operators/fx-rate' ? 'FX_RATE' :
+      path.startsWith('operators/auto-detect/') ? 'OPERATOR_DETECT' :
+      path.startsWith('operators/') ? 'OPERATORS' :
+      path === 'topups-async' ? 'TOPUP_SUBMIT' :
+      path.includes('/status') || path.startsWith('topups/reports/') ? 'TOPUP_STATUS' :
+      'CATALOG';
     const url = new URL(path, `${this.config.airtimeBaseUrl}/`);
     if (url.origin !== this.config.airtimeBaseUrl) {
       throw new MobileTopUpError('INVALID_PROVIDER_URL', 'Refusing an unexpected Reloadly URL', 500);
@@ -290,8 +303,8 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
         environment: this.runtimeEnvironment(),
-        operation: 'COUNTRIES',
-        failureCategory: classifyReloadlyFailure('COUNTRIES', undefined, undefined, error),
+        operation,
+        failureCategory: classifyReloadlyFailure(operation, undefined, undefined, error),
         responseContentType: undefined,
         durationMs: Date.now() - startedAt,
       });
@@ -306,8 +319,8 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
       logReloadlyDiagnostic({
         provider: 'RELOADLY',
         environment: this.runtimeEnvironment(),
-        operation: 'COUNTRIES',
-        failureCategory: classifyReloadlyFailure('COUNTRIES', response.status, code, undefined),
+        operation,
+        failureCategory: classifyReloadlyFailure(operation, response.status, code, undefined),
         providerHttpStatus: response.status,
         providerErrorCode: safeProviderErrorCode(code),
         responseContentType: safeResponseContentType(response),

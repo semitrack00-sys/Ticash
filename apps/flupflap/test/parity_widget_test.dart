@@ -41,6 +41,7 @@ Widget shell(Widget child, {AppLanguage language = AppLanguage.english}) =>
     AppLocalizationScope(
       language: language,
       child: MaterialApp(
+        debugShowCheckedModeBanner: false,
         theme: flupFlapTheme(),
         locale: language.materialLocale,
         localizationsDelegates: GlobalMaterialLocalizations.delegates,

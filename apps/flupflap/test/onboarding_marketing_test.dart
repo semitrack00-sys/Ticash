@@ -280,7 +280,10 @@ void main() {
       phoneViewport(t);
       final (s, adapter, _) = auth.fixture();
       await t.pumpWidget(
-        shell(AuthScreen(session: s, initialRegistration: true)),
+        // Capture the navigator overlay as well as the underlying form.
+        RepaintBoundary(
+          child: shell(AuthScreen(session: s, initialRegistration: true)),
+        ),
       );
       await press(t, find.byKey(const ValueKey('phone-country-picker')));
       await t.enterText(

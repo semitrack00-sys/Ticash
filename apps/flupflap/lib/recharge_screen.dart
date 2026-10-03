@@ -230,29 +230,6 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     super.dispose();
   }
 
-  Future<void> confirmRecurring(String transactionId, int days) async {
-    final approved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.ft('recurringTitle')),
-        content: Text(context.ft('recurringConsent', {'days': '$days'})),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(context.ft('Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(context.ft('recurringConfirm')),
-          ),
-        ],
-      ),
-    );
-    if (approved == true && mounted) {
-      await j.enableRecurring(transactionId, days);
-    }
-  }
-
   Future<void> openCheckout() async {
     try {
       await NativeActions.checkout(j.hosted!.url);
@@ -670,6 +647,50 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           },
         ),
       ],
+      if (!j.guest() &&
+          j.availability?.recurringRechargeEnabled == true &&
+          j.payments?.mode != CheckoutMode.mock) ...[
+        const SizedBox(height: 18),
+        Text(
+          context.ft('recurringTitle'),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(context.ft('recurringReviewHelp')),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              label: Text(context.ft('recurringOff')),
+              selected: j.recurringIntervalDays == null,
+              onSelected: j.busy || j.locked
+                  ? null
+                  : (_) => j.setRecurringInterval(null),
+            ),
+            for (final days in [7, 15, 30])
+              ChoiceChip(
+                key: ValueKey('recurring-choice-' + days.toString()),
+                label: Text(context.ft('everyDays', {'days': days.toString()})),
+                selected: j.recurringIntervalDays == days,
+                onSelected: j.busy || j.locked
+                    ? null
+                    : (_) => j.setRecurringInterval(days),
+              ),
+          ],
+        ),
+        if (j.recurringIntervalDays != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            context.ft('recurringConsent', {
+              'days': j.recurringIntervalDays.toString(),
+            }),
+          ),
+        ],
+      ],
       CheckboxListTile(
         contentPadding: EdgeInsets.zero,
         value: j.reviewed,
@@ -816,7 +837,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           r.paymentStatus == 'CAPTURED' &&
           r.id != null &&
           !j.guest() &&
-          j.availability?.recurringRechargeEnabled == true) ...[
+          j.availability?.recurringRechargeEnabled == true &&
+          (recurring != null || d['recurringIntervalDays'] is int)) ...[
         const Divider(),
         Text(
           context.ft('recurringTitle'),
@@ -825,33 +847,14 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           ),
         ),
         const SizedBox(height: 6),
-        Text(context.ft('recurringHelp')),
-        const SizedBox(height: 12),
         if (recurring == null)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final days in [7, 15, 30])
-                OutlinedButton.icon(
-                  key: ValueKey('recurring-' + days.toString()),
-                  onPressed: j.busy
-                      ? null
-                      : () => confirmRecurring(r.id!, days),
-                  icon: const Icon(Icons.autorenew_rounded),
-                  label: Text(context.ft('everyDays', {'days': days.toString()})),
-                ),
-            ],
-          )
+          Text(context.ft('recurringSetupPending'))
         else ...[
           row(
             'recurringFrequency',
             context.ft('everyDays', {'days': recurring.intervalDays.toString()}),
           ),
-          row(
-            'recurringNext',
-            recurring.nextRunAt.toLocal().toString(),
-          ),
+          row('recurringNext', recurring.nextRunAt.toLocal().toString()),
           Text(context.ft('recurringStatus' + recurring.status)),
           const SizedBox(height: 8),
           Wrap(

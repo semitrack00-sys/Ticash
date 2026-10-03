@@ -1041,8 +1041,9 @@ export class MobileTopUpService {
       !hostedProvider ||
       (isCheckoutSessionEvent && (!record.paymentSessionId || record.paymentSessionId !== event.checkoutSessionId)) ||
       (!isCheckoutSessionEvent && !isTerminalPaymentIntentFailure &&
-        record.paymentProviderTransactionId != null &&
-        record.paymentProviderTransactionId !== event.paymentId)
+        (record.paymentSessionId != null ||
+         record.paymentProviderTransactionId == null ||
+         record.paymentProviderTransactionId !== event.paymentId))
     ) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }

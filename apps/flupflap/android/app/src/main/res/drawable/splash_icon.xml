@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android rasterizes this drawable at launcher size before enlarging it.
+     Fractional insets survive that scaling; fixed dp child sizes do not.
+     22.2222% per side leaves 160/288 of the canvas for the transparent F asset,
+     safely inside the platform's 192dp mask. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="22.2222%"
+    android:drawable="@drawable/flupflap_f_glossy" />

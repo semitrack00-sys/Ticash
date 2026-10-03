@@ -5,14 +5,18 @@ import 'package:go_router/go_router.dart';
 import 'package:ticash/providers/mobile_top_up_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ticash/localization/app_localizations.dart';
+
 import 'account_parity.dart';
+import 'auth_layout.dart';
 import 'checkout_contract.dart';
 import 'recharge_journey.dart';
 import 'recharge_screen.dart';
 import 'parity_strings.dart';
 import 'phone_country_field.dart';
+
 import 'package:ticash/services/mobile_top_up_service.dart';
 import 'package:ticash/models/mobile_top_up.dart';
+
 import 'session.dart';
 
 const _navy = Color(0xFF082B55);
@@ -175,8 +179,10 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
       ),
       GoRoute(
         path: '/loading',
-        builder: (_, __) =>
-            const Scaffold(body: Center(child: CircularProgressIndicator())),
+        builder: (_, __) => const Scaffold(
+          backgroundColor: Colors.white,
+          body: Center(child: CircularProgressIndicator()),
+        ),
       ),
       GoRoute(
         path: '/login',
@@ -373,14 +379,17 @@ ThemeData flupFlapTheme() => ThemeData(
 );
 
 class Brand extends StatelessWidget {
-  const Brand({super.key, this.compact = false});
+  const Brand({super.key, this.compact = false, this.width});
   final bool compact;
+  final double? width;
   @override
   Widget build(BuildContext context) => Column(
     children: [
       Image.asset(
         'assets/flupflap-logo.png',
-        height: compact ? 54 : 76,
+        width: width,
+        // Reserve the original 2172x724 logo's space before asset decoding.
+        height: width == null ? (compact ? 54 : 76) : width! / 3,
         fit: BoxFit.contain,
       ),
       if (!compact) ...[
@@ -510,227 +519,185 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: SingleChildScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.onLanguage != null)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: SizedBox(
-                      width: 220,
-                      child: DropdownButton<AppLanguage>(
-                        value: widget.language,
-                        isDense: true,
-                        isExpanded: true,
-                        items: AppLanguage.values
-                            .map(
-                              (l) => DropdownMenuItem(
-                                value: l,
-                                child: Text(
-                                  l.nativeName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) {
-                          if (v != null) widget.onLanguage!(v);
-                        },
-                      ),
-                    ),
-                  ),
-                const Brand(compact: true),
-                const SizedBox(height: 12),
-                Card(
-                  key: const ValueKey('auth-card'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          widget.resetToken != null
-                              ? context.ft('Reset FlupFlap password')
-                              : registration
-                              ? context.ft('Create FlupFlap account')
-                              : context.ft('Sign in to FlupFlap'),
-                          style: Theme.of(context).textTheme.headlineSmall
-                              ?.copyWith(
-                                fontWeight: FontWeight.w900,
-                                color: _navy,
-                              ),
-                        ),
-                        if (widget.resetToken != null || registration) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            widget.resetToken != null
-                                ? context.ft('Choose a new secure password.')
-                                : context.ft(
-                                    'Recharge phones worldwide in a few taps.',
-                                  ),
-                            style: const TextStyle(color: _muted),
-                          ),
-                        ],
-                        const SizedBox(height: 16),
-                        if (widget.resetToken == null && registration) ...[
-                          TextField(
-                            textInputAction: TextInputAction.next,
-                            controller: firstName,
-                            textCapitalization: TextCapitalization.words,
-                            autofillHints: const [AutofillHints.givenName],
-                            decoration: InputDecoration(
-                              labelText: context.ft('First name'),
-                              prefixIcon: const Icon(Icons.person_outline),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            textInputAction: TextInputAction.next,
-                            controller: lastName,
-                            textCapitalization: TextCapitalization.words,
-                            autofillHints: const [AutofillHints.familyName],
-                            decoration: InputDecoration(
-                              labelText: context.ft('Last name'),
-                              prefixIcon: const Icon(Icons.person_outline),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          PhoneCountryField(
-                            key: registrationPhoneKey,
-                            fieldKey: const ValueKey('registration-phone'),
-                            controller: phone,
-                            countryCode: registrationPhone?.country.code,
-                            showCountryName: true,
-                            errorText: validatePhone && !phoneValid
-                                ? context.ft('invalidNationalPhone')
-                                : null,
-                            enabled: !busy,
-                            onChanged: (entry) =>
-                                setState(() => registrationPhone = entry),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        if (widget.resetToken == null) ...[
-                          TextField(
-                            textInputAction: TextInputAction.next,
-                            controller: email,
-                            keyboardType: TextInputType.emailAddress,
-                            autofillHints: const [AutofillHints.email],
-                            decoration: InputDecoration(
-                              labelText: context.ft('Email'),
-                              prefixIcon: const Icon(Icons.email_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        TextField(
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) => submit(),
-                          controller: password,
-                          obscureText: obscure,
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          decoration: InputDecoration(
-                            labelText: context.ft('Password'),
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            suffixIcon: IconButton(
-                              tooltip: obscure
-                                  ? context.ft('Show password')
-                                  : context.ft('Hide password'),
-                              onPressed: () =>
-                                  setState(() => obscure = !obscure),
-                              icon: Icon(
-                                obscure
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (message != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: Text(message!, semanticsLabel: message),
-                          ),
-                        const SizedBox(height: 14),
-                        FilledButton(
-                          onPressed: busy ? null : submit,
-                          child: Text(
-                            busy
-                                ? context.ft('Please wait…')
-                                : widget.resetToken != null
-                                ? context.ft('Update password')
-                                : registration
-                                ? context.ft('Create account')
-                                : context.ft('Sign in'),
-                          ),
-                        ),
-                        if (widget.resetToken == null) ...[
-                          const SizedBox(height: 8),
-                          OutlinedButton(
-                            onPressed: busy
-                                ? null
-                                : () => run(() => widget.session.enterGuest()),
-                            child: Text(context.ft('Continue as guest')),
-                          ),
-                          Wrap(
-                            alignment: WrapAlignment.spaceBetween,
-                            children: [
-                              TextButton(
-                                onPressed: busy
-                                    ? null
-                                    : () => setState(
-                                        () => registration = !registration,
-                                      ),
-                                child: Text(
-                                  registration
-                                      ? context.ft(
-                                          'Already have an account? Sign in',
-                                        )
-                                      : context.ft('Create account'),
-                                ),
-                              ),
-                              if (!registration)
-                                TextButton(
-                                  onPressed: busy
-                                      ? null
-                                      : () => run(() async {
-                                          await widget.session.forgot(
-                                            email.text.trim(),
-                                          );
-                                          if (mounted) {
-                                            setState(
-                                              () => message = context.ft(
-                                                'If an account exists, reset instructions have been sent.',
-                                              ),
-                                            );
-                                          }
-                                        }),
-                                  child: Text(context.ft('Forgot password?')),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+  Widget build(BuildContext context) {
+    final signIn = !registration && widget.resetToken == null;
+    return AuthLayout(
+      signIn: signIn,
+      language: widget.language,
+      onLanguage: widget.onLanguage,
+      logo: Brand(compact: true, width: signIn ? 260 : 220),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.resetToken != null
+                ? context.ft('Reset FlupFlap password')
+                : registration
+                ? context.ft('Create FlupFlap account')
+                : context.ft('Welcome'),
+            textAlign: signIn ? TextAlign.center : TextAlign.start,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              fontSize: signIn ? 34 : 24,
+              color: _navy,
             ),
           ),
-        ),
+          ...[
+            const SizedBox(height: 6),
+            Text(
+              widget.resetToken != null
+                  ? context.ft('Choose a new secure password.')
+                  : registration
+                  ? context.ft('Recharge phones worldwide in a few taps.')
+                  : context.ft('Sign in to continue.'),
+              textAlign: signIn ? TextAlign.center : TextAlign.start,
+              style: TextStyle(color: _muted, fontSize: signIn ? 17 : 14),
+            ),
+          ],
+          const SizedBox(height: 16),
+          if (widget.resetToken == null && registration) ...[
+            TextField(
+              textInputAction: TextInputAction.next,
+              controller: firstName,
+              textCapitalization: TextCapitalization.words,
+              autofillHints: const [AutofillHints.givenName],
+              decoration: InputDecoration(
+                labelText: context.ft('First name'),
+                prefixIcon: const Icon(Icons.person_outline),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              textInputAction: TextInputAction.next,
+              controller: lastName,
+              textCapitalization: TextCapitalization.words,
+              autofillHints: const [AutofillHints.familyName],
+              decoration: InputDecoration(
+                labelText: context.ft('Last name'),
+                prefixIcon: const Icon(Icons.person_outline),
+              ),
+            ),
+            const SizedBox(height: 16),
+            PhoneCountryField(
+              key: registrationPhoneKey,
+              fieldKey: const ValueKey('registration-phone'),
+              controller: phone,
+              countryCode: registrationPhone?.country.code,
+              showCountryName: true,
+              errorText: validatePhone && !phoneValid
+                  ? context.ft('invalidNationalPhone')
+                  : null,
+              enabled: !busy,
+              onChanged: (entry) => setState(() => registrationPhone = entry),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (widget.resetToken == null) ...[
+            TextField(
+              textInputAction: TextInputAction.next,
+              controller: email,
+              keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
+              enableSuggestions: false,
+              autofillHints: const [AutofillHints.email],
+              decoration: InputDecoration(
+                labelText: context.ft('Email'),
+                prefixIcon: const Icon(Icons.email_outlined),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          TextField(
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => submit(),
+            controller: password,
+            obscureText: obscure,
+            autofillHints: [
+              registration || widget.resetToken != null
+                  ? AutofillHints.newPassword
+                  : AutofillHints.password,
+            ],
+            enableSuggestions: false,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: context.ft('Password'),
+              prefixIcon: const Icon(Icons.lock_outline),
+              suffixIcon: IconButton(
+                tooltip: obscure
+                    ? context.ft('Show password')
+                    : context.ft('Hide password'),
+                onPressed: () => setState(() => obscure = !obscure),
+                icon: Icon(
+                  obscure
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                ),
+              ),
+            ),
+          ),
+          if (message != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(message!, semanticsLabel: message),
+            ),
+          const SizedBox(height: 14),
+          FilledButton(
+            onPressed: busy ? null : submit,
+            child: Text(
+              busy
+                  ? context.ft('Please wait…')
+                  : widget.resetToken != null
+                  ? context.ft('Update password')
+                  : registration
+                  ? context.ft('Create account')
+                  : context.ft('Sign in'),
+            ),
+          ),
+          if (widget.resetToken == null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: busy
+                  ? null
+                  : () => run(() => widget.session.enterGuest()),
+              child: Text(context.ft('Continue as guest')),
+            ),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              children: [
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => setState(() => registration = !registration),
+                  child: Text(
+                    registration
+                        ? context.ft('Already have an account? Sign in')
+                        : context.ft('Create account'),
+                  ),
+                ),
+                if (!registration)
+                  TextButton(
+                    onPressed: busy
+                        ? null
+                        : () => run(() async {
+                            await widget.session.forgot(email.text.trim());
+                            if (mounted) {
+                              setState(
+                                () => message = context.ft(
+                                  'If an account exists, reset instructions have been sent.',
+                                ),
+                              );
+                            }
+                          }),
+                    child: Text(context.ft('Forgot password?')),
+                  ),
+              ],
+            ),
+          ],
+        ],
       ),
-    ),
-  );
+    );
+  }
 }
 
 class HomeScreen extends ConsumerWidget {

@@ -123,7 +123,14 @@ void main() {
     }
   });
 
-  for (final size in [const Size(320, 640), const Size(360, 800)]) {
+  for (final size in [
+    const Size(320, 640),
+    const Size(360, 800),
+    const Size(360, 900),
+    const Size(390, 844),
+    const Size(412, 915),
+    const Size(430, 932),
+  ]) {
     for (final scale in [1.0, 1.5]) {
       testWidgets(
         'compact sign-in fits $size at scale $scale and keyboard stays usable',
@@ -147,16 +154,41 @@ void main() {
           await t.pump();
           expect(find.byType(DropdownButton<AppLanguage>), findsOneWidget);
           expect(find.byType(Brand), findsOneWidget);
+          expect(find.text('Welcome'), findsOneWidget);
+          expect(find.text('Sign in to continue.'), findsOneWidget);
+          expect(find.text('Sign in to FlupFlap'), findsNothing);
+          expect(find.text('Welcome back'), findsNothing);
+          final logo = find.descendant(
+            of: find.byType(Brand),
+            matching: find.byType(Image),
+          );
+          expect(
+            (t.widget<Image>(logo).image as AssetImage).assetName,
+            'assets/flupflap-logo.png',
+          );
+          expect(t.getSize(logo).width, inInclusiveRange(220, 280));
+          expect(
+            t.getSize(logo).height,
+            closeTo(t.getSize(logo).width / 3, .01),
+          );
+          expect(find.text('Create account'), findsOneWidget);
+          expect(find.text('Forgot password?'), findsOneWidget);
           if (scale == 1) {
             expect(
               t.getSize(find.byKey(const ValueKey('auth-card'))).height,
-              lessThan(510),
+              // Larger approved heading, 24px card padding and 54px guest CTA.
+              lessThan(560),
             );
             expect(find.text('Sign in').hitTestable(), findsOneWidget);
+            await t.ensureVisible(find.text('Continue as guest'));
+            await t.pumpAndSettle();
             expect(
               find.text('Continue as guest').hitTestable(),
               findsOneWidget,
             );
+            // Capture the initial balanced composition, before keyboard/scroll QA.
+            await t.ensureVisible(find.byType(Brand));
+            await t.pumpAndSettle();
             await capture(t, 'signin-${size.width.toInt()}');
           }
           t.view.viewInsets = const FakeViewPadding(bottom: 280);
@@ -172,6 +204,9 @@ void main() {
           await t.ensureVisible(find.text('Forgot password?'));
           await t.pumpAndSettle();
           expect(find.text('Forgot password?').hitTestable(), findsOneWidget);
+          await t.ensureVisible(find.text('Create account'));
+          await t.pumpAndSettle();
+          expect(find.text('Create account').hitTestable(), findsOneWidget);
           expect(t.takeException(), isNull);
           noPurchases(adapter.requests);
           await t.pumpWidget(const SizedBox());
@@ -245,7 +280,10 @@ void main() {
       phoneViewport(t);
       final (s, adapter, _) = auth.fixture();
       await t.pumpWidget(
-        shell(AuthScreen(session: s, initialRegistration: true)),
+        // Capture the navigator overlay as well as the underlying form.
+        RepaintBoundary(
+          child: shell(AuthScreen(session: s, initialRegistration: true)),
+        ),
       );
       await press(t, find.byKey(const ValueKey('phone-country-picker')));
       await t.enterText(
@@ -253,9 +291,16 @@ void main() {
         'Haiti',
       );
       await t.pumpAndSettle();
+      await capture(t, 'registration-country-picker');
       await press(t, find.byKey(const ValueKey('phone-country-HT')));
       expect(find.text('Haiti'), findsOneWidget);
       expect(find.text('+509'), findsOneWidget);
+      await t.enterText(
+        find.byKey(const ValueKey('registration-phone')),
+        '37000000',
+      );
+      await t.pumpAndSettle();
+      await capture(t, 'registration-phone');
       for (final value in ['3700000', '+509370000000']) {
         await t.enterText(
           find.byKey(const ValueKey('registration-phone')),

@@ -215,6 +215,32 @@ class RechargeResult {
   String? get id => data['id'] is String ? data['id'] as String : null;
 }
 
+class RecurringRechargeSchedule {
+  RecurringRechargeSchedule(this.data) {
+    final interval = data['intervalDays'];
+    final status = data['status'];
+    final next = data['nextRunAt'];
+    if (data['id'] is! String ||
+        !_uuid.hasMatch(data['id'] as String) ||
+        interval is! int ||
+        ![7, 15, 30].contains(interval) ||
+        !['ACTIVE', 'PAUSED', 'CANCELLED'].contains(status) ||
+        next is! String ||
+        DateTime.tryParse(next) == null ||
+        data['maxTotalUsd'] is! num) {
+      throw const FormatException('Invalid recurring recharge');
+    }
+    moneyCents(data['maxTotalUsd'] as num);
+  }
+  final Map<String, dynamic> data;
+  String get id => data['id'] as String;
+  int get intervalDays => data['intervalDays'] as int;
+  String get status => data['status'] as String;
+  DateTime get nextRunAt => DateTime.parse(data['nextRunAt'] as String);
+  num get maxTotalUsd => data['maxTotalUsd'] as num;
+  String? get failureCode => data['failureCode'] as String?;
+}
+
 class ReferralShare {
   ReferralShare._(this.code, this.url, this.qr);
   final String code, url;
@@ -418,6 +444,49 @@ class FlupFlapClient {
       data: {'capability': capability},
     );
     if (_visitCapability == capability) _visitCapability = null;
+  }
+
+  Future<List<RecurringRechargeSchedule>> recurringSchedules() async =>
+      (object((await dio.get('/flupflap/recurring-recharges')).data)['schedules']
+              as List)
+          .map((v) => RecurringRechargeSchedule(object(v)))
+          .toList();
+
+  Future<RecurringRechargeSchedule> enableRecurring({
+    required String transactionId,
+    required int intervalDays,
+  }) async {
+    if (!_uuid.hasMatch(transactionId) || ![7, 15, 30].contains(intervalDays)) {
+      throw const FormatException('Invalid recurring recharge');
+    }
+    final data = object(
+      (await dio.post(
+        '/flupflap/recurring-recharges',
+        data: {
+          'transactionId': transactionId,
+          'intervalDays': intervalDays,
+          'consent': true,
+        },
+      )).data,
+    );
+    return RecurringRechargeSchedule(object(data['schedule']));
+  }
+
+  Future<RecurringRechargeSchedule> updateRecurring({
+    required String id,
+    required String action,
+  }) async {
+    if (!_uuid.hasMatch(id) ||
+        !['PAUSE', 'RESUME', 'CANCEL'].contains(action)) {
+      throw const FormatException('Invalid recurring recharge action');
+    }
+    final data = object(
+      (await dio.patch(
+        '/flupflap/recurring-recharges/' + Uri.encodeComponent(id),
+        data: {'action': action},
+      )).data,
+    );
+    return RecurringRechargeSchedule(object(data['schedule']));
   }
 
   Future<ReferralShare> share({required bool guest}) async {

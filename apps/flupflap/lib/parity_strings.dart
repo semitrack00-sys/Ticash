@@ -77,6 +77,32 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "billingHelp":
         "The payer/card country can differ from the recipient’s country.",
     "accountCountry": "Manage your stored billing country in Account.",
+    "recurringTitle": "Automatic recharge",
+    "recurringHelp":
+        "Choose every 7, 15, or 30 days. FlupFlap charges your saved card automatically and pauses if the price increases or payment needs your attention.",
+    "recurringReviewHelp":
+        "Optional: choose how often FlupFlap should automatically recharge this same number after this payment succeeds.",
+    "recurringOff": "One-time recharge",
+    "recurringSetupPending":
+        "Automatic recharge was requested with this payment. Setup is being finalized securely.",
+    "recurringConsent":
+        "Automatically recharge this same number every {days} days using your saved card. The current total is the maximum allowed; if the price increases, automatic recharge pauses for your approval.",
+    "recurringConfirm": "Enable automatic recharge",
+    "everyDays": "Every {days} days",
+    "recurringFrequency": "Frequency",
+    "recurringNext": "Next recharge",
+    "recurringStatusACTIVE": "Automatic recharge is active.",
+    "recurringStatusPAUSED": "Automatic recharge is paused.",
+    "recurringStatusCANCELLED": "Automatic recharge is cancelled.",
+    "recurringPause": "Pause",
+    "recurringResume": "Resume",
+    "recurringCancel": "Cancel automatic recharge",
+    "recurringEnabled": "Automatic recharge enabled.",
+    "recurringPaused": "Automatic recharge paused.",
+    "recurringResumed": "Automatic recharge resumed.",
+    "recurringCancelled": "Automatic recharge cancelled.",
+    "recurringPaymentUnavailable":
+        "This card was not saved for automatic recharge. Complete a new card payment first, then enable automatic recharge.",
     "promo": "Promotion code",
     "apply": "Apply",
     "promotionApplied":

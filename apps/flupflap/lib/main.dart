@@ -96,6 +96,7 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
       guest: () => widget.session.guest,
       storedBillingCountry: () =>
           widget.session.user?['countryCode'] as String?,
+      updateStoredBillingCountry: widget.session.country,
     );
   }
 

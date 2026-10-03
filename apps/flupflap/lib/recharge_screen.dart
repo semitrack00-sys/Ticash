@@ -673,7 +673,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             ),
             for (final days in [7, 15, 30])
               ChoiceChip(
-                key: ValueKey('recurring-choice-' + days.toString()),
+                key: ValueKey('recurring-choice-$days'),
                 label: Text(context.ft('everyDays', {'days': days.toString()})),
                 selected: j.recurringIntervalDays == days,
                 onSelected: j.busy || j.locked
@@ -855,7 +855,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             context.ft('everyDays', {'days': recurring.intervalDays.toString()}),
           ),
           row('recurringNext', recurring.nextRunAt.toLocal().toString()),
-          Text(context.ft('recurringStatus' + recurring.status)),
+          Text(context.ft('recurringStatus${recurring.status}')),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,

@@ -52,17 +52,36 @@ if ! read -r x y < <(launcher_point FlupFlap); then
   exit 1
 fi
 fi
-adb shell screenrecord --time-limit 12 /sdcard/flupflap-startup.mp4 &
-record_pid=$!
-sleep 1
-if (( api >= 31 )); then
-  adb shell input tap "$x" "$y"
-else
-  # Before Android 12, a shell cold launch includes the full native splash.
-  adb shell am start -W -n com.ticash.flupflap/.MainActivity
+capture_startup() {
+  rm -f splash-capture/frames/*.png
+  adb shell screenrecord --time-limit 12 /sdcard/flupflap-startup.mp4 &
+  record_pid=$!
+  sleep 1
+  if (( api >= 31 )); then
+    adb shell input tap "$x" "$y"
+  else
+    # Before Android 12, a shell cold launch includes the full native splash.
+    adb shell am start -W -n com.ticash.flupflap/.MainActivity
+  fi
+  wait "$record_pid"
+  adb pull /sdcard/flupflap-startup.mp4 splash-capture/startup.mp4
+  adb exec-out screencap -p > splash-capture/login-native.png
+  ffmpeg -y -hide_banner -loglevel error -i splash-capture/startup.mp4 -vf fps=30 splash-capture/frames/%04d.png
+  /usr/bin/python3 apps/flupflap/tool/select_splash_frame.py
+}
+# A cold start on a shared CI emulator can miss the splash window, so retry
+# the pre-Android 12 shell launch from a clean process state.
+attempts=1
+if (( api < 31 )); then
+  attempts=3
 fi
-wait "$record_pid"
-adb pull /sdcard/flupflap-startup.mp4 splash-capture/startup.mp4
-adb exec-out screencap -p > splash-capture/login-native.png
-ffmpeg -hide_banner -loglevel error -i splash-capture/startup.mp4 -vf fps=30 splash-capture/frames/%04d.png
-/usr/bin/python3 apps/flupflap/tool/select_splash_frame.py
+for attempt in $(seq 1 "$attempts"); do
+  if capture_startup; then
+    exit 0
+  fi
+  echo "Splash capture attempt $attempt/$attempts failed" >&2
+  adb shell am force-stop com.ticash.flupflap
+  adb shell input keyevent KEYCODE_HOME
+  sleep 3
+done
+exit 1

@@ -489,7 +489,7 @@ class FlupFlapClient {
     }
     final data = object(
       (await dio.patch(
-        '/flupflap/recurring-recharges/' + Uri.encodeComponent(id),
+        '/flupflap/recurring-recharges/${Uri.encodeComponent(id)}',
         data: {'action': action},
       )).data,
     );

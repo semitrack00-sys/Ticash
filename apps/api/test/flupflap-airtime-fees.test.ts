@@ -54,6 +54,14 @@ describe('new FlupFlap airtime quotes',()=>{
     expect(f.submit).not.toHaveBeenCalled();
     expect((await f.repository.getQuote(owner,q.id))?.receiverQuote).toEqual(q.receiverQuote);
   });
+  it('exposes $1-$100 Reloadly range only to FlupFlap while TiCash keeps the $5 minimum',async()=>{
+    const f=fixture();
+    f.provider.getOperator=async()=>({...operator,denominationType:'RANGE',fixedAmounts:[],localFixedAmounts:[],minAmount:1,maxAmount:100});
+    const flupFlap=(await f.service.products('JM',77,undefined,owner)).products[0];
+    expect(flupFlap).toMatchObject({price:1,minimumAmount:1,maximumAmount:100,classification:'AIRTIME',amountType:'RANGE'});
+    const ticash=(await f.service.products('JM',77,undefined,'ticash-customer')).products[0];
+    expect(ticash).toMatchObject({price:5,minimumAmount:5,maximumAmount:100,classification:'AIRTIME',amountType:'RANGE'});
+  });
   it('uses the same FlupFlap schedule in sandbox without changing TiCash prices',async()=>{
     const f=fixture();
     expect(await f.service.createQuote(owner,input(5))).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});

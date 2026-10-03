@@ -66,6 +66,7 @@ export function createMobileTopUpRouter(options: {
   isGuest: (userId: string) => Promise<boolean>;
   supportedCountriesPath?: string;
   allowAndroidReturn?: boolean;
+  allowRecurring?: boolean;
   billingCountryForUser: (userId: string) => Promise<string | undefined>;
 }) {
   const router = express.Router();
@@ -85,12 +86,23 @@ export function createMobileTopUpRouter(options: {
     const key = req.header('idempotency-key');
     if (!key) throw new MobileTopUpError('IDEMPOTENCY_KEY_REQUIRED', 'An Idempotency-Key header is required', 400);
     const guest = await options.isGuest(req.userId!);
-    const paymentSchema = options.allowAndroidReturn ? purchaseSchema.extend({ returnTarget: z.literal('FLUPFLAP_ANDROID').optional() }) : purchaseSchema;
-    const guestSchema = options.allowAndroidReturn ? guestPaymentSessionSchema.extend({ returnTarget: z.literal('FLUPFLAP_ANDROID').optional() }) : guestPaymentSessionSchema;
+    const recurringInterval = z.union([z.literal(7), z.literal(15), z.literal(30)]).optional();
+    const paymentSchema = options.allowAndroidReturn
+      ? purchaseSchema.extend({
+          returnTarget: z.literal('FLUPFLAP_ANDROID').optional(),
+          ...(options.allowRecurring ? { recurringIntervalDays: recurringInterval } : {}),
+        })
+      : purchaseSchema;
+    const guestSchema = options.allowAndroidReturn
+      ? guestPaymentSessionSchema.extend({ returnTarget: z.literal('FLUPFLAP_ANDROID').optional() })
+      : guestPaymentSessionSchema;
     const parsed = guest ? guestSchema.parse(req.body) : paymentSchema.parse(req.body);
     const input = { quoteId: parsed.quoteId, ...(parsed.recipientId ? { recipientId: parsed.recipientId } : {}) };
     const requestBillingCountry = 'billingCountry' in parsed ? parsed.billingCountry as string | undefined : undefined;
     const androidReturn = 'returnTarget' in parsed && parsed.returnTarget === 'FLUPFLAP_ANDROID';
+    const recurringIntervalDays = 'recurringIntervalDays' in parsed
+      ? parsed.recurringIntervalDays as 7 | 15 | 30 | undefined
+      : undefined;
     // Guest billing country is session context only; permanent customers use their stored profile.
     const billingCountry = guest ? requestBillingCountry : await options.billingCountryForUser(req.userId!);
     res.status(201).json(await options.service.createPaymentSession(
@@ -99,7 +111,7 @@ export function createMobileTopUpRouter(options: {
       key,
       billingCountry,
       androidReturn,
-      options.allowAndroidReturn === true && !guest,
+      recurringIntervalDays,
     ));
   }));
 

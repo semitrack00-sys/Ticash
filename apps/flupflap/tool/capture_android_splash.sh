@@ -7,8 +7,7 @@ mkdir -p splash-capture/frames
 adb install -r "$apk"
 adb shell svc wifi disable
 adb shell svc data disable
-adb shell settings put global airplane_mode_on 1
-adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true
+adb shell cmd connectivity airplane-mode enable
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 adb shell am force-stop com.ticash.flupflap

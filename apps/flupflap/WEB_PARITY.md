@@ -75,3 +75,18 @@ Recovery screenshots are optional widget-test artifacts outside the repository, 
 Validation: 796/796 API tests, 106/106 FlupFlap tests, 76/76 shared-mobile tests; FlupFlap analysis, backend typecheck/lint/build, Prisma schema validation and diff-check passed. The first concurrent full API run hit five-second timeouts in the unchanged guest-proxy/password-recovery tests; the full suite passed when rerun without competing builds. No tests were skipped or timeouts changed.
 
 Debug APK build passed with `FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api`. Local Android user-cache configuration and cleaning stale generated SDK dependency paths were needed; no Gradle, SDK-version or signing-source changes were made. Existing Gradle/AGP/Kotlin future-support warnings remain. APK: `apps/flupflap/build/app/outputs/flutter-apk/app-debug.apk` (ignored QA artifact, not committed or installed).
+
+## Automatic abandoned-reservation cleanup
+
+Baseline: merged PR #94, `00e24ac9e54639c5584fb218d15cf43542e96c7f`.
+Branch: `codex/flupflap-auto-clear-abandoned-pending`.
+
+Startup and Recharge entry now fetch history and authoritatively refresh every unresolved record. A refreshed PENDING/PENDING reservation is a cleanup candidate only when paymentSessionId, paymentProviderTransactionId, paymentStartedAt, paymentAuthorizationId, providerTransactionId, fulfillmentStartedAt and paymentRecoveryCode are absent. Active in-memory attempts and resume capabilities retain their existing recovery flow.
+
+Automatic cleanup uses authenticated, owner-scoped `POST /transactions/:id/cancel-abandoned`. The server repeats the predicate and uses the existing cancellation/payment-operation claim to compete atomically with payment creation. It cannot expire a hosted session or call a payment/fulfillment provider. The separate endpoint deliberately fails closed against an older backend; this API change must be released through the normal process before the app can automatically clear orphans. Explicit customer cancellation retains its existing safeguards and endpoint.
+
+Only a matching FAILED/FAILED response with CANCELLED_BY_CUSTOMER confirms cleanup. History is updated, stale checkout/result/form state is cleared, and Destination appears without an intermediate recovery page. All pending records are checked, even when a genuine payment appears first. Any remaining payment activity, unknown state, failed refresh, or unconfirmed cancellation keeps recovery locked. Check status retries the same authoritative history reconciliation.
+
+Regression coverage includes all seven activity/uncertainty markers, genuine SESSION_CREATED, refresh/cancel/history failures, terminal history, both orderings of mixed pending records, the payment-creation race, endpoint ownership, and Home Send a recharge/bottom Recharge navigation. Destination UI is covered at 360/375/390/412/430px; existing larger-screen and text-scaling coverage remains.
+
+Validation: 805/805 API tests, 129/129 FlupFlap tests, 76/76 shared-mobile tests; both Flutter analyzers, backend typecheck/lint/build, Prisma validation and diff-check passed. Tests use local fixtures. Physical-device restart/network/return QA remains unperformed. No real payment, recharge, refund, SMS, deployment, production-record change or migration was performed.

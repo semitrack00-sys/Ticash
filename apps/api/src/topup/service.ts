@@ -1303,11 +1303,20 @@ export class MobileTopUpService {
     return { scanned: candidates.length, resolved, pending, errors };
   }
 
-  async cancelTransaction(userId: string, id: string) {
+  async cancelTransaction(userId: string, id: string, onlyIfAbandoned = false) {
     this.assertEnabled();
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     this.assertTransactionEnvironment(record);
+
+    // Automatic cleanup must never expire a hosted session. Recheck the full
+    // predicate here: the client snapshot may predate payment dispatch.
+    if (onlyIfAbandoned && (record.status !== 'PENDING' || record.paymentStatus !== 'PENDING' ||
+        record.paymentSessionId || record.paymentProviderTransactionId || record.paymentStartedAt ||
+        record.paymentAuthorizationId || record.providerTransactionId || record.fulfillmentStartedAt ||
+        record.paymentRecoveryCode)) {
+      throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Reservation is not provably abandoned', 409);
+    }
 
     const cancellable =
       record.status === 'PENDING' &&

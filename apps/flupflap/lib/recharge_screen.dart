@@ -148,9 +148,11 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         }
         return;
       }
-      if (!j.initialized && !j.busy) await j.initialize();
+      final needsInitialization = !j.initialized;
+      if (needsInitialization && !j.busy) await j.initialize();
       if (!mounted) return;
-      if (!widget.history) j.enterRecharge();
+      if (!widget.history && !needsInitialization) await j.enterRecharge();
+      if (!mounted) return;
       phone.text = j.phone;
       amount.text = j.amount;
       nickname.text = j.nickname;
@@ -166,9 +168,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   void didUpdateWidget(covariant RechargeJourneyScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.history && !widget.history && !widget.returnOnly) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (mounted) {
-          j.enterRecharge();
+          await j.enterRecharge();
+          if (!mounted) return;
           phone.text = j.phone;
           amount.text = j.amount;
           nickname.text = j.nickname;

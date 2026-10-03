@@ -37,6 +37,7 @@ const terms = {
 class CatalogAdapter extends FixtureAdapter {
   String transactionStatus = 'PENDING';
   bool unavailable = false, includeHistory = false;
+  String? pendingPaymentStatus, failureCode;
   final saved = <Map<String, dynamic>>[
     {...recipient},
   ];
@@ -50,7 +51,8 @@ class CatalogAdapter extends FixtureAdapter {
         ? 'REFUNDED'
         : transactionStatus == 'FAILED'
         ? 'FAILED'
-        : 'AUTHORIZED',
+        : pendingPaymentStatus ?? 'AUTHORIZED',
+    if (failureCode != null) 'failureCode': failureCode,
     'testMode': true,
     'createdAt': '2026-09-30T12:00:00Z',
   };
@@ -83,7 +85,11 @@ class CatalogAdapter extends FixtureAdapter {
         },
       );
     }
-    if (o.path.endsWith('/status')) {
+    if (o.path.endsWith('/cancel-abandoned')) {
+      transactionStatus = 'FAILED';
+      failureCode = 'CANCELLED_BY_CUSTOMER';
+      data = {'transaction': transaction};
+    } else if (o.path.endsWith('/status')) {
       data = {
         'enabled': true,
         'paymentMode': 'MOCK',
@@ -608,6 +614,43 @@ void main() {
     },
   );
 
+  for (final fromHome in [true, false]) {
+    testWidgets(
+      'orphan cleanup opens Destination from ${fromHome ? 'Home Send recharge' : 'bottom Recharge'}',
+      (tester) async {
+        final (_, adapter) = await app(tester, 390, status: 'PENDING');
+        adapter.pendingPaymentStatus = 'PENDING';
+        await tap(
+          tester,
+          fromHome
+              ? find.text('Send a recharge')
+              : find.widgetWithText(NavigationDestination, 'Recharge'),
+        );
+        expect(find.text('Country'), findsOneWidget);
+        expect(find.text('Pending payment'), findsNothing);
+        expect(
+          adapter.requests
+              .where((r) => r.path.endsWith('/cancel-abandoned'))
+              .length,
+          1,
+        );
+        await tap(tester, find.widgetWithText(NavigationDestination, 'Home'));
+        await tap(
+          tester,
+          find.widgetWithText(NavigationDestination, 'Recharge'),
+        );
+        expect(find.text('Country'), findsOneWidget);
+        expect(find.text('Pending payment'), findsNothing);
+        expect(
+          adapter.requests
+              .where((r) => r.path.endsWith('/cancel-abandoned'))
+              .length,
+          1,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   testWidgets(
     'catalog errors stay visible and retry never bypasses availability',
     (tester) async {

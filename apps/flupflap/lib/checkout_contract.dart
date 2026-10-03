@@ -185,6 +185,20 @@ class RechargeResult {
   final Map<String, dynamic> data;
   String get status => data['status'] as String;
   String get paymentStatus => data['paymentStatus'] as String;
+  // Only a refreshed authenticated record is a candidate. The server repeats
+  // this check and atomically competes with payment creation before cancelling.
+  bool get abandonedReservation =>
+      status == 'PENDING' &&
+      paymentStatus == 'PENDING' &&
+      [
+        'paymentSessionId',
+        'paymentProviderTransactionId',
+        'paymentStartedAt',
+        'paymentAuthorizationId',
+        'providerTransactionId',
+        'fulfillmentStartedAt',
+        'paymentRecoveryCode',
+      ].every((key) => data[key] == null);
   bool get terminal =>
       (status == 'DELIVERED' && paymentStatus == 'CAPTURED') ||
       (['FAILED', 'REFUNDED'].contains(status) &&
@@ -321,11 +335,14 @@ class FlupFlapClient {
       )['transaction'],
     ),
   );
-  Future<RechargeResult> cancelTransaction(String id) async => RechargeResult(
+  Future<RechargeResult> cancelTransaction(
+    String id, {
+    bool onlyIfAbandoned = false,
+  }) async => RechargeResult(
     object(
       object(
         (await dio.post(
-          '$base/transactions/${Uri.encodeComponent(id)}/cancel',
+          '$base/transactions/${Uri.encodeComponent(id)}/${onlyIfAbandoned ? 'cancel-abandoned' : 'cancel'}',
         )).data,
       )['transaction'],
     ),

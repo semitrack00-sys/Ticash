@@ -855,6 +855,7 @@ model FlupFlapRecurringRecharge {
   nextRunAt DateTime
   pendingOccurrenceAt DateTime?
   pendingQuoteId String?
+  claimedAt DateTime?
   lastTransactionId String?
   lastRunAt DateTime?
   failureCode String?
@@ -864,6 +865,7 @@ model FlupFlapRecurringRecharge {
 
   @@index([status, nextRunAt])
   @@index([customerId, createdAt])
+  @@unique([customerId, sourceTransactionId])
 }
 
 enum PromotionCampaignStatus {

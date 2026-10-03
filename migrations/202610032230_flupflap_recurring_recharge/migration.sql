@@ -13,6 +13,7 @@ CREATE TABLE "FlupFlapRecurringRecharge" (
   "nextRunAt" TIMESTAMP(3) NOT NULL,
   "pendingOccurrenceAt" TIMESTAMP(3),
   "pendingQuoteId" TEXT,
+  "claimedAt" TIMESTAMP(3),
   "lastTransactionId" TEXT,
   "lastRunAt" TIMESTAMP(3),
   "failureCode" TEXT,
@@ -32,3 +33,6 @@ CREATE INDEX "FlupFlapRecurringRecharge_status_nextRunAt_idx"
   ON "FlupFlapRecurringRecharge"("status","nextRunAt");
 CREATE INDEX "FlupFlapRecurringRecharge_customerId_createdAt_idx"
   ON "FlupFlapRecurringRecharge"("customerId","createdAt");
+
+CREATE UNIQUE INDEX "FlupFlapRecurringRecharge_customerId_sourceTransactionId_key"
+  ON "FlupFlapRecurringRecharge"("customerId","sourceTransactionId");

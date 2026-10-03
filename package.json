@@ -8,6 +8,7 @@
     "packages/shared"
   ],
   "scripts": {
+    "dtone:verify": "node apps/api/dist/topup/dtone-diagnostic-cli.js",
     "dev:api": "npm run dev --workspace @ticash/api",
     "build": "npm run build --workspace @ticash/shared && npm run build --workspace @ticash/api",
     "typecheck": "npm run typecheck --workspace @ticash/shared && npm run typecheck --workspace @ticash/api",

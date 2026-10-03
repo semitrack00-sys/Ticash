@@ -8,10 +8,10 @@ const config = { enabled: true, baseUrl: DTONE_PREPROD_URL, apiKey: 'fixture-key
 const operator = { id: 255, name: 'Test Jamaica operator', country: { iso_code: 'JAM', name: 'Jamaica' } };
 function product() { return { id: 56876, name: 'Fixed fixture product', type: 'FIXED_VALUE_RECHARGE', operator,
   service: { id: 1, subservice: { id: 11 } }, source: { amount: 5, unit: 'USD', unit_type: 'CURRENCY' },
-  destination: { amount: 800, unit: 'JMD', unit_type: 'CURRENCY' }, prices: { wholesale: { amount: 5, fee: 0, unit: 'USD' } },
+  destination: { amount: 800, unit: 'JMD', unit_type: 'CURRENCY' }, prices: { wholesale: { amount: 5, fee: 0, unit: 'USD', unit_type: 'CURRENCY' } },
   required_credit_party_identifier_fields: [['mobile_number']], required_additional_identifier_fields: null,
   required_beneficiary_fields: null, required_debit_party_identifier_fields: null, required_sender_fields: null, required_statement_identifier_fields: null }; }
-function result(status = 'COMPLETED') { return { id: 1234567890, status: { class: { message: status }, message: status }, source: { amount: 5, unit: 'USD' }, product: { id: 56876 } }; }
+function result(status = 'COMPLETED') { return { id: 1234567890, status: { class: { message: status }, message: status }, prices: { wholesale: { amount: 5, fee: 0, unit: 'USD', unit_type: 'CURRENCY' } }, product: { id: 56876 } }; }
 function response(value: unknown, headers: Record<string, string> = {}) { return new Response(JSON.stringify(value), { status: 200, headers }); }
 const input: ProviderTopUpRequest = { provider: 'DTONE', providerProductId: '56876', productId: 'dtone:JM:700000255:product:56876', operatorId: 255, amount: 5, providerCurrency: 'USD', recipientPhone: '+18765551234', recipientCountryCode: 'JM', customIdentifier: 'ticash-topup-11111111-1111-4111-8111-111111111111' };
 beforeEach(() => vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Real network forbidden during DT One tests'); })));
@@ -79,10 +79,48 @@ describe('DT One pre-production contract', () => {
   });
   it('looks up only an explicitly identified operator, preserving manual selection otherwise', async () => {
     const fetcher = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
-      expect(JSON.parse(String(init?.body))).toEqual({ mobile_number: '+18765551234' }); return response([{ ...operator, identified: true }]);
+      expect(JSON.parse(String(init?.body))).toEqual({ mobile_number: '+18765551234', page: 1, per_page: 100 }); return response([{ ...operator, identified: true }]);
     });
     expect((await new DtOnePreproductionProvider(config, fetcher).detectOperator('+18765551234', 'JM')).id).toBe(255);
     await expect(new DtOnePreproductionProvider(config, vi.fn(async () => response([{ ...operator, identified: false }]))).detectOperator('+18765551234', 'JM')).rejects.toMatchObject({ code: 'TOPUP_OPERATOR_UNAVAILABLE' });
+  });
+  it('paginates mobile lookup in the JSON body without query parameters', async () => {
+    const fetcher = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      expect(String(url)).toBe(`${DTONE_PREPROD_URL}/lookup/mobile-number`);
+      expect(init?.method).toBe('POST');
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({ mobile_number: input.recipientPhone, per_page: 100, page: fetcher.mock.calls.length });
+      return response([{ ...operator, id: body.page === 1 ? 254 : 255, identified: body.page === 2 }], { 'X-Total-Pages': '2' });
+    });
+    expect((await new DtOnePreproductionProvider(config, fetcher).detectOperator(input.recipientPhone, 'JM')).id).toBe(255);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it('omits nullable/unknown subservices and malformed identifier or price declarations', () => {
+    for (const patch of [
+      { service: { id: 1, subservice: null } }, { service: { id: 1, subservice: { id: '11' } } },
+      { required_credit_party_identifier_fields: null }, { required_credit_party_identifier_fields: [['mobile_number'], []] },
+      { required_credit_party_identifier_fields: [['mobile_number'], [null]] },
+      { prices: { wholesale: { amount: 5, fee: 0, unit: 'USD', unit_type: 'POINTS' } } },
+    ]) expect(mapDtOneProduct({ ...product(), ...patch }, 'JM', 255)).toBeUndefined();
+  });
+  it('reads transaction wholesale price without treating request destination or catalog estimates as confirmed delivery', async () => {
+    const value = { ...result(), source: { amount: 999, unit: 'USD' }, destination: { amount: 800, unit: 'JMD', unit_type: 'CURRENCY' } };
+    const actual = await new DtOnePreproductionProvider(config, vi.fn(async () => response(value))).getTopUpStatus('1234567890');
+    expect(actual).toMatchObject({ status: 'COMPLETED', requestedAmount: 5, requestedAmountCurrencyCode: 'USD' });
+    expect(actual.deliveredAmount).toBeUndefined();
+    expect(actual.deliveredAmountCurrencyCode).toBeUndefined();
+    await expect(new DtOnePreproductionProvider(config, vi.fn(async () => response({ ...result(), prices: { wholesale: { amount: -1, unit: 'USD', unit_type: 'CURRENCY' } } }))).getTopUpStatus('1234567890')).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' });
+  });
+  it('reconciles by the same hashed external_id using GET only and rejects ambiguous matches', async () => {
+    const externalId = createHash('sha256').update(input.customIdentifier).digest('hex').slice(0, 40);
+    const fetcher = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      expect(parsed.pathname).toBe('/v1/transactions'); expect(parsed.searchParams.get('external_id')).toBe(externalId);
+      expect(init?.method).toBe('GET'); expect(init?.body).toBeUndefined();
+      return response([{ ...result('SUBMITTED'), external_id: externalId }]);
+    });
+    expect(await new DtOnePreproductionProvider(config, fetcher).findTopUpByCustomIdentifier(input.customIdentifier)).toMatchObject({ status: 'SUBMITTED' });
+    await expect(new DtOnePreproductionProvider(config, vi.fn(async () => response([{ ...result(), external_id: externalId }, { ...result(), id: 99, external_id: externalId }]))).findTopUpByCustomIdentifier(input.customIdentifier)).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' });
   });
   it('submits the quoted product and E.164 number with a deterministic <=40-character external ID', async () => {
     const expectedId = createHash('sha256').update(input.customIdentifier).digest('hex').slice(0, 40);

@@ -34,7 +34,8 @@ function supportsRequiredFields(raw: Doc) {
   if (requiredSections.some(key => !Object.hasOwn(raw, key) || !(raw[key] === null || (Array.isArray(raw[key]) && raw[key].length === 0)))) return false;
   if (Object.keys(raw).some(key => key.startsWith('required_') && ![...requiredSections, 'required_credit_party_identifier_fields'].includes(key))) return false;
   const credit = raw.required_credit_party_identifier_fields;
-  return credit === null || (Array.isArray(credit) && credit.some(group => Array.isArray(group) && group.length === 1 && group[0] === 'mobile_number'));
+  return Array.isArray(credit) && credit.every(group => Array.isArray(group) && group.length > 0 && group.every(field => typeof field === 'string' && field.length > 0)) &&
+    credit.some(group => group.length === 1 && group[0] === 'mobile_number');
 }
 function productMetadata(raw: Doc): Pick<MobileTopUpProduct, 'description' | 'benefits' | 'validity'> {
   const result: Pick<MobileTopUpProduct, 'description' | 'benefits' | 'validity'> = {};
@@ -59,7 +60,9 @@ function productMetadata(raw: Doc): Pick<MobileTopUpProduct, 'description' | 'be
 export function mapDtOneProduct(value: unknown, country: string, operatorId: number): MobileTopUpProduct | undefined {
   const raw = doc(value);
   const service = doc(raw.service);
-  if (service.id !== 1 || ![11, 12, 13].includes(Number(doc(service.subservice).id)) || raw.type !== 'FIXED_VALUE_RECHARGE') return undefined;
+  if (service.id !== 1 || raw.type !== 'FIXED_VALUE_RECHARGE' || service.subservice == null) return undefined;
+  const subservice = doc(service.subservice).id;
+  if (typeof subservice !== 'number' || ![11, 12, 13].includes(subservice)) return undefined;
   const operator = mapOperator(raw.operator);
   if (operator.id !== operatorId || operator.countryCode !== country) return invalid();
   const id = positiveId(raw.id);
@@ -70,7 +73,7 @@ export function mapDtOneProduct(value: unknown, country: string, operatorId: num
   if (source.unit_type !== 'CURRENCY' || source.unit !== 'USD' || typeof source.amount !== 'number' ||
       !Number.isFinite(source.amount) || source.amount <= 0 || Math.abs(source.amount * 100 - Math.round(source.amount * 100)) > 1e-7) return undefined;
   const wholesale = doc(doc(raw.prices).wholesale);
-  if (wholesale.unit !== 'USD' || wholesale.amount !== source.amount || wholesale.fee !== 0) return undefined;
+  if (wholesale.unit_type !== 'CURRENCY' || wholesale.unit !== 'USD' || wholesale.amount !== source.amount || wholesale.fee !== 0) return undefined;
   const destination = doc(raw.destination);
   const currencyDestination = destination.unit_type === 'CURRENCY' && typeof destination.unit === 'string' && /^[A-Z]{3}$/.test(destination.unit);
   const deliveredValue = currencyDestination && typeof destination.amount === 'number' && Number.isFinite(destination.amount) && destination.amount >= 0 ? destination.amount : undefined;
@@ -85,14 +88,15 @@ function transaction(value: unknown): ProviderTopUpResult {
   const raw = doc(value); const id = positiveId(raw.id); const status = doc(raw.status);
   const statusClass = name(doc(status.class).message).toUpperCase();
   if (!['CREATED', 'CONFIRMED', 'SUBMITTED', 'COMPLETED', 'REJECTED', 'DECLINED', 'CANCELLED', 'REVERSED'].includes(statusClass)) return invalid();
-  const source = raw.source ? doc(raw.source) : undefined;
-  const destination = raw.destination ? doc(raw.destination) : undefined;
+  // Fixed transaction responses report the charge in prices.wholesale;
+  // top-level source/destination are request-only fields for ranged products.
+  const source = raw.prices == null ? undefined : doc(doc(raw.prices).wholesale);
+  if (source && (source.unit_type !== 'CURRENCY' || typeof source.amount !== 'number' || !Number.isFinite(source.amount) || source.amount < 0 ||
+      typeof source.unit !== 'string' || !/^[A-Z]{3}$/.test(source.unit))) return invalid();
   return { transactionId: String(id), status: statusClass, rawStatus: name(status.message),
     operatorTransactionId: typeof raw.operator_reference === 'string' ? raw.operator_reference : undefined,
     requestedAmount: typeof source?.amount === 'number' ? source.amount : 0,
-    requestedAmountCurrencyCode: typeof source?.unit === 'string' ? source.unit : '',
-    deliveredAmount: destination?.unit_type === 'CURRENCY' && typeof destination.amount === 'number' && Number.isFinite(destination.amount) ? destination.amount : undefined,
-    deliveredAmountCurrencyCode: destination?.unit_type === 'CURRENCY' && typeof destination.unit === 'string' ? destination.unit : undefined };
+    requestedAmountCurrencyCode: typeof source?.unit === 'string' ? source.unit : '' };
 }
 
 export class DtOnePreproductionProvider implements MobileTopUpProvider {
@@ -119,11 +123,14 @@ export class DtOnePreproductionProvider implements MobileTopUpProvider {
     try { value = await response.json(); } catch { return invalid(); }
     return { value, headers: response.headers };
   }
-  private async pages(path: string, query: Record<string, string>, body?: unknown) {
+  private async pages(path: string, query: Record<string, string>, body?: Doc) {
     const values: unknown[] = []; const seen = new Set<string>();
     for (let page = 1; page <= 1000; page++) {
       const params = new URLSearchParams({ ...query, page: String(page), per_page: '100' });
-      const { value, headers } = await this.request(`${path}?${params}`, body);
+      // Lookup's pagination is in its JSON body, unlike GET catalog endpoints.
+      const { value, headers } = body === undefined
+        ? await this.request(`${path}?${params}`)
+        : await this.request(path, { ...body, page, per_page: 100 });
       if (!Array.isArray(value)) return invalid();
       const fingerprint = JSON.stringify(value);
       if (value.length && seen.has(fingerprint)) return invalid();

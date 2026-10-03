@@ -198,6 +198,75 @@ A product must explicitly declare requirements compatible with the mobile number
 TiCash supplies. Unknown or absent requirements fail closed. Non-monetary data
 allowances are not mislabeled as a delivered currency amount.
 
+### DT One read-only pre-production verification
+
+Run from the repository root after `npm ci` and `npm run build`, with server secrets
+already in the process environment. The CLI uses the compiled backend and needs
+no development-time TypeScript runner:
+
+```sh
+npm run dtone:verify
+npm run dtone:verify -- --country=JM
+npm run dtone:verify -- --coverage --compare-reloadly
+```
+
+The CLI does not load `.env` files, start the API, or initialize a database. Set
+`DTONE_ENABLED=true`, `DTONE_API_KEY`, `DTONE_API_SECRET`, and the exact
+`DTONE_BASE_URL=https://preprod-dvs-api.dtone.com/v1` in the backend secret store.
+The existing `MOBILE_TOPUP_ENABLED=true` is required. Leave active Reloadly
+configuration untouched. Keep `MOBILE_TOPUP_PRODUCTION_ENABLED`,
+`MOBILE_TOPUP_APPROVED_FOR_LIVE_USE`, `APPROVED_FOR_LIVE_USE`, and
+`LIVE_MONEY_ENABLED` false. No Render configuration or deployment is performed by
+this script. The committed DT One default remains disabled.
+
+The authenticated countries GET is the authentication test. By default the CLI
+fetches that catalog, Haiti's operator catalog, and the lowest-ID operator's
+product catalog, including their pages. A separate transport allowlist admits
+only GET countries/operators/products on the exact pre-production origin;
+redirects, lookup, transaction reads/writes and unknown query fields are rejected.
+A 250-request ceiling bounds the diagnostic. It never submits or confirms a
+transaction. The optional Reloadly comparison reads only its sandbox country
+catalog, using its existing credentials and OAuth endpoint; it changes no settings.
+
+Output contains only local error codes, country ISO codes, booleans and counts.
+Credentials, Authorization, phone numbers, names, IDs and raw provider documents
+are not printed. A failed run exits nonzero. `connected` means country discovery
+authenticated successfully; `complete` also requires all requested sample and
+comparison reads to succeed. Missing credentials or failed catalogs leave unknown
+counts null/absent, never zero-filled claims of coverage.
+
+`--coverage` samples HT, DO, JM, US, FR and BR. `countryCount` counts raw country
+rows; `validCountryCount` deduplicates ISO-2 destinations supported by
+libphonenumber. The comparison reports distinct valid DT One-only and overlapping
+country counts only when both catalogs succeed. Each sample reports the operator
+count and raw/eligible product counts for **one** deterministic operator, not the
+whole country. Catalog presence does not guarantee a purchasable product, account
+funding or live availability. No real coverage is asserted by mocked tests.
+
+Contract audit (official DT One reference, checked 2026-10-03):
+
+| Endpoint | Contract retained/verified |
+| --- | --- |
+| [GET countries](https://developers.dtone.com/reference/getcountries) | Basic key:secret; service_id=1; ISO alpha-3 response; GET page/per_page and X-Total-Pages/X-Next-Page |
+| [GET operators](https://developers.dtone.com/reference/getoperators), [GET operators/:id](https://developers.dtone.com/reference/getoperatorbyid) | country_iso_code/service_id filters; exact numeric operator identity |
+| [POST lookup/mobile-number](https://developers.dtone.com/reference/postlookupmobilenumber) | mobile_number, page and per_page in JSON body; identified operator required; no query pagination |
+| [GET products](https://developers.dtone.com/reference/getproducts), [GET products/:id](https://developers.dtone.com/reference/getproductbyid) | operator/country/service filters; fixed source/destination; wholesale CURRENCY; explicit compatible identifier alternatives; nullable subservice omitted |
+| [POST async/transactions](https://developers.dtone.com/reference/posttransactionasync) | exact product_id, deterministic external_id, E.164 credit_party_identifier; auto_confirm=true intentionally retains one-step submission; tested only with mocks |
+| [GET transactions/:id](https://developers.dtone.com/reference/gettransactionbyid), [GET transactions?external_id](https://developers.dtone.com/reference/gettransactions) | exact identity and hashed reference; authoritative status class; fixed transaction charge from prices.wholesale |
+
+Top-level transaction source/destination are write-only ranged request fields,
+not authoritative fixed-product delivery evidence. They no longer populate
+confirmed receiver amounts. COMPLETED still maps to DELIVERED, but a catalog
+estimate, requested value, or calculated benefit/rate cannot set
+`receiverValueConfirmed` or trigger an amount-bearing receiver SMS. A documented
+authoritative delivered-currency mapping is required before those notifications
+can be enabled for DT One. Unknown statuses fail closed. Other status mappings,
+payment recovery and exact-product binding below are unchanged.
+
+Live connectivity, actual HT/DO/JM/US/FR/BR counts, and real mobile lookup remain
+unverified until authorized pre-production credentials and a provider-approved
+test number are available. Never use a customer number for diagnostic lookup.
+
 ### Immutable provider identity and recovery
 
 Global operator IDs use slots of 700000000: Reloadly 0, DT One 1, DING 2. Raw IDs
@@ -285,7 +354,7 @@ DING_OAUTH_TOKEN_URL=https://idp.ding.com/connect/token
 DING_API_BASE_URL=https://api.dingconnect.com/api/V1
 ```
 
-The existing router orders Reloadly, optional DT One, then optional Ding. No provider
+The existing router orders optional DT One, Reloadly, then optional Ding. No provider
 namespace or database migration changes are needed. Ding's string ProviderCode is
 converted losslessly to a positive raw integer (bijective base 63 over ASCII digits,
 uppercase and lowercase letters), then passed to the existing DING slot helper.

@@ -230,6 +230,29 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     super.dispose();
   }
 
+  Future<void> confirmRecurring(String transactionId, int days) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(context.ft('recurringTitle')),
+        content: Text(context.ft('recurringConsent', {'days': '$days'})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(context.ft('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(context.ft('recurringConfirm')),
+          ),
+        ],
+      ),
+    );
+    if (approved == true && mounted) {
+      await j.enableRecurring(transactionId, days);
+    }
+  }
+
   Future<void> openCheckout() async {
     try {
       await NativeActions.checkout(j.hosted!.url);
@@ -721,6 +744,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         ].contains(r.displayState)
         ? r.displayState
         : 'unknownState';
+    final recurring = r.id == null ? null : j.recurringFor(r.id!);
     final reason = switch (d['failureReason'] ?? d['failureCode']) {
       'INSUFFICIENT_FUNDS' => 'insufficientFunds',
       'PAYMENT_DECLINED' => 'paymentDeclined',
@@ -788,6 +812,76 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           DateTime.parse(d['createdAt'] as String).toLocal().toString(),
         ),
       if (reason != null) Text(context.ft(reason)),
+      if (r.status == 'DELIVERED' &&
+          r.paymentStatus == 'CAPTURED' &&
+          r.id != null &&
+          !j.guest() &&
+          j.availability?.recurringRechargeEnabled == true) ...[
+        const Divider(),
+        Text(
+          context.ft('recurringTitle'),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(context.ft('recurringHelp')),
+        const SizedBox(height: 12),
+        if (recurring == null)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final days in [7, 15, 30])
+                OutlinedButton.icon(
+                  key: ValueKey('recurring-' + days.toString()),
+                  onPressed: j.busy
+                      ? null
+                      : () => confirmRecurring(r.id!, days),
+                  icon: const Icon(Icons.autorenew_rounded),
+                  label: Text(context.ft('everyDays', {'days': days.toString()})),
+                ),
+            ],
+          )
+        else ...[
+          row(
+            'recurringFrequency',
+            context.ft('everyDays', {'days': recurring.intervalDays.toString()}),
+          ),
+          row(
+            'recurringNext',
+            recurring.nextRunAt.toLocal().toString(),
+          ),
+          Text(context.ft('recurringStatus' + recurring.status)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (recurring.status == 'ACTIVE')
+                OutlinedButton(
+                  onPressed: j.busy
+                      ? null
+                      : () => j.updateRecurring(recurring.id, 'PAUSE'),
+                  child: Text(context.ft('recurringPause')),
+                ),
+              if (recurring.status == 'PAUSED')
+                FilledButton.tonal(
+                  onPressed: j.busy
+                      ? null
+                      : () => j.updateRecurring(recurring.id, 'RESUME'),
+                  child: Text(context.ft('recurringResume')),
+                ),
+              OutlinedButton(
+                onPressed: j.busy
+                    ? null
+                    : () => j.updateRecurring(recurring.id, 'CANCEL'),
+                child: Text(context.ft('recurringCancel')),
+              ),
+            ],
+          ),
+        ],
+      ],
       if (!r.terminal) Text(context.ft('pendingNotice')),
       if (!historical) button('refresh', j.busy ? null : j.refresh),
       if (!historical && !r.terminal && j.hosted != null)

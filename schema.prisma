@@ -626,6 +626,7 @@ model MobileTopUpTransaction {
   paymentProviderTransactionId String?
   checkoutResumeTokenHash String? @unique
   checkoutResumeTokenExpiresAt DateTime?
+  recurringIntervalDays Int?
   paymentStartedAt      DateTime?
   fulfillmentStartedAt  DateTime?
   recoveryStartedAt     DateTime?

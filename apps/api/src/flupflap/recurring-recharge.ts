@@ -157,7 +157,68 @@ export class FlupFlapRecurringRechargeService {
     return publicSchedule(row);
   }
 
+  async activateEligibleTransactions(limit = 25) {
+    const rows = await this.db.mobileTopUpTransaction.findMany({
+      where: {
+        flupFlapCustomerId: { not: null },
+        recurringIntervalDays: { in: [7, 15, 30] },
+        status: 'DELIVERED',
+        paymentStatus: 'CAPTURED',
+        paymentProvider: 'STRIPE',
+      },
+      orderBy: { deliveredAt: 'asc' },
+      take: Math.max(1, Math.min(100, limit)),
+    });
+    let activated = 0;
+    for (const transaction of rows) {
+      if (!transaction.flupFlapCustomerId || !transaction.recurringIntervalDays) continue;
+      const exists = await this.db.flupFlapRecurringRecharge.findUnique({
+        where: {
+          customerId_sourceTransactionId: {
+            customerId: transaction.flupFlapCustomerId,
+            sourceTransactionId: transaction.id,
+          },
+        },
+      });
+      if (exists) continue;
+      const customer = await this.identities.customer(transaction.flupFlapCustomerId);
+      if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' ||
+          !/^[A-Z]{2}$/.test(customer.countryCode ?? '')) continue;
+      const owner = flupFlapOwner(transaction.flupFlapCustomerId);
+      try {
+        const binding = await this.topups.savedRecurringPaymentMethod(owner, transaction.id);
+        const base = transaction.deliveredAt ?? transaction.updatedAt;
+        const row = await this.db.flupFlapRecurringRecharge.create({
+          data: {
+            customerId: transaction.flupFlapCustomerId,
+            sourceTransactionId: transaction.id,
+            intervalDays: transaction.recurringIntervalDays,
+            status: 'ACTIVE',
+            maxTotalUsd: transaction.totalChargeUsd,
+            stripeCustomerId: binding.customerId,
+            stripePaymentMethodId: binding.paymentMethodId,
+            billingCountry: customer.countryCode!,
+            nextRunAt: nextOccurrence(base, transaction.recurringIntervalDays, this.clock()),
+          },
+        });
+        await this.audit(owner, 'FLUPFLAP_RECURRING_RECHARGE_ENABLED', 'FlupFlapRecurringRecharge', row.id, {
+          intervalDays: transaction.recurringIntervalDays,
+          sourceTransactionId: transaction.id,
+          maxTotalUsd: Number(transaction.totalChargeUsd),
+          source: 'CHECKOUT_CONSENT',
+        });
+        activated++;
+      } catch (error) {
+        await this.audit(owner, 'FLUPFLAP_RECURRING_RECHARGE_SETUP_FAILED', 'MobileTopUpTransaction', transaction.id, {
+          reason: error instanceof MobileTopUpError ? error.code : 'RECURRING_SETUP_FAILED',
+        });
+      }
+    }
+    return activated;
+  }
+
   async runDue(limit = 25) {
+    const activated = await this.activateEligibleTransactions(limit);
     const now = this.clock();
     const staleClaim = new Date(now.getTime() - 10 * 60_000);
     const due = await this.db.flupFlapRecurringRecharge.findMany({
@@ -281,6 +342,6 @@ export class FlupFlapRecurringRechargeService {
         if (terminal) paused++; else pending++;
       }
     }
-    return { scanned: due.length, completed, paused, pending };
+    return { activated, scanned: due.length, completed, paused, pending };
   }
 }

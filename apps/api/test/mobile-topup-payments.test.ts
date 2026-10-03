@@ -787,7 +787,8 @@ describe('Stripe sandbox flow',()=>{
     expect(handoff.headers['content-security-policy']).toContain("default-src 'none'");
     expect(handoff.text).toContain('package=com.ticash.flupflap;end');
     expect(handoff.text).toContain('https://www.flupflap.com/?checkoutResumeToken=');
-    expect(handoff.text).not.toContain('<script');
+    expect(handoff.text).toContain('window.location.assign(openApp.href)');
+    expect(handoff.text).not.toMatch(/<script[^>]+src=/);
     const resumed = await request(f.app).post('/api/flupflap/mobile-topups/checkout-resume').send({ resumeToken: token }).expect(200);
     expect(resumed.body.transaction.paymentStatus).toBe('SESSION_CREATED');
     expect(f.submit).not.toHaveBeenCalled();

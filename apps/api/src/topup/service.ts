@@ -67,7 +67,7 @@ export class MobileTopUpService {
   private readonly clock: () => Date;
   private readonly stripeProvider?: StripeHostedCheckoutProvider;
   private readonly receiverSmsProvider?: ReceiverSmsProvider;
-  private readonly senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<void>;
+  private readonly senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>;
 
   constructor(
     config: MobileTopUpConfig,
@@ -78,7 +78,7 @@ export class MobileTopUpService {
     clock: () => Date = () => new Date(),
     stripeProvider?: StripeHostedCheckoutProvider,
     receiverSmsProvider?: ReceiverSmsProvider,
-    senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<void>,
+    senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>,
   ) {
     this.config = config;
     this.provider = provider;
@@ -1013,8 +1013,9 @@ export class MobileTopUpService {
       await this.repository.postDeliveredLedger(updated);
       if (original.status !== 'DELIVERED' && this.senderReceiptEmail) {
         try {
-          await this.senderReceiptEmail(updated);
-          await this.audit(updated.userId, 'FLUPFLAP_RECHARGE_RECEIPT_EMAIL_SENT', 'MobileTopUpTransaction', updated.id);
+          if (await this.senderReceiptEmail(updated)) {
+            await this.audit(updated.userId, 'FLUPFLAP_RECHARGE_RECEIPT_EMAIL_SENT', 'MobileTopUpTransaction', updated.id);
+          }
         } catch {
           // Receipt delivery must never alter or roll back the settled recharge.
           await this.audit(updated.userId, 'FLUPFLAP_RECHARGE_RECEIPT_EMAIL_FAILED', 'MobileTopUpTransaction', updated.id);

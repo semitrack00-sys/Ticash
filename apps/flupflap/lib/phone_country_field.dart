@@ -94,10 +94,12 @@ class PhoneEntry {
   }
 
   String requireE164() {
-    if (!RegExp(r'^\+[1-9][0-9]{6,14}$').hasMatch(e164)) {
+    if (number == null ||
+        !number!.isValid() ||
+        !RegExp(r'^\+[1-9][0-9]{6,14}$').hasMatch(number!.international)) {
       throw const FormatException('Invalid phone number');
     }
-    return e164;
+    return number!.international;
   }
 }
 

@@ -33,6 +33,36 @@ void main() {
     });
   }
 
+  for (final sample in [
+    ('HT', '+5093700000'),
+    ('HT', '+509370000000'),
+    ('US', '+1202555012'),
+    ('US', '+120255501234'),
+  ]) {
+    test('${sample.$2} is E.164-shaped but has an invalid national length', () {
+      final entry = PhoneEntry.parse(sample.$2, PhoneCountry.find(sample.$1)!);
+      expect(entry.number, isNotNull);
+      expect(entry.e164, sample.$2);
+      expect(entry.e164, matches(r'^\+[1-9][0-9]{6,14}$'));
+      expect(entry.number!.isValidLength(), isFalse);
+      expect(
+        entry.requireE164,
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            'Invalid phone number',
+          ),
+        ),
+      );
+    });
+  }
+
+  test('requireE164 rejects an absent parsed number', () {
+    final entry = PhoneEntry(PhoneCountry.find('HT')!, null);
+    expect(entry.requireE164, throwsFormatException);
+  });
+
   test('full maintained list has names, ISO codes and calling codes', () {
     expect(PhoneCountry.all.length, greaterThan(240));
     expect(

@@ -6,6 +6,15 @@ import 'checkout_contract.dart';
 
 enum RechargeStep { destination, product, review, payment, recovery, result }
 
+enum RechargeAmountIssue {
+  empty,
+  invalid,
+  belowMinimum,
+  aboveMaximum,
+  precision,
+  increment,
+}
+
 /// One session-owned controller survives tab navigation/browser handoff.
 /// A request that may have reserved a payment never gets a new key on retry.
 class RechargeJourney extends ChangeNotifier {
@@ -76,6 +85,81 @@ class RechargeJourney extends ChangeNotifier {
       !busy &&
       !locked &&
       (step == RechargeStep.product || step == RechargeStep.review);
+
+  bool get _validSelection =>
+      country != null &&
+      operator != null &&
+      product != null &&
+      products.contains(product) &&
+      _validProduct(product!);
+
+  bool get canReview =>
+      !busy && !locked && initialized && _validSelection && amountIssue == null;
+
+  RechargeAmountIssue? get amountIssue {
+    final p = product;
+    if (p == null || p.amountType != 'RANGE') return null;
+    if (!_validProduct(p)) return RechargeAmountIssue.invalid;
+    if (amount.isEmpty) return RechargeAmountIssue.empty;
+    if (!RegExp(r'^\d+(\.\d{1,2})?$').hasMatch(amount)) {
+      return RechargeAmountIssue.invalid;
+    }
+    final value = double.tryParse(amount);
+    if (value == null || !value.isFinite) return RechargeAmountIssue.invalid;
+    if (value < p.minimumAmount!) return RechargeAmountIssue.belowMinimum;
+    if (value > p.maximumAmount!) return RechargeAmountIssue.aboveMaximum;
+    final cents = moneyCents(value);
+    final precision = p.amountPrecision ?? 2;
+    if (precision == 0 && cents % 100 != 0 ||
+        precision == 1 && cents % 10 != 0) {
+      return RechargeAmountIssue.precision;
+    }
+    if (p.amountIncrement != null &&
+        (cents - moneyCents(p.minimumAmount!)) %
+                moneyCents(p.amountIncrement!) !=
+            0) {
+      return RechargeAmountIssue.increment;
+    }
+    return null;
+  }
+
+  bool _validProduct(MobileTopUpProduct p) {
+    if (p.id.trim().isEmpty ||
+        p.operatorId != operator?.id ||
+        !RegExp(r'^[A-Z]{3}$').hasMatch(p.priceCurrency)) {
+      return false;
+    }
+    try {
+      if (moneyCents(p.price) <= 0) return false;
+      if (p.amountType == 'FIXED') return true;
+      if (p.amountType != 'RANGE' ||
+          p.kind != MobileTopUpKind.airtime ||
+          p.minimumAmount == null ||
+          p.maximumAmount == null ||
+          moneyCents(p.minimumAmount!) <= 0 ||
+          moneyCents(p.maximumAmount!) < moneyCents(p.minimumAmount!)) {
+        return false;
+      }
+      final precision = p.amountPrecision ?? 2;
+      return precision >= 0 &&
+          precision <= 2 &&
+          (p.amountIncrement == null || moneyCents(p.amountIncrement!) > 0);
+    } on FormatException {
+      return false;
+    }
+  }
+
+  void _setProducts(List<MobileTopUpProduct> catalog) {
+    products = catalog.where(_validProduct).toList();
+    // A lone airtime offer needs no extra confirmation tap. Do not choose
+    // between multiple valid offers, even across different product kinds.
+    product =
+        products.length == 1 && products.single.kind == MobileTopUpKind.airtime
+        ? products.single
+        : null;
+    amount = '';
+  }
+
   void _emit() {
     if (!_disposed) notifyListeners();
   }
@@ -292,12 +376,18 @@ class RechargeJourney extends ChangeNotifier {
     _emit();
   }
 
-  void back() {
+  Future<void> back() async {
     if (!canBack) return;
-    step = step == RechargeStep.review && product != null
+    reviewed = false;
+    if (step == RechargeStep.review && product == null) {
+      // Repeat starts with a server quote rather than a selected catalog item.
+      // Load the destination catalog so Back still opens Operator & Product.
+      await continueDestination();
+      return;
+    }
+    step = step == RechargeStep.review
         ? RechargeStep.product
         : RechargeStep.destination;
-    reviewed = false;
     _emit();
   }
 
@@ -332,7 +422,8 @@ class RechargeJourney extends ChangeNotifier {
     _invalidateQuote();
     step = RechargeStep.product;
     if (operator != null) {
-      products = await client.topups.products(country!, operator!.id);
+      final catalog = await client.topups.products(country!, operator!.id);
+      if (_current(v)) _setProducts(catalog);
     }
   });
   Future<void> selectOperator(MobileTopUpOperator value) => _run((v) async {
@@ -345,11 +436,11 @@ class RechargeJourney extends ChangeNotifier {
     amount = '';
     _invalidateQuote();
     final list = await client.topups.products(country!, value.id);
-    if (_current(v)) products = list;
+    if (_current(v)) _setProducts(list);
   });
   void selectProduct(MobileTopUpProduct value) {
     _editable();
-    if (!products.contains(value) || value.operatorId != operator?.id) {
+    if (!products.contains(value) || !_validProduct(value)) {
       throw StateError('Invalid product');
     }
     product = value;
@@ -361,36 +452,14 @@ class RechargeJourney extends ChangeNotifier {
 
   double? _rangeAmount() {
     if (product?.amountType != 'RANGE') return null;
-    if (product!.kind != MobileTopUpKind.airtime ||
-        !RegExp(r'^\d+(\.\d{1,2})?$').hasMatch(amount)) {
+    if (amountIssue != null) {
       throw const FormatException('Invalid amount');
     }
-    final value = double.parse(amount);
-    final p = product!;
-    if (p.minimumAmount == null ||
-        p.maximumAmount == null ||
-        value < p.minimumAmount! ||
-        value > p.maximumAmount!) {
-      throw const FormatException('Invalid amount');
-    }
-    final cents = moneyCents(value);
-    final precision = p.amountPrecision ?? 2;
-    if (precision == 0 && cents % 100 != 0 ||
-        precision == 1 && cents % 10 != 0) {
-      throw const FormatException('Invalid precision');
-    }
-    if (p.amountIncrement != null) {
-      final increment = moneyCents(p.amountIncrement!);
-      if (increment <= 0 ||
-          (cents - moneyCents(p.minimumAmount!)) % increment != 0) {
-        throw const FormatException('Invalid increment');
-      }
-    }
-    return value;
+    return double.parse(amount);
   }
 
   Future<void> review() => _run((v) async {
-    if (locked || product == null || operator == null || country == null) {
+    if (locked || !_validSelection) {
       throw StateError('Select product');
     }
     final q = await client.topups.quote(

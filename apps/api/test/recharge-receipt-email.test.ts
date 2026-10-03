@@ -19,7 +19,7 @@ const transaction = {
 
 describe('FlupFlap recharge receipt email', () => {
   it('sends a branded delivered receipt with an idempotency key', async () => {
-    const transport = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+    const transport = vi.fn(async () =>
       new Response(JSON.stringify({ id: 'email-fixture' }), { status: 200 }));
     const service = new ResendRechargeReceiptEmailService('re_test_fixture', 'FlupFlap <receipts@example.test>', transport as typeof fetch);
     await service.sendReceipt({ to: 'sender@example.test', transaction });

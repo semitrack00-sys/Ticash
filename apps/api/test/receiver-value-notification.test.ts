@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { MemoryMobileTopUpRepository, resetMobileTopUpStore } from '../src/topup/repository.js';
 import { MobileTopUpService } from '../src/topup/service.js';
 import { MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpOperator, type MobileTopUpProvider } from '../src/topup/types.js';
-import { ReceiverNotificationService, TelnyxReceiverSmsProvider, loadTelnyxSmsConfig, receiverLanguage, receiverMessage } from '../src/topup/receiver-notification.js';
+import { ReceiverNotificationService, TelnyxReceiverSmsProvider, loadTelnyxSmsConfig, notificationFor, receiverLanguage, receiverLanguages, receiverMessage } from '../src/topup/receiver-notification.js';
 import { ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
 import { GlobalRechargeProviderRouter } from '../src/topup/provider-router.js';
 import { reloadlyProducts } from '../src/topup/product-catalog.js';
@@ -54,17 +54,49 @@ describe('authoritative receiver values and outbox', () => {
     const tx = await f.service.purchase('customer', { quoteId: quote.id }, 'status-test-key');
     expect(await f.repository.getNotification(tx.id)).toBeUndefined();
     expect(tx.deliveredValue).toBeUndefined();
+    const send = vi.fn();
+    const notifications = new ReceiverNotificationService(f.repository, { send });
+    await notifications.retry(tx.id);
+    await notifications.processBatch();
+    expect(send).not.toHaveBeenCalled();
   });
-  it('missing actual delivery records a discrepancy and never substitutes the quote into SMS', async () => {
-    const f = fixture(); f.result.deliveredAmount = undefined;
+  it.each(['amount', 'currency'])('missing actual delivery %s never substitutes the quote into SMS', async missing => {
+    const f = fixture();
+    if (missing === 'amount') f.result.deliveredAmount = undefined;
+    else f.result.deliveredAmountCurrencyCode = undefined;
     const quote = await f.service.createQuote('customer', input);
     const tx = await f.service.purchase('customer', { quoteId: quote.id }, 'missing-actual-key');
     expect(tx).toMatchObject({ status: 'DELIVERED', receiverDiscrepancy: true });
     expect(tx.deliveredValue).toBeUndefined();
     expect(await f.repository.getNotification(tx.id)).toBeUndefined();
-    f.result.deliveredAmount = 650;
+    const send = vi.fn(async () => ({ status: 'SENT' as const, messageId: 'confirmed-value' }));
+    const notifications = new ReceiverNotificationService(f.repository, { send });
+    await notifications.retry(tx.id);
+    await notifications.processBatch();
+    expect(send).not.toHaveBeenCalled();
+    f.result.deliveredAmount = 655.25;
+    f.result.deliveredAmountCurrencyCode = 'HTG';
     await f.service.getTransaction('customer', tx.id, true);
-    expect(await f.repository.getNotification(tx.id)).toMatchObject({ amount: 650 });
+    expect(await f.repository.getNotification(tx.id)).toMatchObject({ amount: 655.25, currency: 'HTG' });
+    await notifications.processBatch();
+    expect(send).toHaveBeenCalledExactlyOnceWith({ to: input.phone, idempotencyKey: `recharge-receiver:${tx.id}`,
+      message: 'FlupFlap: Ou resevwa 655.25 HTG sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.' });
+    await notifications.retry(tx.id);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it('requires DELIVERED and receiverValueConfirmed even for an already queued notification', async () => {
+    const f = fixture(); const quote = await f.service.createQuote('customer', input);
+    const tx = await f.service.purchase('customer', { quoteId: quote.id }, 'confirmation-gate-key');
+    expect(notificationFor({ ...tx, status: 'PROCESSING' })).toBeUndefined();
+    expect(notificationFor({ ...tx, receiverValueConfirmed: false })).toBeUndefined();
+    expect(notificationFor({ ...tx, receiverValueConfirmed: undefined })).toBeUndefined();
+    await f.repository.updateTransaction(tx.id, { receiverValueConfirmed: false });
+    const send = vi.fn();
+    const notifications = new ReceiverNotificationService(f.repository, { send });
+    await notifications.retry(tx.id);
+    await notifications.processBatch();
+    expect(send).not.toHaveBeenCalled();
+    expect(await f.repository.getNotification(tx.id)).toMatchObject({ status: 'PENDING', attempts: 0 });
   });
   it('rejects mismatched phone/country, fabricated denomination and absent receiving metadata', async () => {
     const f = fixture();
@@ -92,19 +124,24 @@ describe('authoritative receiver values and outbox', () => {
     expect(await f.repository.getTransactionById(tx.id)).toEqual(tx);
     expect(JSON.stringify(await f.repository.getNotification(tx.id))).not.toContain('sensitive');
   });
-  it('safe rejection retry reuses one record/key; concurrent retries and delivered replay never duplicate SMS', async () => {
+  it.each(['SENT', 'DELIVERED'] as const)('safe rejection retries and %s replay never duplicate a successful SMS', async status => {
     const f = fixture(); const q = await f.service.createQuote('customer', input);
     const tx = await f.service.purchase('customer', { quoteId: q.id }, 'sms-retry-key');
     const disabled = new ReceiverNotificationService(f.repository);
     await disabled.retry(tx.id);
     expect(await f.repository.getNotification(tx.id)).toMatchObject({ status: 'FAILED', lastErrorCategory: 'SMS_NOT_CONFIGURED' });
-    const send = vi.fn(async () => ({ status: 'DELIVERED' as const, messageId: 'message-fixture' }));
+    const send = vi.fn(async () => ({ status, messageId: 'message-fixture' }));
     const notifications = new ReceiverNotificationService(f.repository, { send });
     await Promise.all([notifications.retry(tx.id), notifications.retry(tx.id), notifications.retry(tx.id)]);
     await notifications.retry(tx.id);
+    await f.service.purchase('customer', { quoteId: q.id }, 'sms-retry-key');
+    await f.service.getTransaction('customer', tx.id, true);
+    await notifications.processBatch();
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]).toEqual([{ to: input.phone, message: expect.stringContaining('655 HTG'), idempotencyKey: `recharge-receiver:${tx.id}` }]);
-    expect(await f.repository.getNotification(tx.id)).toMatchObject({ status: 'DELIVERED', attempts: 2 });
+    expect(send.mock.calls[0]).toEqual([{ to: input.phone,
+      message: 'FlupFlap: Ou resevwa 655 HTG sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.',
+      idempotencyKey: `recharge-receiver:${tx.id}` }]);
+    expect(await f.repository.getNotification(tx.id)).toMatchObject({ status, attempts: 2 });
   });
   it('never sends a queued success message after the provider subsequently reverses delivery', async () => {
     const f = fixture(); const q = await f.service.createQuote('customer', input);
@@ -128,6 +165,19 @@ describe('authoritative receiver values and outbox', () => {
 });
 
 describe('receiver localization', () => {
+  it.each([...receiverLanguages, 'unsupported'])('%s consistently identifies FlupFlap and preserves the delivered value', language => {
+    const message = receiverMessage({ language, amount: 655.25, currency: 'HTG' });
+    expect(message).toMatch(/^FlupFlap\s*:/);
+    expect(message).toMatch(/FlupFlap\.$/);
+    expect(message).toContain('655.25 HTG');
+    expect(message).not.toContain('USD');
+  });
+  it('uses the approved Haitian Creole and English success copy exactly', () => {
+    expect(receiverMessage({ language: 'ht', amount: 655, currency: 'HTG' })).toBe(
+      'FlupFlap: Ou resevwa 655 HTG sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.');
+    expect(receiverMessage({ language: 'en', amount: 10, currency: 'USD' })).toBe(
+      'FlupFlap: Your recharge of 10 USD was successful. Thank you for using FlupFlap.');
+  });
   it.each([['HT', 'ht'], ['BR', 'pt'], ['DO', 'es'], ['MX', 'es'], ['FR', 'fr'], ['SN', 'fr'], ['CI', 'fr'],
     ['JM', 'en'], ['US', 'en'], ['NG', 'en'], ['GH', 'en'], ['KE', 'en'], ['TZ', 'en'], ['CA', 'en'], ['ZZ', 'en']])('%s defaults to %s', (country, language) => {
     expect(receiverLanguage(country)).toBe(language);

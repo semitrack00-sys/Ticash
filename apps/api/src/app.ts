@@ -678,7 +678,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
   const passwordResetEmailService = options.passwordResetEmailService ?? loadPasswordResetEmailService();
   const rechargeReceiptEmailService = options.rechargeReceiptEmailService ?? loadRechargeReceiptEmailService();
-  let flupFlapRepositoryForReceipt: FlupFlapIdentityRepository | undefined;
+  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
   const transferMutex = new KeyedMutex();
@@ -1009,10 +1009,10 @@ export function createApp(options: CreateAppOptions = {}) {
     mobileTopUpStripeProvider,
     receiverSmsProvider,
     async (record) => {
-      if (!rechargeReceiptEmailService.configured || !flupFlapRepositoryForReceipt) return false;
+      if (!rechargeReceiptEmailService.configured || !flupFlapRepository) return false;
       const customerId = flupFlapCustomerId(record.userId);
       if (!customerId) return false;
-      const customer = await flupFlapRepositoryForReceipt.customer(customerId);
+      const customer = await flupFlapRepository.customer(customerId);
       if (!customer?.email || customer.guestExpiresAt) return false;
       await rechargeReceiptEmailService.sendReceipt({ to: customer.email, transaction: record });
       return true;
@@ -1253,8 +1253,6 @@ export function createApp(options: CreateAppOptions = {}) {
     service: kycService,
   }));
 
-  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
-  flupFlapRepositoryForReceipt = flupFlapRepository;
   const flupFlapProductionAllowed = () => mobileTopUpConfig.environment === 'production' &&
     mobileTopUpConfig.paymentMode === 'stripe_live' && mobileTopUpConfig.productionEnabled === true &&
     mobileTopUpConfig.approvedForLiveUse === true && mobileTopUpConfig.liveRechargeEnabled === true &&

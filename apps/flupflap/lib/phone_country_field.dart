@@ -116,6 +116,8 @@ class PhoneCountryField extends StatefulWidget {
     this.fieldKey,
     this.onSubmitted,
     this.textInputAction = TextInputAction.next,
+    this.showCountryName = false,
+    this.errorText,
   });
   final TextEditingController controller;
   final ValueChanged<PhoneEntry> onChanged;
@@ -124,6 +126,8 @@ class PhoneCountryField extends StatefulWidget {
   final Key? fieldKey;
   final VoidCallback? onSubmitted;
   final TextInputAction textInputAction;
+  final bool showCountryName;
+  final String? errorText;
   @override
   State<PhoneCountryField> createState() => _PhoneCountryFieldState();
 }
@@ -230,62 +234,84 @@ class _PhoneCountryFieldState extends State<PhoneCountryField> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(context.ft('country')),
-      const SizedBox(height: 8),
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Tooltip(
-            message:
-                '${country.name} (${country.code}) +${country.callingCode}',
-            child: OutlinedButton(
-              key: const ValueKey('phone-country-picker'),
-              onPressed: widget.enabled ? chooseCountry : null,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 16,
+  Widget build(BuildContext context) {
+    final picker = Tooltip(
+      message: '${country.name} (${country.code}) +${country.callingCode}',
+      child: OutlinedButton(
+        key: const ValueKey('phone-country-picker'),
+        onPressed: widget.enabled ? chooseCountry : null,
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        ),
+        child: Row(
+          mainAxisSize: widget.showCountryName
+              ? MainAxisSize.max
+              : MainAxisSize.min,
+          children: [
+            CountryFlag(country.code),
+            const SizedBox(width: 8),
+            if (widget.showCountryName) ...[
+              Expanded(
+                child: Text(
+                  country.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CountryFlag(country.code),
-                  const SizedBox(width: 4),
-                  Text('+${country.callingCode}'),
-                  const Icon(Icons.arrow_drop_down, size: 18),
-                ],
-              ),
-            ),
+              const SizedBox(width: 8),
+            ],
+            Text('+${country.callingCode}'),
+            const Icon(Icons.arrow_drop_down, size: 18),
+          ],
+        ),
+      ),
+    );
+    final input = TextField(
+      key: widget.fieldKey,
+      controller: widget.controller,
+      enabled: widget.enabled,
+      keyboardType: TextInputType.phone,
+      textInputAction: widget.textInputAction,
+      autofillHints: const [AutofillHints.telephoneNumber],
+      decoration: InputDecoration(
+        labelText: context.ft('Phone number'),
+        errorText: widget.errorText,
+        errorMaxLines: 3,
+        helperText: widget.showCountryName
+            ? context.ft('nationalPhoneHelp')
+            : null,
+        helperMaxLines: 3,
+      ),
+      onChanged: changed,
+      onSubmitted: (_) => widget.onSubmitted?.call(),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(context.ft('country')),
+        const SizedBox(height: 8),
+        if (widget.showCountryName) ...[
+          picker,
+          const SizedBox(height: 10),
+          input,
+        ] else
+          Row(
+            children: [
+              picker,
+              const SizedBox(width: 8),
+              Expanded(child: input),
+            ],
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              key: widget.fieldKey,
-              controller: widget.controller,
-              enabled: widget.enabled,
-              keyboardType: TextInputType.phone,
-              textInputAction: widget.textInputAction,
-              autofillHints: const [AutofillHints.telephoneNumber],
-              decoration: InputDecoration(
-                labelText: context.ft('Phone number'),
-              ),
-              onChanged: changed,
-              onSubmitted: (_) => widget.onSubmitted?.call(),
-            ),
+        if (!widget.showCountryName) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${country.name} (${country.code})',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
-      ),
-      const SizedBox(height: 4),
-      Text(
-        '${country.name} (${country.code})',
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class _PhoneCountryPicker extends StatefulWidget {

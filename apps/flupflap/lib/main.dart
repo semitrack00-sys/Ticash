@@ -180,7 +180,9 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
       ),
       GoRoute(
         path: '/login',
-        builder: (_, __) => AuthScreen(
+        builder: (_, state) => AuthScreen(
+          key: ValueKey(state.uri.queryParameters['register']),
+          initialRegistration: state.uri.queryParameters['register'] == 'true',
           session: widget.session,
           client: client,
           language: language,
@@ -404,12 +406,14 @@ class AuthScreen extends StatefulWidget {
     this.client,
     this.language = AppLanguage.english,
     this.onLanguage,
+    this.initialRegistration = false,
   });
   final FlupFlapSession session;
   final String? resetToken;
   final FlupFlapClient? client;
   final AppLanguage language;
   final ValueChanged<AppLanguage>? onLanguage;
+  final bool initialRegistration;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -422,7 +426,23 @@ class _AuthScreenState extends State<AuthScreen> {
       password = TextEditingController();
   bool registration = false, busy = false, obscure = true;
   PhoneEntry? registrationPhone;
+  final registrationPhoneKey = GlobalKey();
+  bool validatePhone = false;
   String? message;
+  @override
+  void initState() {
+    super.initState();
+    registration = widget.initialRegistration;
+  }
+
+  bool get phoneValid {
+    try {
+      return registrationPhone?.requireE164() != null;
+    } on FormatException {
+      return false;
+    }
+  }
+
   @override
   void dispose() {
     firstName.dispose();
@@ -457,6 +477,15 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> submit() async {
     if (busy) return;
+    if (registration && widget.resetToken == null && !phoneValid) {
+      setState(() => validatePhone = true);
+      FocusScope.of(context).unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final field = registrationPhoneKey.currentContext;
+        if (mounted && field != null) Scrollable.ensureVisible(field);
+      });
+      return;
+    }
     await run(() async {
       if (widget.resetToken != null) {
         await widget.session.reset(widget.resetToken!, password.text);
@@ -487,31 +516,44 @@ class _AuthScreenState extends State<AuthScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (widget.onLanguage != null)
-                  DropdownButton<AppLanguage>(
-                    value: widget.language,
-                    isExpanded: true,
-                    items: AppLanguage.values
-                        .map(
-                          (l) => DropdownMenuItem(
-                            value: l,
-                            child: Text(l.nativeName),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) widget.onLanguage!(v);
-                    },
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: SizedBox(
+                      width: 220,
+                      child: DropdownButton<AppLanguage>(
+                        value: widget.language,
+                        isDense: true,
+                        isExpanded: true,
+                        items: AppLanguage.values
+                            .map(
+                              (l) => DropdownMenuItem(
+                                value: l,
+                                child: Text(
+                                  l.nativeName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) widget.onLanguage!(v);
+                        },
+                      ),
+                    ),
                   ),
-                const Brand(),
-                const SizedBox(height: 28),
+                const Brand(compact: true),
+                const SizedBox(height: 12),
                 Card(
+                  key: const ValueKey('auth-card'),
                   child: Padding(
-                    padding: const EdgeInsets.all(22),
+                    padding: const EdgeInsets.all(18),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -527,18 +569,18 @@ class _AuthScreenState extends State<AuthScreen> {
                                 color: _navy,
                               ),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          widget.resetToken != null
-                              ? context.ft('Choose a new secure password.')
-                              : registration
-                              ? context.ft(
-                                  'Recharge phones worldwide in a few taps.',
-                                )
-                              : context.ft('Sign in to continue to FlupFlap.'),
-                          style: const TextStyle(color: _muted),
-                        ),
-                        const SizedBox(height: 20),
+                        if (widget.resetToken != null || registration) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            widget.resetToken != null
+                                ? context.ft('Choose a new secure password.')
+                                : context.ft(
+                                    'Recharge phones worldwide in a few taps.',
+                                  ),
+                            style: const TextStyle(color: _muted),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
                         if (widget.resetToken == null && registration) ...[
                           TextField(
                             textInputAction: TextInputAction.next,
@@ -563,10 +605,17 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                           const SizedBox(height: 12),
                           PhoneCountryField(
+                            key: registrationPhoneKey,
+                            fieldKey: const ValueKey('registration-phone'),
                             controller: phone,
                             countryCode: registrationPhone?.country.code,
+                            showCountryName: true,
+                            errorText: validatePhone && !phoneValid
+                                ? context.ft('invalidNationalPhone')
+                                : null,
                             enabled: !busy,
-                            onChanged: (entry) => registrationPhone = entry,
+                            onChanged: (entry) =>
+                                setState(() => registrationPhone = entry),
                           ),
                           const SizedBox(height: 12),
                         ],
@@ -612,7 +661,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             padding: const EdgeInsets.only(top: 12),
                             child: Text(message!, semanticsLabel: message),
                           ),
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 14),
                         FilledButton(
                           onPressed: busy ? null : submit,
                           child: Text(
@@ -626,44 +675,50 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                         ),
                         if (widget.resetToken == null) ...[
-                          TextButton(
+                          const SizedBox(height: 8),
+                          OutlinedButton(
                             onPressed: busy
                                 ? null
                                 : () => run(() => widget.session.enterGuest()),
                             child: Text(context.ft('Continue as guest')),
                           ),
-                          TextButton(
-                            onPressed: busy
-                                ? null
-                                : () => setState(
-                                    () => registration = !registration,
-                                  ),
-                            child: Text(
-                              registration
-                                  ? context.ft(
-                                      'Already have an account? Sign in',
-                                    )
-                                  : context.ft('Create account'),
-                            ),
+                          Wrap(
+                            alignment: WrapAlignment.spaceBetween,
+                            children: [
+                              TextButton(
+                                onPressed: busy
+                                    ? null
+                                    : () => setState(
+                                        () => registration = !registration,
+                                      ),
+                                child: Text(
+                                  registration
+                                      ? context.ft(
+                                          'Already have an account? Sign in',
+                                        )
+                                      : context.ft('Create account'),
+                                ),
+                              ),
+                              if (!registration)
+                                TextButton(
+                                  onPressed: busy
+                                      ? null
+                                      : () => run(() async {
+                                          await widget.session.forgot(
+                                            email.text.trim(),
+                                          );
+                                          if (mounted) {
+                                            setState(
+                                              () => message = context.ft(
+                                                'If an account exists, reset instructions have been sent.',
+                                              ),
+                                            );
+                                          }
+                                        }),
+                                  child: Text(context.ft('Forgot password?')),
+                                ),
+                            ],
                           ),
-                          if (!registration)
-                            TextButton(
-                              onPressed: busy
-                                  ? null
-                                  : () => run(() async {
-                                      await widget.session.forgot(
-                                        email.text.trim(),
-                                      );
-                                      if (mounted) {
-                                        setState(
-                                          () => message = context.ft(
-                                            'If an account exists, reset instructions have been sent.',
-                                          ),
-                                        );
-                                      }
-                                    }),
-                              child: Text(context.ft('Forgot password?')),
-                            ),
                         ],
                       ],
                     ),

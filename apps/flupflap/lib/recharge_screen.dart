@@ -457,18 +457,60 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           onChanged: j.setAmount,
         ),
       const SizedBox(height: 16),
-      TextField(
-        key: const ValueKey('promotion-code'),
-        controller: promo,
-        enabled: !j.busy && !j.locked,
-        textCapitalization: TextCapitalization.characters,
-        decoration: InputDecoration(labelText: context.ft('promo')),
-      ),
-      TextButton(
-        onPressed: j.busy || j.locked
-            ? null
-            : () => j.applyPromotion(promo.text),
-        child: Text(context.ft('apply')),
+      Container(
+        key: const ValueKey('promo-panel'),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE9F2FF),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFC5DCFF)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              context.ft('havePromo'),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('promotion-code'),
+              controller: promo,
+              enabled: !j.busy && !j.locked,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                labelText: context.ft('promo'),
+                prefixIcon: const Icon(Icons.local_offer_outlined),
+                errorText: j.promotionError == null
+                    ? null
+                    : context.ft(j.promotionError!),
+                errorMaxLines: 3,
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: const ValueKey('apply-promo'),
+              onPressed: j.busy || j.locked
+                  ? null
+                  : () => j.applyPromotion(promo.text),
+              child: Text(context.ft('apply')),
+            ),
+            if (j.appliedPromotionLabel != null) ...[
+              const SizedBox(height: 8),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  context.ft('promoSaved', {'name': j.appliedPromotionLabel!}),
+                  key: const ValueKey('promo-success'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(context.ft('promotionApplied')),
+            ],
+          ],
+        ),
       ),
       button('continue', j.canReview ? j.review : null),
     ]);
@@ -789,7 +831,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                       semanticsLabel: context.ft(j.error ?? uiError!),
                     ),
                   ),
-                if (j.notice != null)
+                if (j.notice != null &&
+                    !(j.notice == 'promotionApplied' &&
+                        j.step == RechargeStep.product))
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Text(context.ft(j.notice!)),

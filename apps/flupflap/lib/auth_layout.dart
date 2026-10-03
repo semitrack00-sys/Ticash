@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:ticash/localization/app_localizations.dart';
 
 /// Presentation only: authentication, guest access, and registration stay in
@@ -85,108 +86,117 @@ class AuthLayout extends StatelessWidget {
           ),
         ),
       ),
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        body: Stack(
-          children: [
-            if (signIn)
-              const Positioned.fill(
-                child: IgnorePointer(
-                  child: CustomPaint(painter: _AuthBackdrop()),
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarColor: Colors.white,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Colors.white,
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ),
+        child: Scaffold(
+          backgroundColor: Colors.white,
+          body: Stack(
+            children: [
+              if (signIn)
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(painter: _AuthBackdrop()),
+                  ),
                 ),
-              ),
-            SafeArea(
-              child: LayoutBuilder(
-                builder: (context, viewport) {
-                  final padding = narrow ? 16.0 : 20.0;
-                  return SingleChildScrollView(
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: EdgeInsets.all(padding),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight: (viewport.maxHeight - padding * 2).clamp(
-                          0,
-                          double.infinity,
+              SafeArea(
+                child: LayoutBuilder(
+                  builder: (context, viewport) {
+                    final padding = narrow ? 16.0 : 20.0;
+                    return SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: EdgeInsets.all(padding),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: (viewport.maxHeight - padding * 2).clamp(
+                            0,
+                            double.infinity,
+                          ),
                         ),
-                      ),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 460),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (onLanguage != null) ...[
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Container(
-                                    width: 188,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(
-                                        color: const Color(0xFFE1E6EF),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 460),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (onLanguage != null) ...[
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Container(
+                                      width: 188,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
                                       ),
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    child: DropdownButtonHideUnderline(
-                                      child: DropdownButton<AppLanguage>(
-                                        value: language,
-                                        isExpanded: true,
-                                        icon: const Icon(Icons.expand_more),
-                                        items: AppLanguage.values
-                                            .map(
-                                              (l) => DropdownMenuItem(
-                                                value: l,
-                                                child: Text(
-                                                  l.nativeName,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        border: Border.all(
+                                          color: const Color(0xFFE1E6EF),
+                                        ),
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      child: DropdownButtonHideUnderline(
+                                        child: DropdownButton<AppLanguage>(
+                                          value: language,
+                                          isExpanded: true,
+                                          icon: const Icon(Icons.expand_more),
+                                          items: AppLanguage.values
+                                              .map(
+                                                (l) => DropdownMenuItem(
+                                                  value: l,
+                                                  child: Text(
+                                                    l.nativeName,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
                                                 ),
-                                              ),
-                                            )
-                                            .toList(),
-                                        onChanged: (v) {
-                                          if (v != null) onLanguage!(v);
-                                        },
+                                              )
+                                              .toList(),
+                                          onChanged: (v) {
+                                            if (v != null) onLanguage!(v);
+                                          },
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(height: 16),
-                              ],
-                              logo,
-                              SizedBox(height: signIn ? 24 : 16),
-                              Card(
-                                key: const ValueKey('auth-card'),
-                                margin: EdgeInsets.zero,
-                                color: Colors.white,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(26),
-                                  side: const BorderSide(
-                                    color: Color(0xFFE9EDF6),
+                                  const SizedBox(height: 16),
+                                ],
+                                logo,
+                                SizedBox(height: signIn ? 24 : 16),
+                                Card(
+                                  key: const ValueKey('auth-card'),
+                                  margin: EdgeInsets.zero,
+                                  color: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(26),
+                                    side: const BorderSide(
+                                      color: Color(0xFFE9EDF6),
+                                    ),
+                                  ),
+                                  child: Padding(
+                                    padding: EdgeInsets.all(narrow ? 16 : 24),
+                                    child: child,
                                   ),
                                 ),
-                                child: Padding(
-                                  padding: EdgeInsets.all(narrow ? 16 : 24),
-                                  child: child,
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

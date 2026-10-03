@@ -95,6 +95,21 @@ void main() {
       expect(icon, contains('android:width="288dp"'));
       expect(icon, contains('android:width="160dp"'));
       expect(icon, contains('@android:color/transparent'));
+      for (final dir in [
+        'values',
+        'values-night',
+        'values-v31',
+        'values-night-v31',
+      ]) {
+        final xml = File('$root/$dir/styles.xml').readAsStringSync();
+        // Both LaunchTheme and NormalTheme must draw the requested white bars.
+        expect(
+          'name="android:windowDrawsSystemBarBackgrounds">true'
+              .allMatches(xml)
+              .length,
+          2,
+        );
+      }
       for (final dir in ['values', 'values-night']) {
         final xml = File('$root/$dir/styles.xml').readAsStringSync();
         expect(

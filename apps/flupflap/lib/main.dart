@@ -388,7 +388,8 @@ class Brand extends StatelessWidget {
       Image.asset(
         'assets/flupflap-logo.png',
         width: width,
-        height: width == null ? (compact ? 54 : 76) : null,
+        // Reserve the original 2172x724 logo's space before asset decoding.
+        height: width == null ? (compact ? 54 : 76) : width! / 3,
         fit: BoxFit.contain,
       ),
       if (!compact) ...[

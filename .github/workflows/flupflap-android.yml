@@ -107,3 +107,5 @@ jobs:
             splash-capture/splash-native.png
             splash-capture/login-native.png
             splash-capture/startup.mp4
+            splash-capture/launcher.xml
+            splash-capture/launcher.png

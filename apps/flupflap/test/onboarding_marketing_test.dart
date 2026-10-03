@@ -167,6 +167,10 @@ void main() {
             'assets/flupflap-logo.png',
           );
           expect(t.getSize(logo).width, inInclusiveRange(220, 280));
+          expect(
+            t.getSize(logo).height,
+            closeTo(t.getSize(logo).width / 3, .01),
+          );
           expect(find.text('Create account'), findsOneWidget);
           expect(find.text('Forgot password?'), findsOneWidget);
           if (scale == 1) {

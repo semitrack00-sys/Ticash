@@ -92,9 +92,11 @@ void main() {
       }
       final icon = File('$root/drawable/splash_icon.xml').readAsStringSync();
       expect(icon, contains('@drawable/flupflap_f_glossy'));
-      expect(icon, contains('android:width="288dp"'));
-      expect(icon, contains('android:width="160dp"'));
-      expect(icon, contains('@android:color/transparent'));
+      // Android first rasterizes at launcher size. Absolute dp layers overflow
+      // that small surface and get clipped before the system enlarges it.
+      expect(icon, contains('android:inset="22.2222%"'));
+      expect(icon, isNot(contains('android:width=')));
+      expect(icon, isNot(contains('<solid')));
       for (final dir in [
         'values',
         'values-night',

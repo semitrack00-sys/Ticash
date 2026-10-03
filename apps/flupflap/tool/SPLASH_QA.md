@@ -2,7 +2,7 @@
 
 The login retains the original full `assets/flupflap-logo.png`. The installed launcher continues to use `@drawable/flupflap_icon`; neither the manifest nor its drawable/bitmap changed.
 
-The dedicated native asset is `android/app/src/main/res/drawable-nodpi/flupflap_f_glossy.png`. It contains only the transparent glossy F. Both legacy launch backgrounds use its 160dp transparent canvas. Android 12+ uses a 288dp drawable with the same centered 160dp canvas, keeping the artwork within the platform's safe circle. Day/night launch and normal window backgrounds are white. No artificial startup delay, extra Flutter splash, or activity/authentication behavior was added.
+The dedicated native asset is `android/app/src/main/res/drawable-nodpi/flupflap_f_glossy.png`. It contains only the transparent glossy F. Both legacy launch backgrounds use its 160dp transparent canvas. Android 12+ uses 22.2222% fractional insets, leaving 160/288 of its canvas for the same asset inside the platform's safe circle. Fractional padding survives Android's initial launcher-size rasterization; fixed dp child dimensions would be clipped before enlargement. Day/night launch and normal window backgrounds are white. No artificial startup delay, extra Flutter splash, or activity/authentication behavior was added.
 
 Platform sizing reference: [Android splash screen dimensions](https://developer.android.com/develop/ui/views/launch/splash-screen#dimensions).
 

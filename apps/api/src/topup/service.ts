@@ -307,8 +307,24 @@ export class MobileTopUpService {
         (owner !== 'RELOADLY' && !product.providerProductId))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
     }
-    const products = rawProducts.map(product => normalizeProduct({ ...product, provider: owner }))
-      .filter(product => product.price >= (userId && flupFlapCustomerId(userId) && product.classification === 'AIRTIME' ? 1 : 5) && product.price <= 100 && (!classification || product.classification === classification));
+    const flupFlap = userId ? flupFlapCustomerId(userId) : undefined;
+    const products = rawProducts.map(product => {
+      const flupFlapRangeMinimum = flupFlap && owner === 'RELOADLY' && product.classification === 'AIRTIME' &&
+        product.amountType === 'RANGE' && operator.denominationType === 'RANGE' &&
+        Number.isFinite(operator.minAmount) && Number.isFinite(operator.maxAmount)
+        ? Math.max(1, operator.minAmount!)
+        : undefined;
+      return normalizeProduct({
+        ...product,
+        provider: owner,
+        ...(flupFlapRangeMinimum !== undefined ? {
+          price: flupFlapRangeMinimum,
+          minimumAmount: flupFlapRangeMinimum,
+          maximumAmount: Math.min(100, operator.maxAmount!),
+        } : {}),
+      });
+    }).filter(product => product.price >= (flupFlap && product.classification === 'AIRTIME' ? 1 : 5) &&
+      product.price <= 100 && (!classification || product.classification === classification));
     if (new Set(products.map(p => p.id)).size !== products.length) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Duplicate provider product identity', 502);
     return { operator: { ...operator, provider: owner }, products };
   }

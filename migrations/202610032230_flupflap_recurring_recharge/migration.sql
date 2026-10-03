@@ -1,3 +1,7 @@
+ALTER TABLE "MobileTopUpTransaction" ADD COLUMN "recurringIntervalDays" INTEGER;
+ALTER TABLE "MobileTopUpTransaction" ADD CONSTRAINT "MobileTopUpTransaction_recurringIntervalDays_check"
+  CHECK ("recurringIntervalDays" IS NULL OR "recurringIntervalDays" IN (7,15,30));
+
 -- FlupFlap automatic recurring recharge schedules.
 -- Stores only Stripe object identifiers; no PAN/CVV/card secrets are stored.
 CREATE TABLE "FlupFlapRecurringRecharge" (

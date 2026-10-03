@@ -340,7 +340,7 @@ void main() {
       expect(j.amount, '10');
       expect(j.canReview, isTrue);
       expect(adapter.quoteCount, 0);
-      await t.enterText(input, '4');
+      await t.enterText(input, '0.99');
       for (final language in AppLanguage.values) {
         await t.pumpWidget(
           shell(RechargeJourneyScreen(journey: j), language: language),

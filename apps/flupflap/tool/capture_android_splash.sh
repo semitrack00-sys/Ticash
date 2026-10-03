@@ -64,5 +64,5 @@ fi
 wait "$record_pid"
 adb pull /sdcard/flupflap-startup.mp4 splash-capture/startup.mp4
 adb exec-out screencap -p > splash-capture/login-native.png
-ffmpeg -hide_banner -loglevel error -i splash-capture/startup.mp4 -vf fps=20 splash-capture/frames/%04d.png
+ffmpeg -hide_banner -loglevel error -i splash-capture/startup.mp4 -vf fps=30 splash-capture/frames/%04d.png
 /usr/bin/python3 apps/flupflap/tool/select_splash_frame.py

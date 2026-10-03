@@ -54,6 +54,53 @@ Widget shell(Widget child, {AppLanguage language = AppLanguage.english}) =>
       ),
     );
 void main() {
+  testWidgets('national destination digits reach operator lookup as E.164', (
+    t,
+  ) async {
+    t.platformDispatcher.localesTestValue = [const Locale('fr', 'HT')];
+    addTearDown(t.platformDispatcher.clearLocalesTestValue);
+    final (adapter, _, j) = fixture();
+    await t.runAsync(j.initialize);
+    await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+    await t.pumpAndSettle();
+    await t.enterText(
+      find.byKey(const ValueKey('destination-phone')),
+      '37000000',
+    );
+    await press(t, find.text('Continue'));
+    expect(j.country, 'HT');
+    expect(j.phone, '+50937000000');
+    expect(j.step, RechargeStep.product);
+    expect(
+      adapter.requests
+          .singleWhere((r) => r.path.endsWith('/operators/detect'))
+          .queryParameters['phone'],
+      '+50937000000',
+    );
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('worldwide picker does not bypass recharge coverage validation', (
+    t,
+  ) async {
+    final (adapter, _, j) = fixture();
+    await t.runAsync(j.initialize);
+    await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+    await t.pumpAndSettle();
+    await t.enterText(
+      find.byKey(const ValueKey('destination-phone')),
+      '+33612345678',
+    );
+    await press(t, find.text('Continue'));
+    expect(j.country, 'FR');
+    expect(j.step, RechargeStep.destination);
+    expect(j.error, isNotNull);
+    expect(
+      adapter.requests.where((r) => r.path.endsWith('/operators/detect')),
+      isEmpty,
+    );
+    await t.pumpWidget(const SizedBox());
+  });
   setUpAll(() async {
     final font = Platform.environment['FLUPFLAP_TEST_FONT'];
     if (font != null) {
@@ -87,6 +134,8 @@ void main() {
               CountryFlag('BR'),
               CountryFlag('JP'),
               CountryFlag('ZA'),
+              CountryFlag('AC'),
+              CountryFlag('TA'),
               CountryFlag('ZZ'),
             ],
           ),

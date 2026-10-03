@@ -341,7 +341,7 @@ void main() {
       await tap(tester, find.text(recipient['nickname']!));
       expect(
         tester.widget<TextField>(find.byType(TextField).first).controller!.text,
-        recipient['phone'],
+        '5551234567',
       );
       await tap(tester, find.text('Continue'));
       final detection = adapter.requests.singleWhere(
@@ -462,11 +462,16 @@ void main() {
         find.widgetWithText(TextField, 'Recipient name'),
         'Family',
       );
-      await tap(tester, find.byType(DropdownButtonFormField<String>));
+      await tap(tester, find.byKey(const ValueKey('phone-country-picker')));
+      await tester.enterText(
+        find.byKey(const ValueKey('phone-country-search')),
+        'HT',
+      );
+      await tester.pumpAndSettle();
       await tap(tester, find.text('Haiti').last);
       await tester.enterText(
-        find.widgetWithText(TextField, 'International phone number'),
-        '+50937000000',
+        find.widgetWithText(TextField, 'Phone number'),
+        '37000000',
       );
       await tap(tester, find.text('Save recipient'));
       expect(

@@ -151,10 +151,34 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     if (widget.history) return;
     if (j.canBack) {
       await j.back();
+      if (mounted && amount.text != j.amount) amount.text = j.amount;
     } else if (canReturnToDestination) {
       startAnother();
     }
   }
+
+  Future<void> continueDestination() async {
+    await j.continueDestination();
+    if (mounted && amount.text != j.amount) amount.text = j.amount;
+  }
+
+  String? amountErrorText() => switch (j.amountIssue) {
+    null || RechargeAmountIssue.empty => null,
+    RechargeAmountIssue.invalid => context.ft('amountInvalid'),
+    RechargeAmountIssue.belowMinimum => context.ft('amountTooLow', {
+      'minimum': money(j.product!.minimumAmount!, j.product!.priceCurrency),
+    }),
+    RechargeAmountIssue.aboveMaximum => context.ft('amountTooHigh', {
+      'maximum': money(j.product!.maximumAmount!, j.product!.priceCurrency),
+    }),
+    RechargeAmountIssue.precision => context.ft('amountPrecision', {
+      'precision': '${j.product!.amountPrecision ?? 2}',
+    }),
+    RechargeAmountIssue.increment => context.ft('amountIncrement', {
+      'increment': money(j.product!.amountIncrement!, j.product!.priceCurrency),
+      'minimum': money(j.product!.minimumAmount!, j.product!.priceCurrency),
+    }),
+  };
 
   @override
   void initState() {
@@ -338,7 +362,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           if (j.country != null) j.destination(code: j.country!, number: v);
         },
         onSubmitted: (_) {
-          if (!j.busy) j.continueDestination();
+          if (!j.busy) continueDestination();
         },
       ),
       if (j.recipients.isNotEmpty)
@@ -364,7 +388,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         'continue',
         j.busy || j.locked || j.country == null || phone.text.trim().isEmpty
             ? null
-            : j.continueDestination,
+            : continueDestination,
       ),
     ]);
   }
@@ -480,7 +504,11 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           controller: amount,
           enabled: !j.busy && !j.locked,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: context.ft('amount')),
+          decoration: InputDecoration(
+            labelText: context.ft('amount'),
+            errorText: amountErrorText(),
+            errorMaxLines: 3,
+          ),
           onChanged: j.setAmount,
         ),
       const SizedBox(height: 16),
@@ -497,7 +525,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             : () => j.applyPromotion(promo.text),
         child: Text(context.ft('apply')),
       ),
-      button('continue', j.busy || j.product == null ? null : j.review),
+      button('continue', j.canReview ? j.review : null),
     ]);
   }
 

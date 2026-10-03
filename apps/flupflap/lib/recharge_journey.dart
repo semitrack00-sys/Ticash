@@ -38,8 +38,10 @@ class RechargeJourney extends ChangeNotifier {
   List<MobileTopUpOperator> operators = [];
   List<MobileTopUpProduct> products = [];
   List<RechargeResult> history = [];
+  List<RecurringRechargeSchedule> recurringSchedules = [];
   String? country, billingCountry, recipientId, error, notice;
   String phone = '', amount = '', nickname = '';
+  int? recurringIntervalDays;
   MobileTopUpOperator? operator;
   MobileTopUpProduct? product;
   MobileTopUpQuote? quote;
@@ -174,6 +176,8 @@ class RechargeJourney extends ChangeNotifier {
       'TOPUP_QUOTE_EXPIRED' || 'TOPUP_QUOTE_ALREADY_USED' => 'quoteExpired',
       'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
       'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
+      'RECURRING_PAYMENT_METHOD_UNAVAILABLE' ||
+      'RECURRING_SOURCE_NOT_ELIGIBLE' => 'recurringPaymentUnavailable',
       'TOPUP_NOT_CANCELLABLE' ||
       'TOPUP_CANCELLATION_UNRESOLVED' => 'cancellationUnresolved',
       'GUEST_SCOPE_RESTRICTED' || 'FORBIDDEN' => 'accountRequired',
@@ -215,6 +219,15 @@ class RechargeJourney extends ChangeNotifier {
     countries = await client.topups.countries();
     recipients = await client.topups.recipients();
     payments = await client.methods(status);
+    if (status.recurringRechargeEnabled && !guest()) {
+      try {
+        recurringSchedules = await client.recurringSchedules();
+      } catch (_) {
+        recurringSchedules = [];
+      }
+    } else {
+      recurringSchedules = [];
+    }
     if (_current(v)) initialized = true;
   });
 
@@ -394,6 +407,19 @@ class RechargeJourney extends ChangeNotifier {
       busy = false;
       _emit();
     }
+  }
+
+  void setRecurringInterval(int? days) {
+    _editable();
+    if (days != null &&
+        (guest() ||
+            availability?.recurringRechargeEnabled != true ||
+            ![7, 15, 30].contains(days))) {
+      throw StateError('Recurring recharge unavailable');
+    }
+    recurringIntervalDays = days;
+    reviewed = false;
+    _emit();
   }
 
   void confirmReview(bool value) {
@@ -603,6 +629,7 @@ class RechargeJourney extends ChangeNotifier {
         guest: _attemptGuest,
         billingCountry: _attemptCountry,
         recipientId: _attemptRecipient,
+        recurringIntervalDays: recurringIntervalDays,
       );
       if (_transactionId != null && _transactionId != session.transactionId) {
         throw const FormatException('Attempt binding mismatch');
@@ -733,6 +760,52 @@ class RechargeJourney extends ChangeNotifier {
     });
   }
 
+  RecurringRechargeSchedule? recurringFor(String transactionId) {
+    for (final schedule in recurringSchedules) {
+      if (schedule.data['sourceTransactionId'] == transactionId &&
+          schedule.status != 'CANCELLED') {
+        return schedule;
+      }
+    }
+    return null;
+  }
+
+  Future<void> enableRecurring(String transactionId, int intervalDays) =>
+      _run((v) async {
+        if (guest() ||
+            availability?.recurringRechargeEnabled != true ||
+            ![7, 15, 30].contains(intervalDays)) {
+          throw StateError('Recurring recharge unavailable');
+        }
+        final schedule = await client.enableRecurring(
+          transactionId: transactionId,
+          intervalDays: intervalDays,
+        );
+        if (!_current(v)) return;
+        recurringSchedules = [
+          schedule,
+          ...recurringSchedules.where((s) => s.id != schedule.id),
+        ];
+        notice = 'recurringEnabled';
+      });
+
+  Future<void> updateRecurring(String id, String action) => _run((v) async {
+    if (guest() || !['PAUSE', 'RESUME', 'CANCEL'].contains(action)) {
+      throw StateError('Recurring recharge unavailable');
+    }
+    final schedule = await client.updateRecurring(id: id, action: action);
+    if (!_current(v)) return;
+    recurringSchedules = [
+      schedule,
+      ...recurringSchedules.where((s) => s.id != schedule.id),
+    ];
+    notice = action == 'PAUSE'
+        ? 'recurringPaused'
+        : action == 'RESUME'
+        ? 'recurringResumed'
+        : 'recurringCancelled';
+  });
+
   Future<void> loadHistory() => _run((v) async {
     final list = await client.history();
     if (_current(v)) history = list;
@@ -798,6 +871,7 @@ class RechargeJourney extends ChangeNotifier {
     recipientId = null;
     nickname = '';
     amount = '';
+    recurringIntervalDays = null;
     error = null;
     notice = null;
     appliedPromotionLabel = null;

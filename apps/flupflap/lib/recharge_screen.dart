@@ -647,6 +647,50 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           },
         ),
       ],
+      if (!j.guest() &&
+          j.availability?.recurringRechargeEnabled == true &&
+          j.payments?.mode != CheckoutMode.mock) ...[
+        const SizedBox(height: 18),
+        Text(
+          context.ft('recurringTitle'),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(context.ft('recurringReviewHelp')),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              label: Text(context.ft('recurringOff')),
+              selected: j.recurringIntervalDays == null,
+              onSelected: j.busy || j.locked
+                  ? null
+                  : (_) => j.setRecurringInterval(null),
+            ),
+            for (final days in [7, 15, 30])
+              ChoiceChip(
+                key: ValueKey('recurring-choice-$days'),
+                label: Text(context.ft('everyDays', {'days': days.toString()})),
+                selected: j.recurringIntervalDays == days,
+                onSelected: j.busy || j.locked
+                    ? null
+                    : (_) => j.setRecurringInterval(days),
+              ),
+          ],
+        ),
+        if (j.recurringIntervalDays != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            context.ft('recurringConsent', {
+              'days': j.recurringIntervalDays.toString(),
+            }),
+          ),
+        ],
+      ],
       CheckboxListTile(
         contentPadding: EdgeInsets.zero,
         value: j.reviewed,
@@ -721,6 +765,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         ].contains(r.displayState)
         ? r.displayState
         : 'unknownState';
+    final recurring = r.id == null ? null : j.recurringFor(r.id!);
     final reason = switch (d['failureReason'] ?? d['failureCode']) {
       'INSUFFICIENT_FUNDS' => 'insufficientFunds',
       'PAYMENT_DECLINED' => 'paymentDeclined',
@@ -788,6 +833,58 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           DateTime.parse(d['createdAt'] as String).toLocal().toString(),
         ),
       if (reason != null) Text(context.ft(reason)),
+      if (r.status == 'DELIVERED' &&
+          r.paymentStatus == 'CAPTURED' &&
+          r.id != null &&
+          !j.guest() &&
+          j.availability?.recurringRechargeEnabled == true &&
+          (recurring != null || d['recurringIntervalDays'] is int)) ...[
+        const Divider(),
+        Text(
+          context.ft('recurringTitle'),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (recurring == null)
+          Text(context.ft('recurringSetupPending'))
+        else ...[
+          row(
+            'recurringFrequency',
+            context.ft('everyDays', {'days': recurring.intervalDays.toString()}),
+          ),
+          row('recurringNext', recurring.nextRunAt.toLocal().toString()),
+          Text(context.ft('recurringStatus${recurring.status}')),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (recurring.status == 'ACTIVE')
+                OutlinedButton(
+                  onPressed: j.busy
+                      ? null
+                      : () => j.updateRecurring(recurring.id, 'PAUSE'),
+                  child: Text(context.ft('recurringPause')),
+                ),
+              if (recurring.status == 'PAUSED')
+                FilledButton.tonal(
+                  onPressed: j.busy
+                      ? null
+                      : () => j.updateRecurring(recurring.id, 'RESUME'),
+                  child: Text(context.ft('recurringResume')),
+                ),
+              OutlinedButton(
+                onPressed: j.busy
+                    ? null
+                    : () => j.updateRecurring(recurring.id, 'CANCEL'),
+                child: Text(context.ft('recurringCancel')),
+              ),
+            ],
+          ),
+        ],
+      ],
       if (!r.terminal) Text(context.ft('pendingNotice')),
       if (!historical) button('refresh', j.busy ? null : j.refresh),
       if (!historical && !r.terminal && j.hosted != null)

@@ -68,6 +68,7 @@ export class MobileTopUpService {
   private readonly stripeProvider?: StripeHostedCheckoutProvider;
   private readonly receiverSmsProvider?: ReceiverSmsProvider;
   private readonly senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>;
+  private readonly recurringRechargeEnabled: boolean;
 
   constructor(
     config: MobileTopUpConfig,
@@ -79,6 +80,7 @@ export class MobileTopUpService {
     stripeProvider?: StripeHostedCheckoutProvider,
     receiverSmsProvider?: ReceiverSmsProvider,
     senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>,
+    recurringRechargeEnabled = false,
   ) {
     this.config = config;
     this.provider = provider;
@@ -89,6 +91,7 @@ export class MobileTopUpService {
     this.stripeProvider = stripeProvider;
     this.receiverSmsProvider = receiverSmsProvider;
     this.senderReceiptEmail = senderReceiptEmail;
+    this.recurringRechargeEnabled = recurringRechargeEnabled;
   }
 
   private runtimeEnvironment(): MobileTopUpRuntimeEnvironment {
@@ -119,7 +122,7 @@ export class MobileTopUpService {
       productionEnabled: this.config.productionEnabled,
       approvedForLiveUse: this.config.approvedForLiveUse === true,
       liveRechargeEnabled: this.config.liveRechargeEnabled === true,
-      recurringRechargeEnabled: false,
+      recurringRechargeEnabled: this.recurringRechargeEnabled,
     };
   }
 
@@ -588,6 +591,7 @@ export class MobileTopUpService {
     key: string,
     billingCountry?: string,
     androidReturn = false,
+    saveForRecurring = false,
   ) {
     if (androidReturn && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
     this.assertEnabled();
@@ -685,6 +689,7 @@ export class MobileTopUpService {
           billingCountry: country,
           resumeToken,
           ...(androidReturn ? { androidReturn: true } : {}),
+          ...(saveForRecurring ? { saveForRecurring: true } : {}),
         });
       } catch (error) {
         await this.repository.updateTransaction(reserved.id, { paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN' });
@@ -713,6 +718,101 @@ export class MobileTopUpService {
       'Stripe is not enabled',
       503,
     );
+  }
+
+  async savedRecurringPaymentMethod(userId: string, transactionId: string) {
+    if (!this.recurringRechargeEnabled || !flupFlapCustomerId(userId)) {
+      throw new MobileTopUpError('RECURRING_RECHARGE_DISABLED', 'Automatic recharge is unavailable', 403);
+    }
+    if (!this.stripeProvider) {
+      throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Stripe is not enabled', 503);
+    }
+    const record = await this.getTransaction(userId, transactionId);
+    if (record.status !== 'DELIVERED' || record.paymentStatus !== 'CAPTURED' ||
+        record.paymentProvider !== 'STRIPE' || !record.paymentProviderTransactionId) {
+      throw new MobileTopUpError('RECURRING_SOURCE_NOT_ELIGIBLE', 'A completed Stripe recharge is required', 409);
+    }
+    const payment = await this.stripeProvider.savedPaymentMethod(record.paymentProviderTransactionId);
+    return { record, ...payment };
+  }
+
+  async chargeSavedPayment(
+    userId: string,
+    input: { quoteId: string; recipientId?: string },
+    key: string,
+    binding: { customerId: string; paymentMethodId: string; billingCountry: string },
+  ) {
+    if (!this.recurringRechargeEnabled || !flupFlapCustomerId(userId)) {
+      throw new MobileTopUpError('RECURRING_RECHARGE_DISABLED', 'Automatic recharge is unavailable', 403);
+    }
+    if (!this.stripeProvider || !['stripe_sandbox', 'stripe_live'].includes(this.config.paymentMode)) {
+      throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Stripe is not enabled', 503);
+    }
+    if (!/^[A-Z]{2}$/.test(binding.billingCountry)) {
+      throw new MobileTopUpError('BILLING_COUNTRY_REQUIRED', 'A billing country is required', 409);
+    }
+    const reserved = await this.reservePayment(userId, input, key);
+    this.assertTransactionEnvironment(reserved);
+    if (reserved.paymentProvider !== 'STRIPE') {
+      throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Recurring recharge requires Stripe', 503);
+    }
+    if (reserved.status === 'DELIVERED' && reserved.paymentStatus === 'CAPTURED') return reserved;
+    if (['FAILED', 'REFUNDED'].includes(reserved.status)) return reserved;
+
+    const intent = await this.stripeProvider.createOffSessionPaymentIntent({
+      transactionId: reserved.id,
+      amountMinor: usdMinorUnits(reserved.totalChargeUsd),
+      customerId: binding.customerId,
+      paymentMethodId: binding.paymentMethodId,
+      billingCountry: binding.billingCountry,
+    });
+
+    if (intent.status === 'succeeded') {
+      await this.repository.transitionPayment(
+        reserved.id,
+        ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'],
+        {
+          paymentStatus: 'CAPTURED',
+          paymentProviderTransactionId: intent.id,
+          status: 'PENDING',
+          failureCode: undefined,
+          paymentRecoveryCode: undefined,
+        },
+      );
+      await this.audit(userId, 'FLUPFLAP_RECURRING_PAYMENT_CAPTURED', 'MobileTopUpTransaction', reserved.id);
+      return this.fulfillPaidRecharge(reserved.id);
+    }
+
+    if (['requires_action', 'requires_payment_method', 'canceled'].includes(intent.status)) {
+      await this.repository.transitionPayment(
+        reserved.id,
+        ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'],
+        {
+          paymentStatus: 'FAILED',
+          paymentProviderTransactionId: intent.id,
+          status: 'FAILED',
+          failureCode: intent.status === 'requires_action'
+            ? 'RECURRING_PAYMENT_REQUIRES_ACTION'
+            : 'PAYMENT_DECLINED',
+          failedAt: this.clock().toISOString(),
+        },
+      );
+      await this.audit(userId, 'FLUPFLAP_RECURRING_PAYMENT_FAILED', 'MobileTopUpTransaction', reserved.id, { stripeStatus: intent.status });
+      return (await this.repository.getTransactionById(reserved.id))!;
+    }
+
+    await this.repository.transitionPayment(
+      reserved.id,
+      ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'],
+      {
+        paymentStatus: 'PENDING',
+        paymentProviderTransactionId: intent.id,
+        status: 'PENDING',
+        paymentRecoveryCode: 'RECURRING_PAYMENT_PENDING',
+      },
+    );
+    await this.audit(userId, 'FLUPFLAP_RECURRING_PAYMENT_PENDING', 'MobileTopUpTransaction', reserved.id, { stripeStatus: intent.status });
+    return (await this.repository.getTransactionById(reserved.id))!;
   }
 
   async resumeCheckout(resumeToken: string): Promise<MobileTopUpCheckoutResumeDto> {

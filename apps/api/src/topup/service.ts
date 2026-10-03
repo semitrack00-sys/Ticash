@@ -591,7 +591,7 @@ export class MobileTopUpService {
     key: string,
     billingCountry?: string,
     androidReturn = false,
-    saveForRecurring = false,
+    recurringIntervalDays?: 7 | 15 | 30,
   ) {
     if (androidReturn && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
     this.assertEnabled();
@@ -604,8 +604,20 @@ export class MobileTopUpService {
         throw new MobileTopUpError('BILLING_COUNTRY_REQUIRED', 'A verified billing country is required for Stripe checkout', 409);
       }
     }
-    const reserved = await this.reservePayment(userId, input, key);
+    let reserved = await this.reservePayment(userId, input, key);
     this.assertTransactionEnvironment(reserved);
+    if (recurringIntervalDays !== undefined) {
+      if (!this.recurringRechargeEnabled || !flupFlapCustomerId(userId)) {
+        throw new MobileTopUpError('RECURRING_RECHARGE_DISABLED', 'Automatic recharge is unavailable', 403);
+      }
+      if (reserved.recurringIntervalDays !== undefined &&
+          reserved.recurringIntervalDays !== recurringIntervalDays) {
+        throw new MobileTopUpError('IDEMPOTENCY_CONFLICT', 'Recurring interval changed for this payment attempt', 409);
+      }
+      if (reserved.recurringIntervalDays === undefined) {
+        reserved = await this.repository.updateTransaction(reserved.id, { recurringIntervalDays });
+      }
+    }
 
     if (reserved.paymentProvider === 'MOCK') {
       const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
@@ -689,7 +701,7 @@ export class MobileTopUpService {
           billingCountry: country,
           resumeToken,
           ...(androidReturn ? { androidReturn: true } : {}),
-          ...(saveForRecurring ? { saveForRecurring: true } : {}),
+          ...(recurringIntervalDays !== undefined ? { saveForRecurring: true } : {}),
         });
       } catch (error) {
         await this.repository.updateTransaction(reserved.id, { paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN' });

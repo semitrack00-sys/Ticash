@@ -66,6 +66,7 @@ import {
 import { createMobileTopUpRouter } from './topup/router.js';
 import { MobileTopUpService } from './topup/service.js';
 import { loadTelnyxSmsConfig, ReceiverNotificationService, TelnyxReceiverSmsProvider, type ReceiverSmsProvider } from './topup/receiver-notification.js';
+import { loadRechargeReceiptEmailService, type RechargeReceiptEmailService } from './topup/recharge-receipt-email.js';
 import { loadStripeConfig } from './topup/stripe-config.js';
 import { StripeHostedCheckoutProvider } from './topup/stripe-provider.js';
 import { createStripeWebhookHandler } from './topup/stripe-webhook.js';
@@ -657,6 +658,7 @@ export interface CreateAppOptions {
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
   passwordResetEmailService?: PasswordResetEmailService;
+  rechargeReceiptEmailService?: RechargeReceiptEmailService;
   flupFlapConfig?: FlupFlapConfig;
   flupFlapRepository?: FlupFlapIdentityRepository;
   flupFlapMarketing?: FlupFlapMarketing;
@@ -675,6 +677,8 @@ export function createApp(options: CreateAppOptions = {}) {
   const allowlistedOrigins = configuredCorsOrigins(process.env);
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
   const passwordResetEmailService = options.passwordResetEmailService ?? loadPasswordResetEmailService();
+  const rechargeReceiptEmailService = options.rechargeReceiptEmailService ?? loadRechargeReceiptEmailService();
+  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
   const transferMutex = new KeyedMutex();
@@ -1004,6 +1008,15 @@ export function createApp(options: CreateAppOptions = {}) {
     options.mobileTopUpClock,
     mobileTopUpStripeProvider,
     receiverSmsProvider,
+    async (record) => {
+      if (!rechargeReceiptEmailService.configured || !flupFlapRepository) return false;
+      const customerId = flupFlapCustomerId(record.userId);
+      if (!customerId) return false;
+      const customer = await flupFlapRepository.customer(customerId);
+      if (!customer?.email || customer.guestExpiresAt) return false;
+      await rechargeReceiptEmailService.sendReceipt({ to: customer.email, transaction: record });
+      return true;
+    },
   );
 
   // SMS delivery is independent from recharge settlement. The outbox claim prevents
@@ -1240,7 +1253,6 @@ export function createApp(options: CreateAppOptions = {}) {
     service: kycService,
   }));
 
-  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
   const flupFlapProductionAllowed = () => mobileTopUpConfig.environment === 'production' &&
     mobileTopUpConfig.paymentMode === 'stripe_live' && mobileTopUpConfig.productionEnabled === true &&
     mobileTopUpConfig.approvedForLiveUse === true && mobileTopUpConfig.liveRechargeEnabled === true &&

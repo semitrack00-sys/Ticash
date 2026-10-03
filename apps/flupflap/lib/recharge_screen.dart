@@ -266,6 +266,13 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   );
   String money(num value, [String currency = 'USD']) =>
       '${value.toStringAsFixed(2)} $currency';
+  String billingCountryName(String? code) {
+    if (code == null) return context.ft('billing');
+    for (final country in billingCountries) {
+      if (country['code'] == code) return country['name']!;
+    }
+    return code;
+  }
   // Translate our shared model's labels, not the provider's product description.
   String productDetail(String value) => value.replaceAllMapped(
     RegExp(
@@ -573,38 +580,72 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       if (j.payments?.mode != CheckoutMode.mock) ...[
         const SizedBox(height: 16),
         Text(context.ft('billingHelp')),
-        if (j.guest())
-          OutlinedButton(
-            onPressed: j.busy || j.locked
-                ? null
-                : () async {
-                    final code = await pickCountry(
-                      context,
-                      billingCountries
-                          .map(
-                            (c) => MobileTopUpCountry(
-                              code: c['code']!,
-                              name: c['name']!,
-                            ),
-                          )
-                          .toList(),
-                    );
-                    if (code != null && !j.locked && !j.busy) {
-                      j.setBillingCountry(code);
-                    }
-                  },
-            child: Text(
-              j.billingCountry == null
-                  ? context.ft('billing')
-                  : billingCountries.firstWhere(
-                      (c) => c['code'] == j.billingCountry,
-                    )['name']!,
-            ),
-          )
-        else ...[
-          row('billing', j.storedBillingCountry() ?? ''),
-          Text(context.ft('accountCountry')),
-        ],
+        const SizedBox(height: 8),
+        Builder(
+          builder: (context) {
+            final selected = j.guest()
+                ? j.billingCountry
+                : j.storedBillingCountry();
+            return OutlinedButton(
+              key: const ValueKey('billing-country-picker'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+              ),
+              onPressed: j.busy || j.locked
+                  ? null
+                  : () async {
+                      final code = await pickCountry(
+                        context,
+                        billingCountries
+                            .map(
+                              (c) => MobileTopUpCountry(
+                                code: c['code']!,
+                                name: c['name']!,
+                              ),
+                            )
+                            .toList(),
+                      );
+                      if (code == null || j.locked || j.busy) return;
+                      try {
+                        await j.chooseBillingCountry(code);
+                      } catch (_) {
+                        if (mounted) setState(() => uiError = 'requestFailed');
+                      }
+                    },
+              child: Row(
+                children: [
+                  if (selected != null) ...[
+                    CountryFlag(selected),
+                    const SizedBox(width: 12),
+                  ] else ...[
+                    const Icon(Icons.public_rounded),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          context.ft('billing'),
+                          style: Theme.of(context).textTheme.labelMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          billingCountryName(selected),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.keyboard_arrow_down_rounded),
+                ],
+              ),
+            );
+          },
+        ),
       ],
       CheckboxListTile(
         contentPadding: EdgeInsets.zero,

@@ -22,11 +22,13 @@ class RechargeJourney extends ChangeNotifier {
     this.client, {
     required this.guest,
     required this.storedBillingCountry,
+    this.updateStoredBillingCountry,
     DateTime Function()? clock,
   }) : now = clock ?? DateTime.now;
   final FlupFlapClient client;
   final bool Function() guest;
   final String? Function() storedBillingCountry;
+  final Future<void> Function(String)? updateStoredBillingCountry;
   final DateTime Function() now;
   RechargeStep step = RechargeStep.destination;
   MobileTopUpAvailability? availability;
@@ -370,6 +372,28 @@ class RechargeJourney extends ChangeNotifier {
     billingCountry = value;
     reviewed = false;
     _emit();
+  }
+
+  Future<void> chooseBillingCountry(String value) async {
+    _editable();
+    if (!RegExp(r'^[A-Z]{2}$').hasMatch(value)) {
+      throw const FormatException('Invalid billing country');
+    }
+    if (guest()) {
+      setBillingCountry(value);
+      return;
+    }
+    final update = updateStoredBillingCountry;
+    if (update == null) throw StateError('Billing country update unavailable');
+    busy = true;
+    reviewed = false;
+    _emit();
+    try {
+      await update(value);
+    } finally {
+      busy = false;
+      _emit();
+    }
   }
 
   void confirmReview(bool value) {

@@ -838,7 +838,32 @@ model FlupFlapCustomer {
   recipients MobileTopUpRecipient[]
   quotes MobileTopUpQuote[]
   transactions MobileTopUpTransaction[]
+  recurringRecharges FlupFlapRecurringRecharge[]
   auditLogs AuditLog[]
+}
+
+model FlupFlapRecurringRecharge {
+  id String @id @default(uuid())
+  customerId String
+  sourceTransactionId String
+  intervalDays Int
+  status String @default("ACTIVE")
+  maxTotalUsd Decimal @db.Decimal(18, 2)
+  stripeCustomerId String
+  stripePaymentMethodId String
+  billingCountry String
+  nextRunAt DateTime
+  pendingOccurrenceAt DateTime?
+  pendingQuoteId String?
+  lastTransactionId String?
+  lastRunAt DateTime?
+  failureCode String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextRunAt])
+  @@index([customerId, createdAt])
 }
 
 enum PromotionCampaignStatus {

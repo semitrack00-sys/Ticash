@@ -41,6 +41,7 @@ class RechargeJourney extends ChangeNotifier {
   List<RecurringRechargeSchedule> recurringSchedules = [];
   String? country, billingCountry, recipientId, error, notice;
   String phone = '', amount = '', nickname = '';
+  int? recurringIntervalDays;
   MobileTopUpOperator? operator;
   MobileTopUpProduct? product;
   MobileTopUpQuote? quote;
@@ -408,6 +409,19 @@ class RechargeJourney extends ChangeNotifier {
     }
   }
 
+  void setRecurringInterval(int? days) {
+    _editable();
+    if (days != null &&
+        (guest() ||
+            availability?.recurringRechargeEnabled != true ||
+            ![7, 15, 30].contains(days))) {
+      throw StateError('Recurring recharge unavailable');
+    }
+    recurringIntervalDays = days;
+    reviewed = false;
+    _emit();
+  }
+
   void confirmReview(bool value) {
     reviewed = value;
     _emit();
@@ -615,6 +629,7 @@ class RechargeJourney extends ChangeNotifier {
         guest: _attemptGuest,
         billingCountry: _attemptCountry,
         recipientId: _attemptRecipient,
+        recurringIntervalDays: recurringIntervalDays,
       );
       if (_transactionId != null && _transactionId != session.transactionId) {
         throw const FormatException('Attempt binding mismatch');
@@ -856,6 +871,7 @@ class RechargeJourney extends ChangeNotifier {
     recipientId = null;
     nickname = '';
     amount = '';
+    recurringIntervalDays = null;
     error = null;
     notice = null;
     appliedPromotionLabel = null;

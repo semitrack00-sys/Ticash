@@ -38,6 +38,7 @@ class RechargeJourney extends ChangeNotifier {
   List<MobileTopUpOperator> operators = [];
   List<MobileTopUpProduct> products = [];
   List<RechargeResult> history = [];
+  List<RecurringRechargeSchedule> recurringSchedules = [];
   String? country, billingCountry, recipientId, error, notice;
   String phone = '', amount = '', nickname = '';
   MobileTopUpOperator? operator;
@@ -215,6 +216,15 @@ class RechargeJourney extends ChangeNotifier {
     countries = await client.topups.countries();
     recipients = await client.topups.recipients();
     payments = await client.methods(status);
+    if (status.recurringRechargeEnabled && !guest()) {
+      try {
+        recurringSchedules = await client.recurringSchedules();
+      } catch (_) {
+        recurringSchedules = [];
+      }
+    } else {
+      recurringSchedules = [];
+    }
     if (_current(v)) initialized = true;
   });
 
@@ -732,6 +742,52 @@ class RechargeJourney extends ChangeNotifier {
       refresh();
     });
   }
+
+  RecurringRechargeSchedule? recurringFor(String transactionId) {
+    for (final schedule in recurringSchedules) {
+      if (schedule.data['sourceTransactionId'] == transactionId &&
+          schedule.status != 'CANCELLED') {
+        return schedule;
+      }
+    }
+    return null;
+  }
+
+  Future<void> enableRecurring(String transactionId, int intervalDays) =>
+      _run((v) async {
+        if (guest() ||
+            availability?.recurringRechargeEnabled != true ||
+            ![7, 15, 30].contains(intervalDays)) {
+          throw StateError('Recurring recharge unavailable');
+        }
+        final schedule = await client.enableRecurring(
+          transactionId: transactionId,
+          intervalDays: intervalDays,
+        );
+        if (!_current(v)) return;
+        recurringSchedules = [
+          schedule,
+          ...recurringSchedules.where((s) => s.id != schedule.id),
+        ];
+        notice = 'recurringEnabled';
+      });
+
+  Future<void> updateRecurring(String id, String action) => _run((v) async {
+    if (guest() || !['PAUSE', 'RESUME', 'CANCEL'].contains(action)) {
+      throw StateError('Recurring recharge unavailable');
+    }
+    final schedule = await client.updateRecurring(id: id, action: action);
+    if (!_current(v)) return;
+    recurringSchedules = [
+      schedule,
+      ...recurringSchedules.where((s) => s.id != schedule.id),
+    ];
+    notice = action == 'PAUSE'
+        ? 'recurringPaused'
+        : action == 'RESUME'
+        ? 'recurringResumed'
+        : 'recurringCancelled';
+  });
 
   Future<void> loadHistory() => _run((v) async {
     final list = await client.history();

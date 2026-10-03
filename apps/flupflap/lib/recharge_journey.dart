@@ -42,6 +42,7 @@ class RechargeJourney extends ChangeNotifier {
   MobileTopUpProduct? product;
   MobileTopUpQuote? quote;
   Map<String, dynamic>? promotion;
+  String? appliedPromotionLabel, promotionError;
   HostedSession? hosted;
   RechargeResult? result;
   bool busy = false, reviewed = false, initialized = false;
@@ -492,11 +493,27 @@ class RechargeJourney extends ChangeNotifier {
   Future<void> applyPromotion(String code) => _run((v) async {
     if (locked) throw StateError('Checkout locked');
     _invalidateQuote();
-    await client.visit(promo: code);
-    await client.claim();
-    if (_current(v)) {
-      notice = 'promotionApplied';
-      step = RechargeStep.product;
+    appliedPromotionLabel = null;
+    promotionError = null;
+    notice = null;
+    try {
+      final visit = await client.visit(promo: code);
+      await client.claim();
+      if (_current(v)) {
+        final details = visit['promotion'];
+        appliedPromotionLabel = details is Map && details['name'] is String
+            ? details['name'] as String
+            : code.trim().toUpperCase();
+        notice = 'promotionApplied';
+        step = RechargeStep.product;
+      }
+    } catch (e) {
+      if (_current(v)) {
+        final status = e is DioException ? e.response?.statusCode : null;
+        promotionError = e is FormatException || status == 400 || status == 409
+            ? 'promoUnavailable'
+            : 'requestFailed';
+      }
     }
   });
   Future<void> pay() => _run((v) async {
@@ -759,6 +776,8 @@ class RechargeJourney extends ChangeNotifier {
     amount = '';
     error = null;
     notice = null;
+    appliedPromotionLabel = null;
+    promotionError = null;
     _invalidateQuote();
     step = RechargeStep.destination;
   }

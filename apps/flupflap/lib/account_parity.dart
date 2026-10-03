@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:ticash/localization/app_localizations.dart';
 import 'checkout_contract.dart';
 import 'native_actions.dart';
@@ -26,29 +27,103 @@ class _AccountParityState extends State<AccountParity> {
   ReferralShare? share;
   bool busy = false;
   String? feedback;
+  int epoch = 0;
+  String? owner;
+  bool get registered => widget.session.authenticated && !widget.session.guest;
+
+  @override
+  void initState() {
+    super.initState();
+    owner = widget.session.user?['id'] as String?;
+    widget.session.addListener(sessionChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) load();
+    });
+  }
+
+  void sessionChanged() {
+    final id = widget.session.user?['id'] as String?;
+    if (registered && id == owner) return;
+    epoch++;
+    setState(() {
+      owner = id;
+      share = null;
+      feedback = null;
+      busy = false;
+    });
+    if (registered) load();
+  }
+
+  @override
+  void dispose() {
+    epoch++;
+    widget.session.removeListener(sessionChanged);
+    super.dispose();
+  }
+
   Future<void> load() async {
-    if (widget.session.guest || busy) return;
-    setState(() => busy = true);
+    if (!registered || busy) return;
+    final request = ++epoch;
+    setState(() {
+      busy = true;
+      feedback = null;
+    });
     try {
       final data = await widget.client.share(guest: widget.session.guest);
-      if (mounted && !widget.session.guest) setState(() => share = data);
+      if (mounted && request == epoch && registered) {
+        setState(() => share = data);
+      }
+    } catch (_) {
+      if (mounted && request == epoch) {
+        setState(() => feedback = 'requestFailed');
+      }
+    } finally {
+      if (mounted && request == epoch) setState(() => busy = false);
+    }
+  }
+
+  Future<void> copy(bool code) async {
+    if (!registered || share == null) return;
+    try {
+      await Clipboard.setData(
+        ClipboardData(text: code ? share!.code : share!.url),
+      );
+      if (mounted) setState(() => feedback = code ? 'codeCopied' : 'copied');
     } catch (_) {
       if (mounted) setState(() => feedback = 'requestFailed');
-    } finally {
-      if (mounted) setState(() => busy = false);
     }
   }
 
   Future<void> send(String target) async {
-    if (share == null) return;
+    if (!registered || share == null) return;
+    final message = context.ft('shareMessage', {
+      'code': share!.code,
+      'url': share!.url,
+    });
     try {
-      await NativeActions.share(
-        context.ft('shareMessage', {'code': share!.code, 'url': share!.url}),
-        target: target,
-      );
+      await NativeActions.share(message, target: target);
+    } on PlatformException {
+      // WhatsApp may not be installed; offer Android's standard share sheet.
+      if (target == 'whatsapp') {
+        try {
+          await NativeActions.share(message);
+          return;
+        } catch (_) {}
+      }
+      if (mounted) setState(() => feedback = 'requestFailed');
     } catch (_) {
       if (mounted) setState(() => feedback = 'requestFailed');
     }
+  }
+
+  Future<void> createAccount() async {
+    final router = GoRouter.of(context);
+    try {
+      await widget.session.logout();
+    } catch (_) {
+      // Logout clears the local session even if the server is unreachable.
+    }
+    router.go('/login?register=true');
   }
 
   @override
@@ -67,73 +142,106 @@ class _AccountParityState extends State<AccountParity> {
         },
       ),
       const SizedBox(height: 16),
-      if (widget.session.guest)
-        Column(
-          children: [
-            Text(context.ft('accountRequired')),
-            TextButton(
-              onPressed: () async {
-                await widget.session.logout();
-              },
-              child: Text(context.ft('Create an account')),
-            ),
-          ],
-        )
-      else
-        ExpansionTile(
-          title: Text(context.ft('share')),
-          onExpansionChanged: (open) {
-            if (open && share == null) load();
-          },
-          children: [
-            if (busy) const LinearProgressIndicator(),
-            if (share != null) ...[
-              SelectableText('${context.ft('referral')}: ${share!.code}'),
-              SelectableText(share!.url),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Image.memory(
-                  share!.qr,
-                  width: 180,
-                  height: 180,
-                  semanticLabel: context.ft('qr'),
-                  errorBuilder: (_, __, ___) =>
-                      Text(context.ft('requestFailed')),
+      Card(
+        key: const ValueKey('referral-card'),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                context.ft('share'),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              if (!registered) ...[
+                Text(context.ft('guestReferral')),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: createAccount,
+                  child: Text(context.ft('Create account')),
                 ),
-              ),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  TextButton.icon(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: share!.url));
-                      if (mounted) setState(() => feedback = 'copied');
-                    },
-                    icon: const Icon(Icons.copy),
-                    label: Text(context.ft('copy')),
+              ] else ...[
+                Text(context.ft('shareHelp')),
+                if (busy)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: LinearProgressIndicator(),
                   ),
-                  TextButton.icon(
-                    onPressed: () => send('share'),
-                    icon: const Icon(Icons.share),
-                    label: Text(context.ft('share')),
+                if (share != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    context.ft('referral'),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
-                  TextButton(
-                    onPressed: () => send('whatsapp'),
-                    child: const Text('WhatsApp'),
+                  SelectableText(
+                    share!.code,
+                    key: const ValueKey('referral-code'),
                   ),
-                  TextButton(
-                    onPressed: () => send('sms'),
-                    child: const Text('SMS'),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    share!.url,
+                    key: const ValueKey('referral-link'),
                   ),
-                ],
-              ),
-            ] else if (!busy)
-              TextButton(onPressed: load, child: Text(context.ft('retry'))),
-          ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => copy(true),
+                        icon: const Icon(Icons.copy),
+                        label: Text(context.ft('copyCode')),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => copy(false),
+                        icon: const Icon(Icons.link),
+                        label: Text(context.ft('copyReferralLink')),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () => send('share'),
+                        icon: const Icon(Icons.share),
+                        label: Text(context.ft('shareAction')),
+                      ),
+                      OutlinedButton(
+                        onPressed: () => send('whatsapp'),
+                        child: const Text('WhatsApp'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Image.memory(
+                      share!.qr,
+                      key: const ValueKey('referral-qr'),
+                      width: 180,
+                      height: 180,
+                      semanticLabel: context.ft('qr'),
+                      errorBuilder: (_, __, ___) =>
+                          Text(context.ft('requestFailed')),
+                    ),
+                  ),
+                  Text(context.ft('qr'), textAlign: TextAlign.center),
+                ] else if (!busy)
+                  OutlinedButton(
+                    onPressed: load,
+                    child: Text(context.ft('retry')),
+                  ),
+              ],
+              if (feedback != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(context.ft(feedback!)),
+                  ),
+                ),
+            ],
+          ),
         ),
-      if (feedback != null) Text(context.ft(feedback!)),
+      ),
       const SizedBox(height: 16),
     ],
   );

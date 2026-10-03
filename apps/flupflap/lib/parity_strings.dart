@@ -16,6 +16,20 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "nationalPhoneHelp":
+        "Enter your local number. We add the country code automatically.",
+    "invalidNationalPhone":
+        "Enter a valid phone number for the selected country.",
+    "havePromo": "Have a promo code?",
+    "promoUnavailable":
+        "This code is invalid, expired, or unavailable for your account.",
+    "promoSaved": "Code saved: {name}",
+    "copyCode": "Copy referral code",
+    "copyReferralLink": "Copy referral link",
+    "codeCopied": "Referral code copied",
+    "shareAction": "Share",
+    "guestReferral": "Create an account to get your referral code",
+    "shareHelp": "Invite someone using your personal code, link, or QR code.",
     "pendingPayment": "Pending payment",
     "pendingRecoveryHelp":
         "This payment is not resolved yet. Check its status or cancel it before starting another recharge.",
@@ -267,6 +281,20 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Email",
   },
   "ht": {
+    "nationalPhoneHelp":
+        "Antre nimewo lokal ou. Nou ajoute kòd peyi a otomatikman.",
+    "invalidNationalPhone":
+        "Antre yon nimewo telefòn ki valab pou peyi ou chwazi a.",
+    "havePromo": "Ou gen yon kòd pwomosyon?",
+    "promoUnavailable":
+        "Kòd sa a pa valab, li ekspire, oswa li pa disponib pou kont ou.",
+    "promoSaved": "Kòd anrejistre: {name}",
+    "copyCode": "Kopye kòd referans",
+    "copyReferralLink": "Kopye lyen referans",
+    "codeCopied": "Kòd referans kopye",
+    "shareAction": "Pataje",
+    "guestReferral": "Kreye yon kont pou jwenn kòd referans ou",
+    "shareHelp": "Envite yon moun ak kòd pèsonèl ou, lyen ou oswa kòd QR ou.",
     "pendingPayment": "Peman annatant",
     "pendingRecoveryHelp":
         "Peman sa a poko rezoud. Verifye estati li oswa anile li anvan ou kòmanse yon lòt rechaj.",
@@ -516,6 +544,21 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Imèl",
   },
   "fr": {
+    "nationalPhoneHelp":
+        "Saisissez votre numéro local. Nous ajoutons l’indicatif automatiquement.",
+    "invalidNationalPhone":
+        "Saisissez un numéro valide pour le pays sélectionné.",
+    "havePromo": "Vous avez un code promo ?",
+    "promoUnavailable":
+        "Ce code est invalide, expiré ou indisponible pour votre compte.",
+    "promoSaved": "Code enregistré : {name}",
+    "copyCode": "Copier le code de parrainage",
+    "copyReferralLink": "Copier le lien de parrainage",
+    "codeCopied": "Code de parrainage copié",
+    "shareAction": "Partager",
+    "guestReferral": "Créez un compte pour obtenir votre code de parrainage",
+    "shareHelp":
+        "Invitez quelqu’un avec votre code personnel, votre lien ou votre code QR.",
     "pendingPayment": "Paiement en attente",
     "pendingRecoveryHelp":
         "Ce paiement n’est pas encore résolu. Vérifiez son état ou annulez-le avant de commencer une autre recharge.",
@@ -770,6 +813,20 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "E-mail",
   },
   "es": {
+    "nationalPhoneHelp":
+        "Introduce tu número local. Añadimos el prefijo del país automáticamente.",
+    "invalidNationalPhone":
+        "Introduce un número válido para el país seleccionado.",
+    "havePromo": "¿Tienes un código promocional?",
+    "promoUnavailable":
+        "Este código no es válido, ha caducado o no está disponible para tu cuenta.",
+    "promoSaved": "Código guardado: {name}",
+    "copyCode": "Copiar código de referido",
+    "copyReferralLink": "Copiar enlace de referido",
+    "codeCopied": "Código de referido copiado",
+    "shareAction": "Compartir",
+    "guestReferral": "Crea una cuenta para obtener tu código de referido",
+    "shareHelp": "Invita a alguien con tu código personal, enlace o código QR.",
     "pendingPayment": "Pago pendiente",
     "pendingRecoveryHelp":
         "Este pago aún no está resuelto. Comprueba su estado o cancélalo antes de iniciar otra recarga.",
@@ -1018,6 +1075,19 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Correo electrónico",
   },
   "pt": {
+    "nationalPhoneHelp":
+        "Digite seu número local. Adicionamos o código do país automaticamente.",
+    "invalidNationalPhone": "Digite um número válido para o país selecionado.",
+    "havePromo": "Tem um código promocional?",
+    "promoUnavailable":
+        "Este código é inválido, expirou ou não está disponível para sua conta.",
+    "promoSaved": "Código salvo: {name}",
+    "copyCode": "Copiar código de indicação",
+    "copyReferralLink": "Copiar link de indicação",
+    "codeCopied": "Código de indicação copiado",
+    "shareAction": "Compartilhar",
+    "guestReferral": "Crie uma conta para obter seu código de indicação",
+    "shareHelp": "Convide alguém usando seu código pessoal, link ou código QR.",
     "pendingPayment": "Pagamento pendente",
     "pendingRecoveryHelp":
         "Este pagamento ainda não foi resolvido. Verifique o estado ou cancele-o antes de iniciar outra recarga.",

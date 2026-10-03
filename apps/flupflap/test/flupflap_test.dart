@@ -279,7 +279,7 @@ void main() {
       await s.initialize();
       await tester.pumpWidget(FlupFlapApp(session: s));
       await tester.pumpAndSettle();
-      expect(find.text('Sign in to FlupFlap'), findsOneWidget);
+      expect(find.text('Welcome'), findsOneWidget);
       expect(find.text('Continue as guest'), findsOneWidget);
       expect(find.textContaining('KYC'), findsNothing);
       await tester.ensureVisible(find.text('Create account'));
@@ -317,7 +317,7 @@ void main() {
       expect(find.textContaining('separate from your TiCash'), findsOneWidget);
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
-      expect(find.text('Sign in to FlupFlap'), findsOneWidget);
+      expect(find.text('Welcome'), findsOneWidget);
       expect(a.requests.every((r) => r.path.startsWith('/flupflap/')), true);
     },
   );

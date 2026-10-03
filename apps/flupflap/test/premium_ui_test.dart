@@ -311,7 +311,7 @@ void main() {
           find.widgetWithText(NavigationDestination, 'Account'),
         );
         await tap(tester, find.text('Sign out'));
-        expect(find.text('Sign in to FlupFlap'), findsOneWidget);
+        expect(find.text('Welcome'), findsOneWidget);
         if (scale == 1) await screenshot(tester, 'login-${width.toInt()}');
         await tap(tester, find.text('Create account'));
         tester.view.viewInsets = const FakeViewPadding(bottom: 300);
@@ -563,7 +563,7 @@ void main() {
         {'token': 'fixture-reset', 'password': 'new-test-password'},
       );
       expect(session.authenticated, false);
-      expect(find.text('Sign in to FlupFlap'), findsOneWidget);
+      expect(find.text('Welcome'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

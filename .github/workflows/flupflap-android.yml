@@ -63,3 +63,47 @@ jobs:
           path: |
             apps/flupflap/build/app/outputs/flutter-apk/app-debug.apk
             apps/flupflap/build/app/outputs/bundle/debug/app-debug.aab
+
+  native-splash:
+    name: Native splash screenshot (API ${{ matrix.api }})
+    runs-on: ubuntu-latest
+    needs: build-test-android
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 31]
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flupflap-android-test-builds
+          path: android-builds
+      - name: Enable emulator acceleration and screenshot tools
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg python3-pil
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_4
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash apps/flupflap/tool/capture_android_splash.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-native-splash-api-${{ matrix.api }}
+          if-no-files-found: error
+          path: |
+            splash-capture/splash-native.png
+            splash-capture/login-native.png
+            splash-capture/startup.mp4

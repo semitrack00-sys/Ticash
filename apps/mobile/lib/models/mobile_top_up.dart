@@ -83,6 +83,7 @@ class MobileTopUpAvailability {
     required this.productionEnabled,
     required this.approvedForLiveUse,
     required this.liveRechargeEnabled,
+    this.recurringRechargeEnabled = false,
     this.providers = const [],
     this.paymentMode,
   });
@@ -92,6 +93,7 @@ class MobileTopUpAvailability {
   final bool productionEnabled;
   final bool approvedForLiveUse;
   final bool liveRechargeEnabled;
+  final bool recurringRechargeEnabled;
   final List<String> providers;
   final String? paymentMode;
 
@@ -113,6 +115,8 @@ class MobileTopUpAvailability {
         productionEnabled: json['productionEnabled'] as bool? ?? false,
         approvedForLiveUse: json['approvedForLiveUse'] as bool? ?? false,
         liveRechargeEnabled: json['liveRechargeEnabled'] as bool? ?? false,
+        recurringRechargeEnabled:
+            json['recurringRechargeEnabled'] as bool? ?? false,
         providers: (json['providers'] as List<dynamic>? ?? const [])
             .whereType<String>()
             .toList(),

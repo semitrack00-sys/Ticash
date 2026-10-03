@@ -67,6 +67,8 @@ export class MobileTopUpService {
   private readonly clock: () => Date;
   private readonly stripeProvider?: StripeHostedCheckoutProvider;
   private readonly receiverSmsProvider?: ReceiverSmsProvider;
+  private readonly senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>;
+  private readonly recurringRechargeEnabled: boolean;
 
   constructor(
     config: MobileTopUpConfig,
@@ -77,6 +79,8 @@ export class MobileTopUpService {
     clock: () => Date = () => new Date(),
     stripeProvider?: StripeHostedCheckoutProvider,
     receiverSmsProvider?: ReceiverSmsProvider,
+    senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>,
+    recurringRechargeEnabled = false,
   ) {
     this.config = config;
     this.provider = provider;
@@ -86,6 +90,8 @@ export class MobileTopUpService {
     this.clock = clock;
     this.stripeProvider = stripeProvider;
     this.receiverSmsProvider = receiverSmsProvider;
+    this.senderReceiptEmail = senderReceiptEmail;
+    this.recurringRechargeEnabled = recurringRechargeEnabled;
   }
 
   private runtimeEnvironment(): MobileTopUpRuntimeEnvironment {
@@ -116,7 +122,7 @@ export class MobileTopUpService {
       productionEnabled: this.config.productionEnabled,
       approvedForLiveUse: this.config.approvedForLiveUse === true,
       liveRechargeEnabled: this.config.liveRechargeEnabled === true,
-      recurringRechargeEnabled: false,
+      recurringRechargeEnabled: this.recurringRechargeEnabled,
     };
   }
 
@@ -307,8 +313,24 @@ export class MobileTopUpService {
         (owner !== 'RELOADLY' && !product.providerProductId))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
     }
-    const products = rawProducts.map(product => normalizeProduct({ ...product, provider: owner }))
-      .filter(product => product.price >= (userId && flupFlapCustomerId(userId) && product.classification === 'AIRTIME' ? 1 : 5) && product.price <= 100 && (!classification || product.classification === classification));
+    const flupFlap = userId ? flupFlapCustomerId(userId) : undefined;
+    const products = rawProducts.map(product => {
+      const flupFlapRangeMinimum = flupFlap && owner === 'RELOADLY' && product.classification === 'AIRTIME' &&
+        product.amountType === 'RANGE' && operator.denominationType === 'RANGE' &&
+        Number.isFinite(operator.minAmount) && Number.isFinite(operator.maxAmount)
+        ? Math.max(1, operator.minAmount!)
+        : undefined;
+      return normalizeProduct({
+        ...product,
+        provider: owner,
+        ...(flupFlapRangeMinimum !== undefined ? {
+          price: flupFlapRangeMinimum,
+          minimumAmount: flupFlapRangeMinimum,
+          maximumAmount: Math.min(100, operator.maxAmount!),
+        } : {}),
+      });
+    }).filter(product => product.price >= (flupFlap && product.classification === 'AIRTIME' ? 1 : 5) &&
+      product.price <= 100 && (!classification || product.classification === classification));
     if (new Set(products.map(p => p.id)).size !== products.length) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Duplicate provider product identity', 502);
     return { operator: { ...operator, provider: owner }, products };
   }
@@ -569,6 +591,7 @@ export class MobileTopUpService {
     key: string,
     billingCountry?: string,
     androidReturn = false,
+    recurringIntervalDays?: 7 | 15 | 30,
   ) {
     if (androidReturn && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
     this.assertEnabled();
@@ -581,8 +604,20 @@ export class MobileTopUpService {
         throw new MobileTopUpError('BILLING_COUNTRY_REQUIRED', 'A verified billing country is required for Stripe checkout', 409);
       }
     }
-    const reserved = await this.reservePayment(userId, input, key);
+    let reserved = await this.reservePayment(userId, input, key);
     this.assertTransactionEnvironment(reserved);
+    if (recurringIntervalDays !== undefined) {
+      if (!this.recurringRechargeEnabled || !flupFlapCustomerId(userId)) {
+        throw new MobileTopUpError('RECURRING_RECHARGE_DISABLED', 'Automatic recharge is unavailable', 403);
+      }
+      if (reserved.recurringIntervalDays !== undefined &&
+          reserved.recurringIntervalDays !== recurringIntervalDays) {
+        throw new MobileTopUpError('IDEMPOTENCY_CONFLICT', 'Recurring interval changed for this payment attempt', 409);
+      }
+      if (reserved.recurringIntervalDays === undefined) {
+        reserved = await this.repository.updateTransaction(reserved.id, { recurringIntervalDays });
+      }
+    }
 
     if (reserved.paymentProvider === 'MOCK') {
       const sessionId = reserved.paymentSessionId ?? 'mock-session:' + reserved.id;
@@ -666,6 +701,7 @@ export class MobileTopUpService {
           billingCountry: country,
           resumeToken,
           ...(androidReturn ? { androidReturn: true } : {}),
+          ...(recurringIntervalDays !== undefined ? { saveForRecurring: true } : {}),
         });
       } catch (error) {
         await this.repository.updateTransaction(reserved.id, { paymentRecoveryCode: 'PAYMENT_SESSION_CREATION_UNKNOWN' });
@@ -694,6 +730,101 @@ export class MobileTopUpService {
       'Stripe is not enabled',
       503,
     );
+  }
+
+  async savedRecurringPaymentMethod(userId: string, transactionId: string) {
+    if (!this.recurringRechargeEnabled || !flupFlapCustomerId(userId)) {
+      throw new MobileTopUpError('RECURRING_RECHARGE_DISABLED', 'Automatic recharge is unavailable', 403);
+    }
+    if (!this.stripeProvider) {
+      throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Stripe is not enabled', 503);
+    }
+    const record = await this.getTransaction(userId, transactionId);
+    if (record.status !== 'DELIVERED' || record.paymentStatus !== 'CAPTURED' ||
+        record.paymentProvider !== 'STRIPE' || !record.paymentProviderTransactionId) {
+      throw new MobileTopUpError('RECURRING_SOURCE_NOT_ELIGIBLE', 'A completed Stripe recharge is required', 409);
+    }
+    const payment = await this.stripeProvider.savedPaymentMethod(record.paymentProviderTransactionId);
+    return { record, ...payment };
+  }
+
+  async chargeSavedPayment(
+    userId: string,
+    input: { quoteId: string; recipientId?: string },
+    key: string,
+    binding: { customerId: string; paymentMethodId: string; billingCountry: string },
+  ) {
+    if (!this.recurringRechargeEnabled || !flupFlapCustomerId(userId)) {
+      throw new MobileTopUpError('RECURRING_RECHARGE_DISABLED', 'Automatic recharge is unavailable', 403);
+    }
+    if (!this.stripeProvider || !['stripe_sandbox', 'stripe_live'].includes(this.config.paymentMode)) {
+      throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Stripe is not enabled', 503);
+    }
+    if (!/^[A-Z]{2}$/.test(binding.billingCountry)) {
+      throw new MobileTopUpError('BILLING_COUNTRY_REQUIRED', 'A billing country is required', 409);
+    }
+    const reserved = await this.reservePayment(userId, input, key);
+    this.assertTransactionEnvironment(reserved);
+    if (reserved.paymentProvider !== 'STRIPE') {
+      throw new MobileTopUpError('PAYMENT_PROVIDER_DISABLED', 'Recurring recharge requires Stripe', 503);
+    }
+    if (reserved.status === 'DELIVERED' && reserved.paymentStatus === 'CAPTURED') return reserved;
+    if (['FAILED', 'REFUNDED'].includes(reserved.status)) return reserved;
+
+    const intent = await this.stripeProvider.createOffSessionPaymentIntent({
+      transactionId: reserved.id,
+      amountMinor: usdMinorUnits(reserved.totalChargeUsd),
+      customerId: binding.customerId,
+      paymentMethodId: binding.paymentMethodId,
+      billingCountry: binding.billingCountry,
+    });
+
+    if (intent.status === 'succeeded') {
+      await this.repository.transitionPayment(
+        reserved.id,
+        ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'],
+        {
+          paymentStatus: 'CAPTURED',
+          paymentProviderTransactionId: intent.id,
+          status: 'PENDING',
+          failureCode: undefined,
+          paymentRecoveryCode: undefined,
+        },
+      );
+      await this.audit(userId, 'FLUPFLAP_RECURRING_PAYMENT_CAPTURED', 'MobileTopUpTransaction', reserved.id);
+      return this.fulfillPaidRecharge(reserved.id);
+    }
+
+    if (['requires_action', 'requires_payment_method', 'canceled'].includes(intent.status)) {
+      await this.repository.transitionPayment(
+        reserved.id,
+        ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'],
+        {
+          paymentStatus: 'FAILED',
+          paymentProviderTransactionId: intent.id,
+          status: 'FAILED',
+          failureCode: intent.status === 'requires_action'
+            ? 'RECURRING_PAYMENT_REQUIRES_ACTION'
+            : 'PAYMENT_DECLINED',
+          failedAt: this.clock().toISOString(),
+        },
+      );
+      await this.audit(userId, 'FLUPFLAP_RECURRING_PAYMENT_FAILED', 'MobileTopUpTransaction', reserved.id, { stripeStatus: intent.status });
+      return (await this.repository.getTransactionById(reserved.id))!;
+    }
+
+    await this.repository.transitionPayment(
+      reserved.id,
+      ['PENDING', 'SESSION_CREATED', 'AUTHORIZED', 'FAILED'],
+      {
+        paymentStatus: 'PENDING',
+        paymentProviderTransactionId: intent.id,
+        status: 'PENDING',
+        paymentRecoveryCode: 'RECURRING_PAYMENT_PENDING',
+      },
+    );
+    await this.audit(userId, 'FLUPFLAP_RECURRING_PAYMENT_PENDING', 'MobileTopUpTransaction', reserved.id, { stripeStatus: intent.status });
+    return (await this.repository.getTransactionById(reserved.id))!;
   }
 
   async resumeCheckout(resumeToken: string): Promise<MobileTopUpCheckoutResumeDto> {
@@ -908,9 +1039,11 @@ export class MobileTopUpService {
     if (
       !record ||
       !hostedProvider ||
-      !record.paymentSessionId ||
-      (isCheckoutSessionEvent && record.paymentSessionId !== event.checkoutSessionId) ||
-      (!isCheckoutSessionEvent && !isTerminalPaymentIntentFailure)
+      (isCheckoutSessionEvent && (!record.paymentSessionId || record.paymentSessionId !== event.checkoutSessionId)) ||
+      (!isCheckoutSessionEvent && !isTerminalPaymentIntentFailure &&
+        (record.paymentSessionId != null ||
+         record.paymentProviderTransactionId == null ||
+         record.paymentProviderTransactionId !== event.paymentId))
     ) {
       throw new MobileTopUpError('PAYMENT_NOT_FOUND', 'Hosted payment was not found', 404);
     }
@@ -990,7 +1123,19 @@ export class MobileTopUpService {
       } : {}),
       ...(status === 'REFUNDED' ? { refundedAt: timestamp } : {}),
     });
-    if (status === 'DELIVERED') await this.repository.postDeliveredLedger(updated);
+    if (status === 'DELIVERED') {
+      await this.repository.postDeliveredLedger(updated);
+      if (original.status !== 'DELIVERED' && this.senderReceiptEmail) {
+        try {
+          if (await this.senderReceiptEmail(updated)) {
+            await this.audit(updated.userId, 'FLUPFLAP_RECHARGE_RECEIPT_EMAIL_SENT', 'MobileTopUpTransaction', updated.id);
+          }
+        } catch {
+          // Receipt delivery must never alter or roll back the settled recharge.
+          await this.audit(updated.userId, 'FLUPFLAP_RECHARGE_RECEIPT_EMAIL_FAILED', 'MobileTopUpTransaction', updated.id);
+        }
+      }
+    }
     if (status === 'REFUNDED') await this.repository.postRefundLedger(updated);
     if (status === 'FAILED' || status === 'REFUNDED') return this.recoverPayment(id, status === 'REFUNDED', allowExternalActions);
     return updated;

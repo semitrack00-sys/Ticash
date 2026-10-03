@@ -65,7 +65,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return url.toString();
   }
 
-  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean }) {
+  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean; saveForRecurring?: boolean }) {
     if (input.currency !== 'USD' || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0 || !/^[A-Za-z0-9_-]{43,512}$/.test(input.resumeToken) || !/^[A-Z]{2}$/.test(input.billingCountry ?? '')) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Server-verified billing country and USD amount are required', 400);
     }
@@ -78,10 +78,13 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
       },
+      ...(input.saveForRecurring ? { customer_creation: 'always' } : {}),
       payment_intent_data: {
+        ...(input.saveForRecurring ? { setup_future_usage: 'off_session' } : {}),
         metadata: {
           transactionId: input.transactionId,
           billingCountry: input.billingCountry,
+          ...(input.saveForRecurring ? { recurringEligible: 'true' } : {}),
         },
       },
       line_items: [{ quantity: 1, price_data: {
@@ -167,7 +170,65 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
   }
 
   async getPayment(paymentId: string) {
+    if (!/^pi_[A-Za-z0-9_]+$/.test(paymentId)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Invalid Stripe payment identifier', 502);
+    }
     return (await this.request(`/v1/payment_intents/${encodeURIComponent(paymentId)}`)).data;
+  }
+
+  async savedPaymentMethod(paymentId: string) {
+    const data = await this.getPayment(paymentId);
+    const customerId = typeof data.customer === 'string' ? data.customer : undefined;
+    const paymentMethodId = typeof data.payment_method === 'string' ? data.payment_method : undefined;
+    if (!/^cus_[A-Za-z0-9_]+$/.test(customerId ?? '') ||
+        !/^pm_[A-Za-z0-9_]+$/.test(paymentMethodId ?? '') ||
+        data.setup_future_usage !== 'off_session') {
+      throw new MobileTopUpError(
+        'RECURRING_PAYMENT_METHOD_UNAVAILABLE',
+        'This payment method was not saved for automatic recharge',
+        409,
+      );
+    }
+    return { customerId: customerId!, paymentMethodId: paymentMethodId! };
+  }
+
+  async createOffSessionPaymentIntent(input: {
+    transactionId: string;
+    amountMinor: number;
+    customerId: string;
+    paymentMethodId: string;
+    billingCountry: string;
+  }) {
+    this.assertMinorAmount(input.amountMinor);
+    if (!/^cus_[A-Za-z0-9_]+$/.test(input.customerId) ||
+        !/^pm_[A-Za-z0-9_]+$/.test(input.paymentMethodId) ||
+        !/^[A-Z]{2}$/.test(input.billingCountry)) {
+      throw new MobileTopUpError('INVALID_RECURRING_PAYMENT', 'Invalid recurring payment binding', 400);
+    }
+    const { data } = await this.request('/v1/payment_intents', 'POST', {
+      amount: input.amountMinor,
+      currency: 'usd',
+      customer: input.customerId,
+      payment_method: input.paymentMethodId,
+      off_session: true,
+      confirm: true,
+      metadata: {
+        transactionId: input.transactionId,
+        billingCountry: input.billingCountry,
+        recurringRecharge: 'true',
+      },
+    }, input.transactionId + ':recurring-payment');
+    const id = typeof data.id === 'string' ? data.id : undefined;
+    const status = typeof data.status === 'string' ? data.status : undefined;
+    if (!/^pi_[A-Za-z0-9_]+$/.test(id ?? '') ||
+        Number(data.amount) !== input.amountMinor ||
+        String(data.currency ?? '').toUpperCase() !== 'USD' ||
+        data.customer !== input.customerId ||
+        data.payment_method !== input.paymentMethodId ||
+        !['succeeded','processing','requires_action','requires_payment_method','requires_confirmation','canceled'].includes(status ?? '')) {
+      throw new MobileTopUpError('INVALID_PAYMENT_RESPONSE', 'Stripe returned an invalid recurring payment', 502);
+    }
+    return { id: id!, status: status! };
   }
 
   async capture(input: { paymentId: string; transactionId: string; amountMinor: number }) {

@@ -4,6 +4,8 @@ import { createMarketingRouter, createMarketingAdminRouter } from './flupflap/ma
 import { createFlupFlapIdentity, loadFlupFlapConfig, type FlupFlapConfig } from './flupflap/auth.js';
 import { FlupFlapIdentityRepository } from './flupflap/repository.js';
 import { flupFlapCustomerId } from './flupflap/owner.js';
+import { FlupFlapRecurringRechargeService, recurringRechargeEnabled } from './flupflap/recurring-recharge.js';
+import { createFlupFlapRecurringRechargeRouter } from './flupflap/recurring-recharge-router.js';
 import { GlobalRechargeProviderRouter } from './topup/provider-router.js';
 import { DtOnePreproductionProvider } from './topup/dtone-provider.js';
 import { loadDtOneConfig } from './topup/dtone-config.js';
@@ -66,6 +68,7 @@ import {
 import { createMobileTopUpRouter } from './topup/router.js';
 import { MobileTopUpService } from './topup/service.js';
 import { loadTelnyxSmsConfig, ReceiverNotificationService, TelnyxReceiverSmsProvider, type ReceiverSmsProvider } from './topup/receiver-notification.js';
+import { loadRechargeReceiptEmailService, type RechargeReceiptEmailService } from './topup/recharge-receipt-email.js';
 import { loadStripeConfig } from './topup/stripe-config.js';
 import { StripeHostedCheckoutProvider } from './topup/stripe-provider.js';
 import { createStripeWebhookHandler } from './topup/stripe-webhook.js';
@@ -657,6 +660,7 @@ export interface CreateAppOptions {
   mobileTopUpRepository?: MobileTopUpRepository;
   mobileTopUpClock?: () => Date;
   passwordResetEmailService?: PasswordResetEmailService;
+  rechargeReceiptEmailService?: RechargeReceiptEmailService;
   flupFlapConfig?: FlupFlapConfig;
   flupFlapRepository?: FlupFlapIdentityRepository;
   flupFlapMarketing?: FlupFlapMarketing;
@@ -675,6 +679,8 @@ export function createApp(options: CreateAppOptions = {}) {
   const allowlistedOrigins = configuredCorsOrigins(process.env);
   const securityConfig = options.securityConfig ?? loadSecurityConfig();
   const passwordResetEmailService = options.passwordResetEmailService ?? loadPasswordResetEmailService();
+  const rechargeReceiptEmailService = options.rechargeReceiptEmailService ?? loadRechargeReceiptEmailService();
+  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
   const sanctionsAmlProvider = options.sanctionsAmlProvider ?? new UnavailableSanctionsAmlProvider();
   const loginProtector = new MemoryLoginProtector(securityConfig);
   const transferMutex = new KeyedMutex();
@@ -995,6 +1001,11 @@ export function createApp(options: CreateAppOptions = {}) {
     return telnyx ? new TelnyxReceiverSmsProvider(telnyx) : undefined;
   })();
 
+  const recurringRechargeActive = recurringRechargeEnabled() &&
+    databaseEnabled &&
+    Boolean(mobileTopUpStripeProvider) &&
+    ['stripe_sandbox', 'stripe_live'].includes(mobileTopUpConfig.paymentMode);
+
   const mobileTopUpService = new MobileTopUpService(
     mobileTopUpConfig,
     mobileTopUpProvider,
@@ -1004,7 +1015,21 @@ export function createApp(options: CreateAppOptions = {}) {
     options.mobileTopUpClock,
     mobileTopUpStripeProvider,
     receiverSmsProvider,
+    async (record) => {
+      if (!rechargeReceiptEmailService.configured || !flupFlapRepository) return false;
+      const customerId = flupFlapCustomerId(record.userId);
+      if (!customerId) return false;
+      const customer = await flupFlapRepository.customer(customerId);
+      if (!customer?.email || customer.guestExpiresAt) return false;
+      await rechargeReceiptEmailService.sendReceipt({ to: customer.email, transaction: record });
+      return true;
+    },
+    recurringRechargeActive,
   );
+
+  const recurringRechargeService = recurringRechargeActive
+    ? new FlupFlapRecurringRechargeService(prisma, flupFlapRepository, mobileTopUpService, recordAudit, options.mobileTopUpClock)
+    : undefined;
 
   // SMS delivery is independent from recharge settlement. The outbox claim prevents
   // concurrent duplicate attempts; ambiguous Telnyx outcomes are never auto-retried.
@@ -1026,6 +1051,26 @@ export function createApp(options: CreateAppOptions = {}) {
     initialSmsWorker.unref();
     const smsWorkerTimer = setInterval(() => { void processSmsOutbox(); }, 30_000);
     smsWorkerTimer.unref();
+  }
+
+  if (recurringRechargeService && process.env.NODE_ENV !== 'test') {
+    let recurringWorkerRunning = false;
+    const runRecurringRecharges = async () => {
+      if (recurringWorkerRunning) return;
+      recurringWorkerRunning = true;
+      try {
+        const result = await recurringRechargeService.runDue(25);
+        if (result.scanned > 0) console.info('FlupFlap recurring recharge processing', result);
+      } catch {
+        console.warn('FlupFlap recurring recharge processing failed', { code: 'RECURRING_RECHARGE_WORKER_ERROR' });
+      } finally {
+        recurringWorkerRunning = false;
+      }
+    };
+    const initialRecurringWorker = setTimeout(() => { void runRecurringRecharges(); }, 15_000);
+    initialRecurringWorker.unref();
+    const recurringWorkerTimer = setInterval(() => { void runRecurringRecharges(); }, 60_000);
+    recurringWorkerTimer.unref();
   }
 
   // Paid processing recharges reconcile automatically in the API process.
@@ -1240,7 +1285,6 @@ export function createApp(options: CreateAppOptions = {}) {
     service: kycService,
   }));
 
-  const flupFlapRepository = options.flupFlapRepository ?? new FlupFlapIdentityRepository(databaseEnabled ? prisma : undefined);
   const flupFlapProductionAllowed = () => mobileTopUpConfig.environment === 'production' &&
     mobileTopUpConfig.paymentMode === 'stripe_live' && mobileTopUpConfig.productionEnabled === true &&
     mobileTopUpConfig.approvedForLiveUse === true && mobileTopUpConfig.liveRechargeEnabled === true &&
@@ -1268,11 +1312,17 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use('/api/flupflap/marketing', createMarketingRouter({ service: marketing,
     authenticate: flupFlap.authenticate, requireRechargeAllowed: flupFlap.requireRechargeAllowed }));
   app.use('/api/admin/flupflap/promotions', createMarketingAdminRouter({ service: marketing, authenticate, permission }));
+  app.use('/api/flupflap/recurring-recharges', createFlupFlapRecurringRechargeRouter({
+    authenticate: flupFlap.authenticate,
+    requireRechargeAllowed: flupFlap.requireRechargeAllowed,
+    service: recurringRechargeService,
+  }));
   app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
     authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,
     service: mobileTopUpService, isGuest: flupFlap.isGuest, billingCountryForUser: flupFlap.billingCountryForUser,
     supportedCountriesPath: '/api/flupflap/mobile-topups/countries',
     allowAndroidReturn: true,
+    allowRecurring: recurringRechargeActive,
     quotePresentation: marketing ? async (owner, id) => marketing.quotePresentation(id, owner.slice('flupflap:'.length)) : undefined,
   }));
 

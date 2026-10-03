@@ -82,6 +82,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentProviderTransactionId?: string;
   checkoutResumeTokenHash?: string;
   checkoutResumeTokenExpiresAt?: string;
+  recurringIntervalDays?: number;
   paymentStartedAt?: string;
   fulfillmentStartedAt?: string;
   recoveryStartedAt?: string;
@@ -130,7 +131,7 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
   'paymentProvider' |
   'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
-      'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt' | 'customerHiddenAt'>>;
+      'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt' | 'recurringIntervalDays' | 'customerHiddenAt'>>;
 
 const notifications = new Map<string, ReceiverNotification>();
 const recipients = new Map<string, SavedTopUpRecipientRecord>();
@@ -396,6 +397,7 @@ function transactionFromDb(record: {
   rechargeEnvironment?: 'SANDBOX' | 'PRODUCTION' | null;
   paymentSessionId?: string | null; paymentProviderTransactionId?: string | null;
   checkoutResumeTokenHash?: string | null; checkoutResumeTokenExpiresAt?: Date | null;
+  recurringIntervalDays?: number | null;
   paymentStartedAt?: Date | null; fulfillmentStartedAt?: Date | null; recoveryStartedAt?: Date | null;
   receiverValueConfirmed?: boolean;
   receiverDiscrepancy?: boolean;
@@ -428,6 +430,7 @@ function transactionFromDb(record: {
     paymentProviderTransactionId: record.paymentProviderTransactionId ?? undefined,
     checkoutResumeTokenHash: record.checkoutResumeTokenHash ?? undefined,
     checkoutResumeTokenExpiresAt: record.checkoutResumeTokenExpiresAt?.toISOString(),
+    recurringIntervalDays: record.recurringIntervalDays ?? undefined,
     paymentStartedAt: record.paymentStartedAt?.toISOString(),
     fulfillmentStartedAt: record.fulfillmentStartedAt?.toISOString(),
     recoveryStartedAt: record.recoveryStartedAt?.toISOString(),

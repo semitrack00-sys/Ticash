@@ -18,7 +18,7 @@ function fixture(provider: MobileTopUpProviderName, codes: string[]): MobileTopU
     ...(provider === 'DTONE' ? { listProducts: vi.fn(async (country: string, id: number) => [{ id: `dtone:${country}:${encodeOperatorId('DTONE', id)}:product:56876`, provider, providerProductId: '56876', countryCode: country, operatorId: id, kind: 'AIRTIME' as const, name: 'Exact product', price: 5, priceCurrency: 'USD', deliveredValue: 800, deliveredCurrency: 'JMD', amountType: 'FIXED' as const }]) } : {}) };
 }
 beforeEach(() => { resetStore(); vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected real network request'); })); });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe('global recharge identity', () => {
   it('preserves Reloadly IDs and separates every provider namespace', () => {
     expect(encodeOperatorId('RELOADLY', 255)).toBe(255);
@@ -34,6 +34,25 @@ describe('global recharge identity', () => {
   it.each([0, -1, 1.2, NaN, Infinity, SLOT_SIZE])('rejects invalid raw operator ID %s', id => expect(() => encodeOperatorId('DTONE', id)).toThrow(MobileTopUpError));
 });
 describe('provider catalog routing', () => {
+  it.each([false, true])('includes DT One in application routing only when enabled: %s', async enabled => {
+    vi.stubEnv('DTONE_ENABLED', String(enabled)); vi.stubEnv('DTONE_API_KEY', 'fixture-key'); vi.stubEnv('DTONE_API_SECRET', 'fixture-secret');
+    vi.stubEnv('DTONE_BASE_URL', 'https://preprod-dvs-api.dtone.com/v1'); vi.stubEnv('DING_ENABLED', 'false');
+    const app = createApp({ mobileTopUpConfig: config });
+    const auth = await request(app).post('/api/auth/register').send({ email: 'dtone-routing@example.com', password: 'correct-horse-42', firstName: 'Ti', lastName: 'Cash' }).expect(201);
+    const status = await request(app).get('/api/mobile-topups/status').set({ Authorization: `Bearer ${auth.body.accessToken}` }).expect(200);
+    expect(status.body.providers).toEqual(enabled ? ['DTONE', 'RELOADLY'] : ['RELOADLY']);
+    expect(status.body).toMatchObject({ productionEnabled: false, liveRechargeEnabled: false });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('keeps healthy Reloadly discovery available when DT One country and operator requests fail', async () => {
+    const reloadly = fixture('RELOADLY', ['JM']); const dtone = fixture('DTONE', ['JM']);
+    vi.mocked(dtone.listCountries).mockRejectedValue(new Error('DT One unavailable'));
+    vi.mocked(dtone.listOperators).mockRejectedValue(new Error('DT One unavailable'));
+    const router = new GlobalRechargeProviderRouter([['RELOADLY', reloadly], ['DTONE', dtone]]);
+    expect((await router.listCountries()).map(c => c.code)).toEqual(['JM']);
+    expect((await router.listOperators('JM')).map(o => o.id)).toEqual([255]);
+    expect(reloadly.submitTopUp).not.toHaveBeenCalled(); expect(dtone.submitTopUp).not.toHaveBeenCalled();
+  });
   it.each(['RELOADLY', 'DING'] as const)('preserves %s carrier logos through global mapping and detection', async provider => {
     const logoUrl = 'https://cdn.example.test/carrier.png';
     const carrier = { ...op, provider, logoUrl };

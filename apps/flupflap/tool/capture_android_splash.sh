@@ -11,8 +11,10 @@ adb shell cmd connectivity airplane-mode enable
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 adb shell am force-stop com.ticash.flupflap
+api=$(adb shell getprop ro.build.version.sdk | tr -d '\r')
 # Android 12 can omit the native splash icon for adb/IDE launches. Tap the
 # actual launcher entry, as a customer would, using its observed UI bounds.
+if (( api >= 31 )); then
 adb shell input keyevent KEYCODE_HOME
 screen=$(adb shell wm size | tr -d '\r' | tail -1 | awk '{print $NF}')
 width=${screen%x*}
@@ -49,10 +51,16 @@ if ! read -r x y < <(launcher_point FlupFlap); then
   echo 'FlupFlap launcher entry not found; inspect launcher.xml/png' >&2
   exit 1
 fi
+fi
 adb shell screenrecord --time-limit 12 /sdcard/flupflap-startup.mp4 &
 record_pid=$!
 sleep 1
-adb shell input tap "$x" "$y"
+if (( api >= 31 )); then
+  adb shell input tap "$x" "$y"
+else
+  # Before Android 12, a shell cold launch includes the full native splash.
+  adb shell am start -W -n com.ticash.flupflap/.MainActivity
+fi
 wait "$record_pid"
 adb pull /sdcard/flupflap-startup.mp4 splash-capture/startup.mp4
 adb exec-out screencap -p > splash-capture/login-native.png

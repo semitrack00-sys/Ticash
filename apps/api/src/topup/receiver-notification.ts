@@ -44,7 +44,7 @@ export function receiverMessage(record: Pick<ReceiverNotification, 'language' | 
   const value = `${record.amount} ${record.currency}`;
   const messages: Record<ReceiverLanguage, string> = {
     en: `FlupFlap: Your recharge of ${value} was successful. Thank you for using FlupFlap.`,
-    ht: `FlupFlap: Ou resevwa yon rechaj ${value} sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.`,
+    ht: `FlupFlap: Ou resevwa ${value} sou nimewo ou. Tranzaksyon an reyisi. Mèsi paske w itilize FlupFlap.`,
     es: `FlupFlap: Has recibido una recarga de ${value}. La transacción fue exitosa. Gracias por usar FlupFlap.`,
     pt: `FlupFlap: Você recebeu uma recarga de ${value}. A transação foi concluída com sucesso. Obrigado por usar o FlupFlap.`,
     fr: `FlupFlap : Votre recharge de ${value} a réussi. Merci d'utiliser FlupFlap.`,

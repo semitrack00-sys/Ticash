@@ -199,7 +199,7 @@ void main() {
           expect(t.takeException(), isNull);
           t.view.viewInsets = const FakeViewPadding();
           await t.pumpAndSettle();
-          await press(t, find.text('Billing country'));
+          await press(t, find.byKey(const ValueKey('billing-country-picker')));
           await t.enterText(
             find.widgetWithText(TextField, 'Search countries'),
             'United States',

@@ -99,6 +99,7 @@ export function createMobileTopUpRouter(options: {
       key,
       billingCountry,
       androidReturn,
+      options.allowAndroidReturn === true && !guest,
     ));
   }));
 

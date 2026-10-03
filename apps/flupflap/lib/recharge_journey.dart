@@ -240,12 +240,18 @@ class RechargeJourney extends ChangeNotifier {
     _emit();
   }
 
-  void back() {
+  Future<void> back() async {
     if (!canBack) return;
-    step = step == RechargeStep.review && product != null
+    reviewed = false;
+    if (step == RechargeStep.review && product == null) {
+      // Repeat starts with a server quote rather than a selected catalog item.
+      // Load the destination catalog so Back still opens Operator & Product.
+      await continueDestination();
+      return;
+    }
+    step = step == RechargeStep.review
         ? RechargeStep.product
         : RechargeStep.destination;
-    reviewed = false;
     _emit();
   }
 

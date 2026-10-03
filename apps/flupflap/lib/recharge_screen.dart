@@ -129,6 +129,33 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       nickname = TextEditingController();
   RechargeJourney get j => widget.journey;
   String? uiError;
+
+  bool get canReturnToDestination =>
+      !j.busy &&
+      !j.locked &&
+      j.step == RechargeStep.result &&
+      j.result?.terminal == true;
+
+  void startAnother() {
+    if (widget.returnOnly) {
+      context.go('/recharge');
+    } else {
+      j.startAnother();
+      phone.text = j.phone;
+      amount.text = j.amount;
+      nickname.text = j.nickname;
+    }
+  }
+
+  Future<void> goBack() async {
+    if (widget.history) return;
+    if (j.canBack) {
+      await j.back();
+    } else if (canReturnToDestination) {
+      startAnother();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -258,22 +285,6 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   Widget button(String label, VoidCallback? action) => Padding(
     padding: const EdgeInsets.only(top: 16),
     child: FilledButton(onPressed: action, child: Text(context.ft(label))),
-  );
-  Widget progress() => Wrap(
-    spacing: 8,
-    runSpacing: 8,
-    children: List.generate(
-      3,
-      (i) => Chip(
-        avatar: CircleAvatar(child: Text('${i + 1}')),
-        label: Text(
-          context.ft(['destination', 'operatorProduct', 'reviewConfirm'][i]),
-        ),
-        backgroundColor: j.step.index == i
-            ? const Color(0xFFE0EEFF)
-            : Colors.white,
-      ),
-    ),
   );
   Widget destination() {
     final selected = j.countries.where((c) => c.code == j.country).firstOrNull;
@@ -487,10 +498,6 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         child: Text(context.ft('apply')),
       ),
       button('continue', j.busy || j.product == null ? null : j.review),
-      TextButton(
-        onPressed: j.canBack ? j.back : null,
-        child: Text(context.ft('back')),
-      ),
     ]);
   }
 
@@ -610,10 +617,6 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           onPressed: j.busy || j.locked ? null : j.review,
           child: Text(context.ft('retry')),
         ),
-      TextButton(
-        onPressed: j.canBack ? j.back : null,
-        child: Text(context.ft('back')),
-      ),
     ]);
   }
 
@@ -744,21 +747,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                 },
         ),
       if (!historical && r.terminal)
-        button(
-          'another',
-          j.busy || j.locked
-              ? null
-              : () {
-                  if (widget.returnOnly) {
-                    context.go('/recharge');
-                  } else {
-                    j.startAnother();
-                    phone.text = j.phone;
-                    amount.text = j.amount;
-                    nickname.text = j.nickname;
-                  }
-                },
-        ),
+        button('another', j.busy || j.locked ? null : startAnother),
       if (!historical)
         TextButton(
           onPressed: () => context.go('/history'),
@@ -771,13 +760,26 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: j,
     builder: (context, _) => PopScope(
-      canPop: widget.history || (!j.canBack && !j.locked),
+      canPop:
+          widget.history ||
+          (!j.busy && !j.locked && j.step == RechargeStep.destination),
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && j.canBack) j.back();
+        if (!didPop) goBack();
       },
       child: Scaffold(
         appBar: AppBar(
           title: Text(context.ft(widget.history ? 'history' : 'recharge')),
+          automaticallyImplyLeading: widget.history,
+          leading: !widget.history && j.step != RechargeStep.destination
+              ? IconButton(
+                  key: const ValueKey('recharge-back'),
+                  tooltip: context.ft('back'),
+                  icon: const BackButtonIcon(),
+                  onPressed: j.canBack || canReturnToDestination
+                      ? goBack
+                      : null,
+                )
+              : null,
         ),
         body: SafeArea(
           child: RefreshIndicator(
@@ -793,8 +795,6 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
               children: [
-                if (!widget.history) progress(),
-                const SizedBox(height: 12),
                 if (j.payments?.mode == CheckoutMode.mock ||
                     j.payments?.mode == CheckoutMode.stripeSandbox)
                   Padding(

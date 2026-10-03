@@ -791,8 +791,10 @@ void main() {
     expect(j.step, RechargeStep.review);
     expect(j.reviewed, false);
     expect(a.quoteCount, 1);
-    j.back();
-    expect(j.step, RechargeStep.destination);
+    await j.back();
+    expect(j.step, RechargeStep.product);
+    expect(j.products, isNotEmpty);
+    expect(j.quote, isNull);
     expect(
       a.requests.where((r) => r.path.endsWith('/payment-sessions')),
       isEmpty,

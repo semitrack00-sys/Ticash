@@ -267,7 +267,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   String money(num value, [String currency = 'USD']) =>
       '${value.toStringAsFixed(2)} $currency';
   String billingCountryName(String? code) {
-    if (code == null) return context.ft('billing');
+    if (code == null) return context.ft('billingRequired');
     for (final country in billingCountries) {
       if (country['code'] == code) return country['name']!;
     }

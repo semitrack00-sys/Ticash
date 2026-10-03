@@ -13,11 +13,11 @@ const range = <String, dynamic>{
   'operatorId': 9,
   'name': 'Digicel Haiti',
   'kind': 'AIRTIME',
-  'price': 5,
+  'price': 1,
   'priceCurrency': 'USD',
   'deliveredCurrency': 'HTG',
   'amountType': 'RANGE',
-  'minimumAmount': 5,
+  'minimumAmount': 1,
   'maximumAmount': 100,
   'catalogVersion': 'provider-catalog-v1',
 };
@@ -102,7 +102,7 @@ void main() {
       await loadProducts(j);
       for (final pair in [
         ('', RechargeAmountIssue.empty),
-        ('4.99', RechargeAmountIssue.belowMinimum),
+        ('0.99', RechargeAmountIssue.belowMinimum),
         ('100.01', RechargeAmountIssue.aboveMaximum),
         ('6.25', RechargeAmountIssue.precision),
         ('6.20', RechargeAmountIssue.increment),
@@ -115,7 +115,7 @@ void main() {
         await j.review();
       }
       expect(adapter.quoteCount, 0);
-      for (final amount in ['5', '6.50', '100']) {
+      for (final amount in ['1', '6.50', '100']) {
         j.setAmount(amount);
         expect(j.amountIssue, isNull);
         expect(j.canReview, isTrue);
@@ -175,12 +175,12 @@ void main() {
       expect(t.getRect(input).top, greaterThan(t.getRect(offer).bottom));
       expect(t.getRect(input).bottom, lessThan(t.view.physicalSize.height));
       expect(t.widget<TextField>(input).controller!.text, isEmpty);
-      expect(find.textContaining('Minimum: 5.0 USD'), findsOneWidget);
+      expect(find.textContaining('Minimum: 1.0 USD'), findsOneWidget);
       final next = find.widgetWithText(FilledButton, 'Continue');
       expect(t.widget<FilledButton>(next).onPressed, isNull);
       expect(find.byType(Chip), findsNothing);
       for (final pair in [
-        ('4.99', 'Minimum recharge amount: 5.00 USD.'),
+        ('0.99', 'Minimum recharge amount: 1.00 USD.'),
         ('100.01', 'Maximum recharge amount: 100.00 USD.'),
       ]) {
         await t.enterText(input, pair.$1);
@@ -188,7 +188,7 @@ void main() {
         expect(find.text(pair.$2), findsOneWidget);
         expect(t.widget<FilledButton>(next).onPressed, isNull);
       }
-      for (final value in ['5', '100']) {
+      for (final value in ['1', '100']) {
         await t.enterText(input, value);
         await t.pumpAndSettle();
         expect(t.widget<TextField>(input).decoration!.errorText, isNull);
@@ -350,7 +350,7 @@ void main() {
           find.text(
             flupFlapStrings[language.code]!['amountTooLow']!.replaceAll(
               '{minimum}',
-              '5.00 USD',
+              '1.00 USD',
             ),
           ),
           findsOneWidget,

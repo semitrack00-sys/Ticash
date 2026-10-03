@@ -80,6 +80,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "recurringTitle": "Automatic recharge",
     "recurringHelp":
         "Choose every 7, 15, or 30 days. FlupFlap charges your saved card automatically and pauses if the price increases or payment needs your attention.",
+    "recurringReviewHelp":
+        "Optional: choose how often FlupFlap should automatically recharge this same number after this payment succeeds.",
+    "recurringOff": "One-time recharge",
+    "recurringSetupPending":
+        "Automatic recharge was requested with this payment. Setup is being finalized securely.",
     "recurringConsent":
         "Automatically recharge this same number every {days} days using your saved card. The current total is the maximum allowed; if the price increases, automatic recharge pauses for your approval.",
     "recurringConfirm": "Enable automatic recharge",

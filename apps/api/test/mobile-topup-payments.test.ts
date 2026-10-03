@@ -585,7 +585,7 @@ describe('Stripe sandbox flow',()=>{
     const quote = await f.service.createQuote('customer', quoteInput);
     const orphan = await f.service.purchase('customer', { quoteId: quote.id }, 'legacy-orphan-reservation');
     expect(orphan).toMatchObject({ status: 'PENDING', paymentStatus: 'PENDING', paymentProvider: 'STRIPE' });
-    const cancelled = await f.service.cancelTransaction('customer', orphan.id);
+    const cancelled = await f.service.cancelTransaction('customer', orphan.id, true);
     expect(cancelled).toMatchObject({ status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' });
     await expect(f.service.createPaymentSession('customer', { quoteId: quote.id }, 'legacy-orphan-reservation', 'US'))
       .rejects.toMatchObject({ code: 'PAYMENT_SESSION_IN_PROGRESS' });
@@ -602,7 +602,7 @@ describe('Stripe sandbox flow',()=>{
       expect(await claim(id, op, when)).toBe(true); // concurrent session creation wins
       return claim(id, op, when);
     });
-    await expect(f.service.cancelTransaction('customer', orphan.id)).rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
+    await expect(f.service.cancelTransaction('customer', orphan.id, true)).rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
     expect((await f.repository.getTransactionById(orphan.id))?.paymentStatus).toBe('PENDING');
     expect(f.transport).not.toHaveBeenCalled();
     expect(f.submit).not.toHaveBeenCalled();
@@ -617,6 +617,39 @@ describe('Stripe sandbox flow',()=>{
     await expect(f.service.cancelTransaction('customer', record!.id)).rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
     expect((await f.repository.getTransactionById(record!.id))?.paymentStatus).toBe('PENDING');
     expect(transport).toHaveBeenCalledTimes(1);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['paymentSessionId', 'cs_test_active'],
+    ['paymentProviderTransactionId', 'pi_active'],
+    ['paymentStartedAt', '2026-10-01T00:00:00.000Z'],
+    ['paymentAuthorizationId', 'auth_active'],
+    ['providerTransactionId', 'provider_active'],
+    ['fulfillmentStartedAt', '2026-10-01T00:00:00.000Z'],
+    ['paymentRecoveryCode', 'STRIPE_SESSION_UNKNOWN'],
+  ])('automatic cleanup refuses PENDING with %s', async (field, value) => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const orphan = await f.service.purchase('customer', { quoteId: quote.id }, `orphan-with-${field}`);
+    await f.repository.updateTransaction(orphan.id, { [field]: value });
+    const before = await f.repository.getTransactionById(orphan.id);
+    await expect(f.service.cancelTransaction('customer', orphan.id, true))
+      .rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
+    expect(await f.repository.getTransactionById(orphan.id)).toEqual(before);
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('automatic cleanup cannot expire a session created after the client read', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'orphan-now-active', 'US');
+    const calls = f.transport.mock.calls.length;
+    await expect(f.service.cancelTransaction('customer', session.transactionId, true))
+      .rejects.toMatchObject({ code: 'TOPUP_CANCELLATION_UNRESOLVED' });
+    expect((await f.repository.getTransactionById(session.transactionId))?.paymentStatus).toBe('SESSION_CREATED');
+    expect(f.transport).toHaveBeenCalledTimes(calls);
     expect(f.submit).not.toHaveBeenCalled();
   });
 
@@ -683,6 +716,23 @@ describe('Stripe sandbox flow',()=>{
     return { ...f, app, identities, repository, quote, session, guest,
       expireQuote: () => { now = new Date(now.getTime() + 600_000); } };
   }
+
+  it('FlupFlap automatic cleanup is owner-scoped and cancels only an untouched reservation', async () => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const other = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    const reserved = await request(f.app).post('/api/flupflap/mobile-topups/transactions')
+      .auth(guest.accessToken, { type: 'bearer' }).set('Idempotency-Key', 'historical-orphan')
+      .send({ quoteId: quote.id }).expect(201);
+    const path = `/api/flupflap/mobile-topups/transactions/${reserved.body.transaction.id}/cancel-abandoned`;
+    await request(f.app).post(path).expect(401);
+    await request(f.app).post(path).auth(other.accessToken, { type: 'bearer' }).expect(404);
+    const cancelled = await request(f.app).post(path).auth(guest.accessToken, { type: 'bearer' }).expect(200);
+    expect(cancelled.body.transaction).toMatchObject({ status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' });
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
 
   it.each(['expired', 'declined', 'paid'] as const)('FlupFlap refresh/resume reconcile %s without external mutations', async outcome => {
     const f = flupFlapStripeFixture();
@@ -758,6 +808,8 @@ describe('Stripe sandbox flow',()=>{
     const session = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201);
     const expire = vi.spyOn(f.stripeProvider!, 'expireHostedCheckoutSession').mockRejectedValueOnce(new Error('unknown'));
     const path = `/api/flupflap/mobile-topups/transactions/${session.body.transactionId}/cancel`;
+    await request(f.app).post(`${path}-abandoned`).auth(guest.accessToken, { type: 'bearer' }).expect(409);
+    expect(expire).not.toHaveBeenCalled();
     const blocked = await request(f.app).post(path).auth(guest.accessToken, { type: 'bearer' }).expect(409);
     expect(blocked.body.code).toBe('TOPUP_CANCELLATION_UNRESOLVED');
     expect((await f.repository.getTransactionById(session.body.transactionId))?.paymentStatus).toBe('SESSION_CREATED');
@@ -787,7 +839,8 @@ describe('Stripe sandbox flow',()=>{
     expect(handoff.headers['content-security-policy']).toContain("default-src 'none'");
     expect(handoff.text).toContain('package=com.ticash.flupflap;end');
     expect(handoff.text).toContain('https://www.flupflap.com/?checkoutResumeToken=');
-    expect(handoff.text).not.toContain('<script');
+    expect(handoff.text).toContain('window.location.assign(openApp.href)');
+    expect(handoff.text).not.toMatch(/<script[^>]+src=/);
     const resumed = await request(f.app).post('/api/flupflap/mobile-topups/checkout-resume').send({ resumeToken: token }).expect(200);
     expect(resumed.body.transaction.paymentStatus).toBe('SESSION_CREATED');
     expect(f.submit).not.toHaveBeenCalled();

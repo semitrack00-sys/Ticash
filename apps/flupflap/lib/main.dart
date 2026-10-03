@@ -10,6 +10,7 @@ import 'checkout_contract.dart';
 import 'recharge_journey.dart';
 import 'recharge_screen.dart';
 import 'parity_strings.dart';
+import 'phone_country_field.dart';
 import 'package:ticash/services/mobile_top_up_service.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'session.dart';
@@ -420,6 +421,7 @@ class _AuthScreenState extends State<AuthScreen> {
       email = TextEditingController(),
       password = TextEditingController();
   bool registration = false, busy = false, obscure = true;
+  PhoneEntry? registrationPhone;
   String? message;
   @override
   void dispose() {
@@ -466,7 +468,9 @@ class _AuthScreenState extends State<AuthScreen> {
         await widget.session.register(
           firstName: firstName.text.trim(),
           lastName: lastName.text.trim(),
-          phone: phone.text.trim().replaceAll(' ', ''),
+          phone:
+              registrationPhone?.requireE164() ??
+              (throw const FormatException('Missing phone number')),
           email: email.text.trim(),
           password: password.text,
         );
@@ -558,18 +562,11 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          TextField(
-                            textInputAction: TextInputAction.next,
+                          PhoneCountryField(
                             controller: phone,
-                            keyboardType: TextInputType.phone,
-                            autofillHints: const [
-                              AutofillHints.telephoneNumber,
-                            ],
-                            decoration: InputDecoration(
-                              labelText: context.ft('Phone number'),
-                              hintText: '+1 555 123 4567',
-                              prefixIcon: const Icon(Icons.phone_outlined),
-                            ),
+                            countryCode: registrationPhone?.country.code,
+                            enabled: !busy,
+                            onChanged: (entry) => registrationPhone = entry,
                           ),
                           const SizedBox(height: 12),
                         ],
@@ -1194,6 +1191,7 @@ class _AddRecipientDialog extends ConsumerStatefulWidget {
 class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
   final nickname = TextEditingController(), phone = TextEditingController();
   String? countryCode, error;
+  PhoneEntry? recipientPhone;
   bool busy = false;
   @override
   void dispose() {
@@ -1219,11 +1217,16 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
       error = null;
     });
     try {
+      // The worldwide phone list is not a promise of recharge coverage.
+      final countries = await ref.refresh(mobileTopUpCountriesProvider.future);
+      if (!countries.any((country) => country.code == countryCode)) {
+        throw const FormatException('Unsupported recharge country');
+      }
       await ref
           .read(mobileTopUpServiceProvider)
           .saveRecipient(
             nickname: nickname.text.trim(),
-            phone: phone.text.trim(),
+            phone: recipientPhone!.requireE164(),
             countryCode: countryCode!,
           );
       ref.invalidate(mobileTopUpRecipientsProvider);
@@ -1259,46 +1262,16 @@ class _AddRecipientDialogState extends ConsumerState<_AddRecipientDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            ref
-                .watch(mobileTopUpCountriesProvider)
-                .when(
-                  loading: () => const LinearProgressIndicator(),
-                  error: (_, __) => TextButton(
-                    onPressed: () =>
-                        ref.invalidate(mobileTopUpCountriesProvider),
-                    child: Text(context.ft('Retry loading countries')),
-                  ),
-                  data: (countries) => DropdownButtonFormField<String>(
-                    isExpanded: true,
-                    initialValue: countryCode,
-                    decoration: InputDecoration(
-                      labelText: context.ft('Destination country'),
-                    ),
-                    items: countries
-                        .map(
-                          (c) => DropdownMenuItem(
-                            value: c.code,
-                            child: Text(
-                              c.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: busy
-                        ? null
-                        : (value) => setState(() => countryCode = value),
-                  ),
-                ),
-            const SizedBox(height: 12),
-            TextField(
+            PhoneCountryField(
               controller: phone,
               enabled: !busy,
-              keyboardType: TextInputType.phone,
+              countryCode: countryCode,
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) => save(),
-              decoration: InputDecoration(labelText: context.ft('phone')),
+              onSubmitted: save,
+              onChanged: (entry) => setState(() {
+                recipientPhone = entry;
+                countryCode = entry.country.code;
+              }),
             ),
             if (error != null)
               Padding(

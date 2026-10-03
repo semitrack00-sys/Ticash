@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/recharge_journey.dart';
 import 'package:flupflap/recharge_screen.dart';
 import 'package:flupflap/parity_strings.dart';
+import 'package:flupflap/phone_country_field.dart';
 import 'package:ticash/localization/app_localizations.dart';
 import 'checkout_parity_test.dart' show fixture;
 import 'parity_widget_test.dart' show shell, press;
@@ -203,6 +204,53 @@ void main() {
       expect(adapter.quoteCount, 1);
       await t.pumpWidget(const SizedBox());
       j.startAnother();
+    },
+  );
+
+  testWidgets(
+    'phone picker survives Back and keyboard submission clears the previous range amount',
+    (t) async {
+      t.platformDispatcher.localesTestValue = [const Locale('ht', 'HT')];
+      addTearDown(t.platformDispatcher.clearLocalesTestValue);
+      final (adapter, _, j) = fixture();
+      adapter.products
+        ..clear()
+        ..add({...range});
+      await t.runAsync(j.initialize);
+      await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+      await t.pumpAndSettle();
+      expect(find.byType(PhoneCountryField), findsOneWidget);
+      expect(find.text('+509'), findsOneWidget);
+      expect(find.byKey(const ValueKey('recharge-back')), findsNothing);
+      final phone = find.byKey(const ValueKey('destination-phone'));
+      await t.enterText(phone, '+509 37 00 00 00');
+      await t.pumpAndSettle();
+      expect(j.country, 'HT');
+      expect(j.phone, '+50937000000');
+      expect(t.widget<TextField>(phone).controller!.text, '37000000');
+      await press(t, find.widgetWithText(FilledButton, 'Continue'));
+      final amount = find.byKey(const ValueKey('range-amount'));
+      expect(j.product?.id, range['id']);
+      await t.enterText(amount, '10');
+      await t.pumpAndSettle();
+      expect(j.canReview, isTrue);
+      await press(t, find.byKey(const ValueKey('recharge-back')));
+      expect(j.step, RechargeStep.destination);
+      expect(find.byType(PhoneCountryField), findsOneWidget);
+      expect(find.text('+509'), findsOneWidget);
+      expect(t.widget<TextField>(phone).controller!.text, '37000000');
+      await t.showKeyboard(phone);
+      await t.testTextInput.receiveAction(TextInputAction.done);
+      await t.pumpAndSettle();
+      expect(j.step, RechargeStep.product);
+      expect(j.product?.id, range['id']);
+      expect(j.phone, '+50937000000');
+      expect(j.amount, isEmpty);
+      expect(t.widget<TextField>(amount).controller!.text, isEmpty);
+      expect(j.canReview, isFalse);
+      expect(find.byType(Chip), findsNothing);
+      expect(adapter.quoteCount, 0);
+      await t.pumpWidget(const SizedBox());
     },
   );
 

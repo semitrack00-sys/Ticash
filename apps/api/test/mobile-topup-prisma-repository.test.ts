@@ -126,7 +126,7 @@ describe('payment foundation persistence', () => {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const repository = new PrismaMobileTopUpRepository({ rechargeNotification: { updateMany } } as never);
     expect(await repository.claimNotification('transaction', timestamp.toISOString())).toBe(true);
-    expect(updateMany.mock.calls[0]![0]).toMatchObject({ where: { transactionId: 'transaction', OR: [
+    expect(updateMany.mock.calls[0]![0]).toMatchObject({ where: { transactionId: 'transaction', transaction: { status: 'DELIVERED', receiverValueConfirmed: true }, OR: [
       { status: 'PENDING', claimedAt: null },
       { status: 'FAILED', lastErrorCategory: { in: ['SMS_NOT_CONFIGURED', 'PROVIDER_REJECTED'] } },
     ] }, data: { attempts: { increment: 1 }, claimedAt: timestamp, status: 'PENDING' } });

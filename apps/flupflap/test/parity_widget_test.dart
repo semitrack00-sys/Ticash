@@ -54,6 +54,53 @@ Widget shell(Widget child, {AppLanguage language = AppLanguage.english}) =>
       ),
     );
 void main() {
+  testWidgets('national destination digits reach operator lookup as E.164', (
+    t,
+  ) async {
+    t.platformDispatcher.localesTestValue = [const Locale('fr', 'HT')];
+    addTearDown(t.platformDispatcher.clearLocalesTestValue);
+    final (adapter, _, j) = fixture();
+    await t.runAsync(j.initialize);
+    await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+    await t.pumpAndSettle();
+    await t.enterText(
+      find.byKey(const ValueKey('destination-phone')),
+      '37000000',
+    );
+    await press(t, find.text('Continue'));
+    expect(j.country, 'HT');
+    expect(j.phone, '+50937000000');
+    expect(j.step, RechargeStep.product);
+    expect(
+      adapter.requests
+          .singleWhere((r) => r.path.endsWith('/operators/detect'))
+          .queryParameters['phone'],
+      '+50937000000',
+    );
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('worldwide picker does not bypass recharge coverage validation', (
+    t,
+  ) async {
+    final (adapter, _, j) = fixture();
+    await t.runAsync(j.initialize);
+    await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+    await t.pumpAndSettle();
+    await t.enterText(
+      find.byKey(const ValueKey('destination-phone')),
+      '+33612345678',
+    );
+    await press(t, find.text('Continue'));
+    expect(j.country, 'FR');
+    expect(j.step, RechargeStep.destination);
+    expect(j.error, isNotNull);
+    expect(
+      adapter.requests.where((r) => r.path.endsWith('/operators/detect')),
+      isEmpty,
+    );
+    await t.pumpWidget(const SizedBox());
+  });
   setUpAll(() async {
     final font = Platform.environment['FLUPFLAP_TEST_FONT'];
     if (font != null) {
@@ -87,6 +134,8 @@ void main() {
               CountryFlag('BR'),
               CountryFlag('JP'),
               CountryFlag('ZA'),
+              CountryFlag('AC'),
+              CountryFlag('TA'),
               CountryFlag('ZZ'),
             ],
           ),
@@ -235,6 +284,27 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
   for (final width in [360.0, 375.0, 390.0, 412.0, 430.0]) {
+    testWidgets('abandoned reservation opens Destination directly at $width', (
+      t,
+    ) async {
+      t.view.physicalSize = Size(width, 900);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.resetPhysicalSize);
+      addTearDown(t.view.resetDevicePixelRatio);
+      final (a, _, j) = fixture();
+      a.pendingHistory = true;
+      a.transactionStatus = a.paymentStatus = 'PENDING';
+      await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
+      await t.pumpAndSettle();
+      expect(j.locked, false);
+      expect(j.step, RechargeStep.destination);
+      expect(find.text('Country'), findsOneWidget);
+      expect(find.text('Pending payment'), findsNothing);
+      expect(find.text('Check status'), findsNothing);
+      expect(j.history.single.terminal, true);
+      expect(t.takeException(), isNull);
+      await t.pumpWidget(const SizedBox());
+    });
     testWidgets('pending recovery cancellation and Back at $width', (t) async {
       t.view.physicalSize = Size(width, 900);
       t.view.devicePixelRatio = 1;
@@ -267,7 +337,7 @@ void main() {
     });
   }
   testWidgets('pending recovery actions use all five languages', (t) async {
-    final (a, _, j) = fixture();
+    final (a, _, j) = fixture(autoDispose: false);
     a.pendingHistory = true;
     await t.runAsync(j.initialize);
     for (final language in AppLanguage.values) {
@@ -286,6 +356,7 @@ void main() {
       expect(t.takeException(), isNull);
     }
     await t.pumpWidget(const SizedBox());
+    j.dispose();
   });
   test('native checkout rejects wrong host before platform call', () async {
     await expectLater(

@@ -155,7 +155,7 @@ void main() {
     testWidgets(
       '${historical ? 'Recovered' : 'New'} genuine pending payment blocks both Back controls',
       (t) async {
-        final (adapter, _, j) = fixture();
+        final (adapter, _, j) = fixture(autoDispose: false);
         if (historical) {
           adapter.pendingHistory = true;
           adapter.transactionStatus = 'PENDING';
@@ -179,6 +179,8 @@ void main() {
         expect(find.text('Open recharge'), findsNothing);
         expect(adapter.requests.length, requestCount);
         await t.pumpWidget(const SizedBox());
+        // The session owns the recovery poller, not the unmounted screen.
+        j.dispose();
       },
     );
   }

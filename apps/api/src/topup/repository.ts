@@ -724,7 +724,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async hideTransactionFromCustomer(userId: string, id: string, when: string) {
     const result = await this.prisma.mobileTopUpTransaction.updateMany({
-      where: { id, ...ownerWhere(userId), customerHiddenAt: null, status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_CUSTOMER' },
+      where: { id, ...ownerWhere(userId), customerHiddenAt: null, status: { in: ['DELIVERED', 'FAILED', 'REFUNDED'] } },
       data: { customerHiddenAt: new Date(when) },
     });
     return result.count === 1;

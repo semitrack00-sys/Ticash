@@ -14,6 +14,15 @@ class StorageService {
   static const _accessTokenKey = 'ticash_access_token';
   static const _refreshTokenKey = 'ticash_refresh_token';
   static const _languageCodeKey = 'ticash_language_code';
+  int _tokenVersion = 0;
+  Future<void> _tokenWork = Future<void>.value();
+  int get tokenVersion => _tokenVersion;
+
+  Future<T> _mutateTokens<T>(Future<T> Function() operation) {
+    final work = _tokenWork.then((_) => operation());
+    _tokenWork = work.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return work;
+  }
 
   Future<void> init() async {
     // Reserved for future secure-storage migrations.
@@ -22,19 +31,70 @@ class StorageService {
   Future<void> saveTokens({
     required String accessToken,
     required String refreshToken,
-  }) async {
-    await _secureStorage.write(key: _accessTokenKey, value: accessToken);
-    await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+  }) {
+    final version = ++_tokenVersion;
+    return _mutateTokens(() async {
+      if (version != _tokenVersion) {
+        return;
+      }
+      await _secureStorage.write(key: _accessTokenKey, value: accessToken);
+      await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+    });
   }
 
-  Future<String?> get accessToken => _secureStorage.read(key: _accessTokenKey);
+  Future<bool> replaceTokensIfCurrent({
+    required int expectedVersion,
+    required String accessToken,
+    required String refreshToken,
+  }) => _mutateTokens(() async {
+    if (expectedVersion != _tokenVersion) {
+      return false;
+    }
+    final version = ++_tokenVersion;
+    try {
+      await _secureStorage.write(key: _accessTokenKey, value: accessToken);
+      await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+    } catch (_) {
+      if (version == _tokenVersion) {
+        await Future.wait([
+          _secureStorage.delete(key: _accessTokenKey),
+          _secureStorage.delete(key: _refreshTokenKey),
+        ]);
+      }
+      rethrow;
+    }
+    return version == _tokenVersion;
+  });
 
-  Future<String?> get refreshToken =>
-      _secureStorage.read(key: _refreshTokenKey);
+  Future<String?> get accessToken async {
+    await _tokenWork;
+    return _secureStorage.read(key: _accessTokenKey);
+  }
 
-  Future<void> clearTokens() async {
-    await _secureStorage.delete(key: _accessTokenKey);
-    await _secureStorage.delete(key: _refreshTokenKey);
+  Future<String?> get refreshToken async {
+    await _tokenWork;
+    return _secureStorage.read(key: _refreshTokenKey);
+  }
+
+  Future<String?> takeRefreshTokenAndClear() {
+    _tokenVersion++;
+    return _mutateTokens(() async {
+      final token = await _secureStorage.read(key: _refreshTokenKey);
+      await _secureStorage.delete(key: _accessTokenKey);
+      await _secureStorage.delete(key: _refreshTokenKey);
+      return token;
+    });
+  }
+
+  Future<void> clearTokens({int? expectedVersion}) {
+    if (expectedVersion != null && expectedVersion != _tokenVersion) {
+      return Future<void>.value();
+    }
+    _tokenVersion++;
+    return _mutateTokens(() async {
+      await _secureStorage.delete(key: _accessTokenKey);
+      await _secureStorage.delete(key: _refreshTokenKey);
+    });
   }
 
   Future<String?> get languageCode =>

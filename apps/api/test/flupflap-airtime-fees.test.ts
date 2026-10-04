@@ -91,12 +91,45 @@ describe('new FlupFlap airtime quotes',()=>{
     expect(await f.service.createQuote('ticash-customer',input(5))).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});
     await expect(f.service.createQuote('ticash-customer',input(1))).rejects.toMatchObject({code:'TOPUP_PRODUCT_UNAVAILABLE'});
   });
-  it.each(['DATA','BUNDLE'] as const)('does not change FlupFlap %s pricing',async classification=>{
+  it.each(['DATA','BUNDLE'] as const)('uses airtime fees for FlupFlap %s while preserving TiCash pricing',async classification=>{
     const f=fixture();
     f.provider.listProducts=async()=>[{id:'reloadly:JM:77:plan',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification,kind:'DATA',
       name:'Provider plan',price:12,priceCurrency:'USD',amountType:'FIXED',deliveredCurrency:'JMD',deliveredValue:100}];
     const product=(await f.service.products('JM',77,undefined,owner)).products[0];
-    expect(await f.service.createQuote(owner,{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.25,totalChargeUsd:13.25});
+    expect(await f.service.createQuote(owner,{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.64,totalChargeUsd:13.64});
+    expect(await f.service.createQuote('ticash-customer',{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.25,totalChargeUsd:13.25});
+  });
+  it.each((['DATA','BUNDLE'] as const).flatMap(classification =>
+    cases.map(([amount,fee]) => ({classification,amount,fee}))))(
+    '$classification $amount bundle uses the shared fee in its Stripe checkout',async({classification,amount,fee})=>{
+    const f=fixture(true);
+    f.provider.listProducts=async()=>[{id:'reloadly:JM:77:plan',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification,kind:'DATA',
+      name:'Provider internet plan',price:amount,priceCurrency:'USD',amountType:'FIXED',deliveredCurrency:'JMD',deliveredValue:100,
+      validity:{quantity:15,unit:'DAY',semantics:'SERVICE'}}];
+    const product=(await f.service.products('JM',77,undefined,owner)).products[0];
+    const q=await f.service.createQuote(owner,{...input(amount),productId:product.id,catalogVersion:product.catalogVersion});
+    expect(q).toMatchObject({providerAmount:amount,feeUsd:fee/100,totalChargeUsd:(Math.round(amount*100)+fee)/100,
+      productSnapshot:{validity:{quantity:15,unit:'DAY',semantics:'SERVICE'}}});
+    expect(await f.service.createPaymentSession(owner,{quoteId:q.id},'bundle-'+randomUUID(),'US'))
+      .toMatchObject({amountMinor:Math.round(amount*100)+fee});
+    const args=f.transport.mock.calls[0] as unknown as [string,RequestInit];
+    expect(new URLSearchParams(String(args[1].body)).get('line_items[0][price_data][unit_amount]'))
+      .toBe(String(Math.round(amount*100)+fee));
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+  it.each(['DATA','BUNDLE'] as const)('preserves an existing %s quote fee on payment and replay',async classification=>{
+    const f=fixture();
+    f.provider.listProducts=async()=>[{id:'reloadly:JM:77:plan',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification,kind:'DATA',
+      name:'Provider plan',price:12,priceCurrency:'USD',amountType:'FIXED',deliveredCurrency:'JMD',deliveredValue:100}];
+    const product=(await f.service.products('JM',77,undefined,owner)).products[0];
+    const fresh=await f.service.createQuote(owner,{...input(12),productId:product.id,catalogVersion:product.catalogVersion});
+    const old=await f.repository.createQuote({...fresh,feeUsd:1.25,totalChargeUsd:13.25});
+    for(let attempt=0;attempt<2;attempt++) {
+      expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'existing-bundle','US')).toMatchObject({amountMinor:1325});
+    }
+    expect(await f.repository.getQuote(owner,old.id)).toMatchObject({feeUsd:1.25,totalChargeUsd:13.25});
+    const posts=f.transport.mock.calls.filter(call=>(call as unknown as [string,RequestInit])[1].method==='POST');
+    expect(posts).toHaveLength(1);
   });
   it('respects exact fixed products and provider range/min/max/increment rules',async()=>{
     const f=fixture();

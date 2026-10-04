@@ -29,7 +29,21 @@ const password = z.string().min(8).max(128).refine(value => Buffer.byteLength(va
 const phone = z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'Enter a valid international phone number including + and country code');
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const webRefreshCookie = 'flupflap_refresh';
-function cookies(header?: string) { return Object.fromEntries((header ?? '').split(';').map(v=>v.trim()).filter(Boolean).map(v=>{const i=v.indexOf('=');return i<0?[v,'']:[v.slice(0,i),decodeURIComponent(v.slice(i+1))];})); }
+function cookies(header?: string): Record<string, string> {
+  const parsed: Record<string, string> = Object.create(null);
+  for (const part of (header ?? '').split(';')) {
+    const index = part.indexOf('=');
+    if (index < 0) continue;
+    const name = part.slice(0, index).trim();
+    // Use the first cookie, consistent with standard cookie parsers. Invalid
+    // escapes remain invalid token values rather than crashing authentication.
+    if (!name || Object.hasOwn(parsed, name)) continue;
+    const value = part.slice(index + 1).trim();
+    try { parsed[name] = decodeURIComponent(value); }
+    catch { parsed[name] = value; }
+  }
+  return parsed;
+}
 function setWebRefreshCookie(res: express.Response, value: string, expiresAt: Date) {
   res.cookie(webRefreshCookie, value, { httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:process.env.NODE_ENV==='production'?'none':'lax', path:'/api/flupflap/auth', expires:expiresAt });
 }

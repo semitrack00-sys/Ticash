@@ -236,11 +236,23 @@ export function assessRisk(config: SecurityConfig, context: RiskContext): string
 
 export function redactAuditMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!metadata) return undefined;
-  const blocked = /password|secret|token|authorization|account(number)?|routing(number)?|ssn|document|selfie|api.?key/i;
-  return Object.fromEntries(Object.entries(metadata).map(([key, value]) => [
-    key,
-    blocked.test(key) ? '[REDACTED]' : typeof value === 'string' && value.length > 500 ? `${value.slice(0, 500)}…` : value,
-  ]));
+  const blocked = /password|secret|token|authorization|cookie|account(number)?|routing(number)?|ssn|document|selfie|api.?key|card.?number|cvv|cvc/i;
+  const ancestors = new WeakSet<object>();
+  const redact = (value: unknown, depth: number): unknown => {
+    if (typeof value === 'string') return value.length > 500 ? `${value.slice(0, 500)}…` : value;
+    if (value === null || typeof value !== 'object') return value;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    if (depth >= 12) return '[DEPTH_LIMIT]';
+    if (ancestors.has(value)) return '[CIRCULAR]';
+    ancestors.add(value);
+    try {
+      if (Array.isArray(value)) return value.map(item => redact(item, depth + 1));
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key, blocked.test(key) ? '[REDACTED]' : redact(item, depth + 1),
+      ]));
+    } finally { ancestors.delete(value); }
+  };
+  return redact(metadata, 0) as Record<string, unknown>;
 }
 
 export class KeyedMutex {

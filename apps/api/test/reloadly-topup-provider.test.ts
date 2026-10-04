@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ReloadlyProductionTopUpProvider, ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
+import { ReloadlyTopUpProvider, ReloadlyProductionTopUpProvider, ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
 import type { MobileTopUpConfig } from '../src/topup/types.js';
 
 const config: MobileTopUpConfig = {
@@ -21,6 +21,92 @@ function json(value: unknown, status = 200) {
 }
 
 describe('Reloadly Sandbox top-up provider', () => {
+  it.each(['sandbox', 'production'] as const)('preserves separate airtime, data, bundle and combo IDs in the %s catalog', async environment => {
+    const catalogConfig = { ...config, environment, airtimeBaseUrl: environment === 'production'
+      ? 'https://topups.reloadly.com' : config.airtimeBaseUrl };
+    const base = { country: { isoName: 'JM' }, status: true, denominationType: 'FIXED',
+      senderCurrencyCode: 'USD', destinationCurrencyCode: 'JMD', fixedAmounts: [5] };
+    const catalog = [
+      { ...base, operatorId: 12, name: 'Carrier Airtime' },
+      { ...base, operatorId: 13, name: 'Carrier Data', data: true, fixedAmountsDescriptions: { '5.00': '1 GB / 7 days' } },
+      { ...base, operatorId: 14, name: 'Carrier Bundle', bundle: true, fixedAmountsDescriptions: { '5': 'Weekly social pack' } },
+      { ...base, operatorId: 15, name: 'Carrier Combo', combo: true, fixedAmountsDescriptions: { '5.0': 'Voice and data pack' } },
+      { ...base, operatorId: 16, name: 'Unnamed data', data: true },
+      { ...base, operatorId: 17, name: 'Inactive bundle', bundle: true, status: false },
+    ];
+    const fetcher = vi.fn<typeof fetch>(async url => {
+      if (String(url) === config.authUrl) return json({ access_token: 'fixture-token', expires_in: 3600 });
+      const request = new URL(String(url));
+      if (request.pathname === '/operators/countries/JM') {
+        return json({ content: catalog });
+      }
+      const operator = catalog.find(item => request.pathname === `/operators/${item.operatorId}`);
+      if (!operator) throw new Error('Unexpected provider operation');
+      return json(operator);
+    });
+    const provider = new ReloadlyTopUpProvider(catalogConfig, fetcher);
+    const operators = await provider.listOperators('jm');
+    expect(operators.map(item => item.id)).toEqual([12, 13, 14, 15, 16]);
+    const request = new URL(String(fetcher.mock.calls[1]?.[0]));
+    expect(request.origin).toBe(catalogConfig.airtimeBaseUrl);
+    expect(Object.fromEntries(request.searchParams)).toEqual({ includeData: 'true', includeBundles: 'true', includeCombo: 'true' });
+    const products = (await Promise.all(operators.map(item => provider.listProducts('JM', item.id)))).flat();
+    expect(products.map(item => [item.operatorId, item.classification, item.name])).toEqual([
+      [12, 'AIRTIME', 'Carrier Airtime 5.00 USD'],
+      [13, 'DATA', '1 GB / 7 days'],
+      [14, 'BUNDLE', 'Weekly social pack'],
+      [15, 'BUNDLE', 'Voice and data pack'],
+    ]);
+    expect(products.every(item => item.price === 5 && item.amountType === 'FIXED')).toBe(true);
+    expect(new Set(products.map(item => item.id)).size).toBe(4);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST').map(([url]) => String(url)))
+      .toEqual([config.authUrl]);
+  });
+
+  it('maps documented sender and local descriptions without mixing denomination currencies', async () => {
+    const raw = { operatorId: 682, name: 'Bundle fixture', country: { isoName: 'HT' }, bundle: true,
+      denominationType: 'FIXED', senderCurrencyCode: 'USD', destinationCurrencyCode: 'HTG',
+      fixedAmounts: [10, 20, 30], localFixedAmounts: [1300, 2600, 3900],
+      fixedAmountsDescriptions: { '10': 'Provider bundle A', '20.00': 'Provider bundle B', '30': null },
+      localFixedAmountsDescriptions: { '1300': 'Local bundle A', '2600': 'Local bundle B', '3900': 'Local only label' },
+      fixedAmountsPlanNames: { '10': 'Legacy description' } };
+    const fetcher = vi.fn<typeof fetch>(async url => String(url) === config.authUrl
+      ? json({ access_token: 'fixture-token', expires_in: 3600 })
+      : json(new URL(String(url)).pathname === '/operators/countries/HT' ? [raw] : raw));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+    for (const operator of [(await provider.listOperators('HT'))[0]!, await provider.getOperator(682)]) {
+      expect(operator.fixedAmountsPlanNames).toEqual({ '10': 'Provider bundle A', '20.00': 'Provider bundle B' });
+      expect(operator.localFixedAmountsPlanNames).toEqual(raw.localFixedAmountsDescriptions);
+    }
+    expect(await provider.listProducts('HT', 682)).toEqual([
+      expect.objectContaining({ operatorId: 682, classification: 'BUNDLE', name: 'Provider bundle A', price: 10 }),
+      expect.objectContaining({ operatorId: 682, classification: 'BUNDLE', name: 'Provider bundle B', price: 20 }),
+    ]);
+  });
+
+  it.each([undefined, null, [], ['Unbound label'], { '5': 7 }, { '5': null }])('does not create bundle plans from missing or malformed descriptions: %j', async descriptions => {
+    const raw = { operatorId: 172, name: 'Bundle fixture', country: { isoName: 'HT' }, bundle: true,
+      denominationType: 'FIXED', senderCurrencyCode: 'USD', destinationCurrencyCode: 'HTG',
+      fixedAmounts: [5], fixedAmountsDescriptions: descriptions };
+    const fetcher = vi.fn<typeof fetch>(async url => String(url) === config.authUrl
+      ? json({ access_token: 'fixture-token', expires_in: 3600 }) : json(raw));
+    expect(await new ReloadlySandboxTopUpProvider(config, fetcher).listProducts('HT', 172)).toEqual([]);
+  });
+
+  it('keeps an airtime-only catalog usable without inventing internet plans', async () => {
+    const raw = { operatorId: 12, name: 'Carrier Airtime', country: { isoName: 'JM' },
+      denominationType: 'FIXED', senderCurrencyCode: 'USD', destinationCurrencyCode: 'JMD', fixedAmounts: [5] };
+    const fetcher = vi.fn<typeof fetch>(async url => String(url) === config.authUrl
+      ? json({ access_token: 'fixture-token', expires_in: 3600 })
+      : json(new URL(String(url)).pathname === '/operators/countries/JM' ? [raw] : raw));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+    const operators = await provider.listOperators('JM');
+    expect(operators).toHaveLength(1);
+    const products = await provider.listProducts('JM', operators[0]!.id);
+    expect(products).toHaveLength(1);
+    expect(products[0]).toMatchObject({ operatorId: 12, classification: 'AIRTIME', price: 5 });
+  });
+
   it('uses production audience/base URL and rejects arbitrary provider URLs without real network', async () => {
     const productionConfig: MobileTopUpConfig = {
       ...config,
@@ -142,7 +228,7 @@ describe('Reloadly Sandbox top-up provider', () => {
     const raw = { operatorId: 12, name: 'Carrier fixture', country: { isoName: 'JM' }, logoUrls: logos };
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async url => String(url) === config.authUrl
       ? json({ access_token: 'fixture-token', expires_in: 3600 })
-      : json(String(url).endsWith('/operators/countries/JM') ? [raw] : raw));
+      : json(new URL(String(url)).pathname === '/operators/countries/JM' ? [raw] : raw));
     const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
     for (const mapped of [(await provider.listOperators('JM'))[0]!, await provider.detectOperator('+18765551234', 'JM'), await provider.getOperator(12)]) {
       expect(mapped.logoUrl).toBe(expected);
@@ -164,7 +250,7 @@ describe('Reloadly Sandbox top-up provider', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       client_id: 'sandbox-id', grant_type: 'client_credentials', audience: config.airtimeBaseUrl,
     });
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/JM`);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${config.airtimeBaseUrl}/operators/countries/JM?includeData=true&includeBundles=true&includeCombo=true`);
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer ' + 'token');
   });
 

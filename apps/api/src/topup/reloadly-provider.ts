@@ -158,8 +158,16 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
       raw.localFixedAmounts.every(value => typeof value === 'number' && Number.isFinite(value) && value > 0) &&
       Array.isArray(raw.fixedAmounts) && raw.fixedAmounts.every(value => typeof value === 'number' && Number.isFinite(value) && value > 0)
       ? raw.localFixedAmounts as number[] : [],
-    fixedAmountsPlanNames: stringMap(raw.fixedAmountsPlanNames),
-    localFixedAmountsPlanNames: stringMap(raw.localFixedAmountsPlanNames),
+    // Reloadly calls denomination labels "Descriptions". Keep our internal
+    // PlanNames contract, preferring the documented provider fields.
+    fixedAmountsPlanNames: {
+      ...stringMap(raw.fixedAmountsPlanNames),
+      ...stringMap(raw.fixedAmountsDescriptions),
+    },
+    localFixedAmountsPlanNames: {
+      ...stringMap(raw.localFixedAmountsPlanNames),
+      ...stringMap(raw.localFixedAmountsDescriptions),
+    },
     minAmount: Number.isFinite(minAmount) && minAmount > 0 ? minAmount : undefined,
     maxAmount: Number.isFinite(maxAmount) && maxAmount > 0 ? maxAmount : undefined,
   };
@@ -360,7 +368,15 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
 
   async listOperators(countryCode: string): Promise<MobileTopUpOperator[]> {
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
-    const body = await this.request(`operators/countries/${normalizedCountry}`);
+    // Fetch the full service catalog: data and bundles can have their own
+    // operator IDs, which must survive selection and product revalidation.
+    // Do not use dataOnly/bundlesOnly here: this list also serves airtime.
+    const query = new URLSearchParams({
+      includeData: 'true',
+      includeBundles: 'true',
+      includeCombo: 'true',
+    });
+    const body = await this.request(`operators/countries/${normalizedCountry}?${query}`);
     const raw = Array.isArray(body) ? body : body.content;
     if (!Array.isArray(raw) || raw.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned an invalid catalog', 502);

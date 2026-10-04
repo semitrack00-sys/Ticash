@@ -55,11 +55,13 @@ jobs:
         run: >
           flutter build apk --debug
           --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+          --dart-define=FLUPFLAP_GOOGLE_CLIENT_ID=${{ secrets.FLUPFLAP_GOOGLE_CLIENT_ID }}
 
       - name: Build QA Android App Bundle
         run: >
           flutter build appbundle --debug
           --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+          --dart-define=FLUPFLAP_GOOGLE_CLIENT_ID=${{ secrets.FLUPFLAP_GOOGLE_CLIENT_ID }}
 
       - name: Stage named artifacts
         shell: bash

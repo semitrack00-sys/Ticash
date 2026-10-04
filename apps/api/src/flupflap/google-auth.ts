@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature } from 'node:crypto';
+import { createPublicKey, verify as verifySignature, type JsonWebKey } from 'node:crypto';
 
 export type VerifiedGoogleIdentity = {
   subject: string;
@@ -35,7 +35,7 @@ export async function verifyGoogleIdentity(idToken: string, audience: string): P
   const valid = verifySignature(
     'RSA-SHA256',
     Buffer.from(parts[0] + '.' + parts[1]),
-    createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' }),
+    createPublicKey({ key: jwk as unknown as JsonWebKey, format: 'jwk' }),
     Buffer.from(parts[2]!, 'base64url'),
   );
   const now = Math.floor(Date.now() / 1000);

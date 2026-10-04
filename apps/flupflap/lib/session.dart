@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:ticash/services/trusted_api_transport.dart';
 
 abstract interface class SessionStorage {
   Future<String?> read();
@@ -22,13 +23,15 @@ class SecureSessionStorage implements SessionStorage {
 /// Own client, token namespace and session. No TiCash ApiClient or auth provider.
 class FlupFlapSession extends ChangeNotifier {
   FlupFlapSession({required this.dio, required this.storage}) {
+    final trustedBaseUrl = dio.options.baseUrl;
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
           // Fail closed if a reused screen attempts a TiCash API or absolute URL.
           if (!options.path.startsWith('/flupflap/') ||
               options.path.contains('..') ||
-              options.path.contains('%')) {
+              options.path.contains('%') ||
+              !isTrustedApiRequest(options, trustedBaseUrl)) {
             handler.reject(
               DioException(
                 requestOptions: options,
@@ -38,7 +41,18 @@ class FlupFlapSession extends ChangeNotifier {
             );
             return;
           }
-          options.headers.remove('Authorization');
+          options.followRedirects = false;
+          if (options.extra['retried'] == true &&
+              options.extra['sessionEpoch'] != _epoch) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Session changed'));
+            return;
+          }
+          options.extra['sessionEpoch'] = _epoch;
+          for (final key in options.headers.keys
+              .where((key) => key.toLowerCase() == 'authorization').toList()) {
+            options.headers.remove(key);
+          }
           if (_accessToken != null) {
             options.headers['Authorization'] = 'Bearer $_accessToken';
           }
@@ -47,15 +61,19 @@ class FlupFlapSession extends ChangeNotifier {
         onError: (error, handler) async {
           final request = error.requestOptions;
           if (error.response?.statusCode == 401 &&
+              request.extra['sessionEpoch'] == _epoch &&
               !request.path.startsWith('/flupflap/auth/') &&
               request.extra['retried'] != true) {
+            final epoch = _epoch;
             try {
               await refresh();
               request.extra['retried'] = true;
               handler.resolve(await dio.fetch<dynamic>(request));
               return;
             } catch (_) {
-              await clear();
+              if (epoch == _epoch) {
+                await clear();
+              }
             }
           }
           handler.next(error);
@@ -75,10 +93,13 @@ class FlupFlapSession extends ChangeNotifier {
   bool get authenticated => user != null && _accessToken != null;
   bool get guest => user?['guest'] == true;
   Future<void> initialize() async {
+    final epoch = _epoch;
     try {
       if (await storage.read() != null) await refresh();
     } catch (_) {
-      await clear();
+      if (epoch == _epoch) {
+        await clear();
+      }
     } finally {
       ready = true;
       notifyListeners();

@@ -27,6 +27,20 @@ const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:
 
 describe('FlupFlap identity and shared recharge isolation',()=>{
  beforeEach(resetStore);
+ it('ignores malformed unrelated cookie escapes without breaking native refresh', async () => {
+  const {app}=setup();const customer=await signup(app);
+  await request(app).post(root+'/auth/refresh').set('Cookie','unrelated=%E0%A4%A')
+    .send({refreshToken:customer.refreshToken}).expect(200);
+ });
+ it('rejects malformed refresh cookies and preserves the origin guard', async () => {
+  const {app}=setup();
+  const response=await request(app).post(root+'/auth/refresh')
+    .set('Cookie','flupflap_refresh=%E0%A4%A').set('Origin','http://localhost:3000').send({}).expect(401);
+  expect(response.body.code).toBe('INVALID_REFRESH_TOKEN');
+  const denied=await request(app).post(root+'/auth/refresh')
+    .set('Cookie','flupflap_refresh=%E0%A4%A').set('Origin','https://attacker.example').send({}).expect(403);
+  expect(denied.body.code).toMatch(/ORIGIN_DENIED/);
+ });
  it('creates a lightweight separate identity, never a TiCash User',async()=>{
   const {app}=setup();const c=await signup(app);
   expect(c.user).toMatchObject({domain:'FLUPFLAP',firstName:'Test',lastName:'A',phone:'+15550000097'});expect(c.user).not.toHaveProperty('passwordHash');expect(c.user).not.toHaveProperty('role');

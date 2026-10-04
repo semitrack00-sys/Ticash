@@ -11,20 +11,28 @@ class AuthService {
   AuthService({Dio? dio}) : _dio = dio ?? ApiClient.instance.dio;
 
   final Dio _dio;
+  int _authEpoch = 0;
 
   Future<User> login({required String email, required String password}) async {
+    final epoch = ++_authEpoch;
+    final version = StorageService.instance.tokenVersion;
     try {
       final response = await _dio.post(
         ApiConfig.authLogin,
         data: {'email': email.trim().toLowerCase(), 'password': password},
       );
 
-      await StorageService.instance.saveTokens(
+      final user = User.fromJson(response.data['user'] as Map<String, dynamic>);
+      if (epoch != _authEpoch) throw const AuthException('Session changed. Please sign in again.');
+      final accepted = await StorageService.instance.replaceTokensIfCurrent(
+        expectedVersion: version,
         accessToken: response.data['accessToken'] as String,
         refreshToken: response.data['refreshToken'] as String,
       );
-
-      return User.fromJson(response.data['user'] as Map<String, dynamic>);
+      if (!accepted || epoch != _authEpoch) {
+        throw const AuthException('Session changed. Please sign in again.');
+      }
+      return user;
     } on DioException catch (error) {
       final data = error.response?.data;
       final message = data is Map<String, dynamic>
@@ -51,6 +59,8 @@ class AuthService {
     String? region,
     String? postalCode,
   }) async {
+    final epoch = ++_authEpoch;
+    final version = StorageService.instance.tokenVersion;
     try {
       final response = await _dio.post(
         ApiConfig.authRegister,
@@ -72,12 +82,17 @@ class AuthService {
         },
       );
 
-      await StorageService.instance.saveTokens(
+      final user = User.fromJson(response.data['user'] as Map<String, dynamic>);
+      if (epoch != _authEpoch) throw const AuthException('Session changed. Please sign in again.');
+      final accepted = await StorageService.instance.replaceTokensIfCurrent(
+        expectedVersion: version,
         accessToken: response.data['accessToken'] as String,
         refreshToken: response.data['refreshToken'] as String,
       );
-
-      return User.fromJson(response.data['user'] as Map<String, dynamic>);
+      if (!accepted || epoch != _authEpoch) {
+        throw const AuthException('Session changed. Please sign in again.');
+      }
+      return user;
     } on DioException catch (error) {
       throw AuthException(
         _messageFor(
@@ -204,26 +219,30 @@ class AuthService {
   }
 
   Future<User?> restoreSession() async {
+    final epoch = _authEpoch;
+    final version = StorageService.instance.tokenVersion;
     if (!await isLoggedIn()) return null;
     try {
-      return await getCurrentUser();
+      final user = await getCurrentUser();
+      return epoch == _authEpoch ? user : null;
     } catch (_) {
-      await StorageService.instance.clearTokens();
+      if (epoch == _authEpoch) {
+        await StorageService.instance.clearTokens(expectedVersion: version);
+      }
       return null;
     }
   }
 
   Future<void> logout() async {
-    final refreshToken = await StorageService.instance.refreshToken;
+    _authEpoch++;
+    final refreshToken = await StorageService.instance.takeRefreshTokenAndClear();
     try {
       await _dio.post(
         ApiConfig.authLogout,
         data: {'refreshToken': refreshToken},
       );
     } catch (_) {
-      // Ignore network errors on logout; always clear local tokens.
-    } finally {
-      await StorageService.instance.clearTokens();
+      // Local credentials are already cleared; remote revocation is best effort.
     }
   }
 }

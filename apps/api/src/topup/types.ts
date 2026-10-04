@@ -284,6 +284,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
   paymentProviderTransactionId?: string;
   checkoutResumeTokenHash?: string;
   checkoutResumeTokenExpiresAt?: string;
+  recurringIntervalDays?: number;
   paymentStartedAt?: string;
   fulfillmentStartedAt?: string;
   recoveryStartedAt?: string;
@@ -303,7 +304,7 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
     'deliveredCurrency' | 'deliveredAt' | 'failedAt' | 'refundedAt' | 'paymentMethod' |
   'paymentProvider' |
   'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
-    'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt'>>;
+    'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt' | 'recurringIntervalDays'>>;
 
 export class MobileTopUpError extends Error {
   constructor(

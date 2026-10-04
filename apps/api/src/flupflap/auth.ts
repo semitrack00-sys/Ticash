@@ -9,15 +9,14 @@ import { FlupFlapIdentityRepository } from './repository.js';
 import { flupFlapOwner, flupFlapCustomerId } from './owner.js';
 import type { PasswordResetEmailService } from '../password-reset-email.js';
 import { passwordResetUrl } from '../password-reset-email.js';
-import { verifyGoogleIdentity } from './google-auth.js';
 
-export type FlupFlapConfig = { enabled: boolean; accessSecret?: string; resetUrl?: string; googleClientId?: string };
+export type FlupFlapConfig = { enabled: boolean; accessSecret?: string; resetUrl?: string };
 export function loadFlupFlapConfig(env: NodeJS.ProcessEnv = process.env): FlupFlapConfig {
   const enabled = z.enum(['true','false']).parse(env.FLUPFLAP_ENABLED ?? 'false') === 'true';
   if (enabled && (!env.FLUPFLAP_ACCESS_SECRET || env.FLUPFLAP_ACCESS_SECRET.length < 32)) throw new Error('FLUPFLAP_ACCESS_SECRET must contain at least 32 characters');
   if (enabled && env.FLUPFLAP_ACCESS_SECRET === env.JWT_ACCESS_SECRET) throw new Error('FlupFlap requires a separate signing secret');
   if (enabled && env.NODE_ENV === 'production' && !env.DATABASE_URL) throw new Error('FlupFlap requires persistent database configuration');
-  return { enabled, accessSecret: env.FLUPFLAP_ACCESS_SECRET, resetUrl: env.FLUPFLAP_PASSWORD_RESET_URL_BASE, googleClientId: env.FLUPFLAP_GOOGLE_CLIENT_ID };
+  return { enabled, accessSecret: env.FLUPFLAP_ACCESS_SECRET, resetUrl: env.FLUPFLAP_PASSWORD_RESET_URL_BASE };
 }
 export function publicFlupFlapCustomer(c: FlupFlapCustomer) {
   return { id: c.id, domain: 'FLUPFLAP', email: c.email, firstName: c.firstName, lastName: c.lastName, phone: c.phone, countryCode: c.countryCode, guest: Boolean(c.guestExpiresAt),
@@ -126,23 +125,7 @@ export function createFlupFlapIdentity(options: {
     if(!updated){res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with these credentials'});return;}
     const session=await issue(updated); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.json(session);
   });
-  router.post('/google', limited, async (req,res) => {
-    if (!config.googleClientId) { res.status(503).json({code:'GOOGLE_LOGIN_UNAVAILABLE',error:'Google sign-in is not configured'}); return; }
-    const input=z.object({idToken:z.string().min(100).max(16000)}).strict().parse(req.body);
-    try {
-      const identity=await verifyGoogleIdentity(input.idToken,config.googleClientId);
-      let c=await repo.byGoogleSubject(identity.subject);
-      if(!c){
-        const existing=await repo.byEmail(identity.email);
-        if(existing){res.status(409).json({code:'GOOGLE_ACCOUNT_LINK_REQUIRED',error:'Sign in with your password before linking Google'});return;}
-        c=await repo.create({googleSubject:identity.subject,email:identity.email,firstName:identity.firstName,lastName:identity.lastName});
-      }
-      if(!active(c) || c.guestExpiresAt){res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with Google'});return;}
-      const session=await issue(c); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.json(session);
-    } catch {
-      res.status(401).json({code:'INVALID_GOOGLE_CREDENTIAL',error:'Unable to sign in with Google'});
-    }
-  });
+
 
   const requireAllowedWebOrigin: RequestHandler = (req,res,next) => {
     if (!cookies(req.header('cookie'))[webRefreshCookie]) { next(); return; }

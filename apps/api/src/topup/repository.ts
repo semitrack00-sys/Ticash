@@ -315,7 +315,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   async hideTransactionFromCustomer(userId: string, id: string, when: string) {
     const record = transactions.get(id);
     if (!record || record.userId !== userId || record.customerHiddenAt ||
-        record.status !== 'FAILED' || record.paymentStatus !== 'FAILED' || record.failureCode !== 'CANCELLED_BY_CUSTOMER') return false;
+        !['DELIVERED', 'FAILED', 'REFUNDED'].includes(record.status)) return false;
     transactions.set(id, { ...record, customerHiddenAt: when, updatedAt: now() });
     return true;
   }

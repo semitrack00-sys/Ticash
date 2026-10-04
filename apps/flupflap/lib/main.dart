@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:ticash/providers/mobile_top_up_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ticash/localization/app_localizations.dart';
@@ -519,6 +520,24 @@ class _AuthScreenState extends State<AuthScreen> {
     });
   }
 
+  Future<void> signInWithGoogle() async {
+    const clientId = String.fromEnvironment('FLUPFLAP_GOOGLE_CLIENT_ID');
+    if (clientId.isEmpty) {
+      setState(() => message = context.ft('Google sign-in is not configured.'));
+      return;
+    }
+    await run(() async {
+      final account = await GoogleSignIn(
+        scopes: const ['email'],
+        serverClientId: clientId,
+      ).signIn();
+      if (account == null) return;
+      final token = (await account.authentication).idToken;
+      if (token == null || token.isEmpty) throw StateError('Missing Google credential');
+      await widget.session.google(token);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final signIn = !registration && widget.resetToken == null;
@@ -656,6 +675,13 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           if (widget.resetToken == null) ...[
             const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const ValueKey('google-sign-in'),
+              onPressed: busy ? null : signInWithGoogle,
+              icon: const Icon(Icons.account_circle_outlined),
+              label: Text(context.ft('Continue with Google')),
+            ),
+            const SizedBox(height: 10),
             OutlinedButton(
               onPressed: busy
                   ? null

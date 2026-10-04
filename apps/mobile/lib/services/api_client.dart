@@ -28,7 +28,10 @@ class ApiClient {
             return;
           }
           options.followRedirects = false;
-          options.headers.removeWhere((key, _) => key.toLowerCase() == 'authorization');
+          for (final key in options.headers.keys
+              .where((key) => key.toLowerCase() == 'authorization').toList()) {
+            options.headers.remove(key);
+          }
           final token = await StorageService.instance.accessToken;
           if (token != null) {
             options.headers['Authorization'] = _buildBearerHeader(token);

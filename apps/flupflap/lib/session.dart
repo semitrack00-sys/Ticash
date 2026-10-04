@@ -42,7 +42,10 @@ class FlupFlapSession extends ChangeNotifier {
             return;
           }
           options.followRedirects = false;
-          options.headers.removeWhere((key, _) => key.toLowerCase() == 'authorization');
+          for (final key in options.headers.keys
+              .where((key) => key.toLowerCase() == 'authorization').toList()) {
+            options.headers.remove(key);
+          }
           if (_accessToken != null) {
             options.headers['Authorization'] = 'Bearer $_accessToken';
           }

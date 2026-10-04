@@ -289,6 +289,7 @@ export class MobileTopUpService {
   }
 
   async products(countryCode: string, operatorId: number, classification?: 'AIRTIME' | 'DATA' | 'BUNDLE', userId?: string) {
+    void userId; // Catalog terms are identical for both customer domains.
     this.assertEnabled();
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
     const operator = await this.provider.getOperator(operatorId);
@@ -313,24 +314,10 @@ export class MobileTopUpService {
         (owner !== 'RELOADLY' && !product.providerProductId))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Invalid provider product identity or price', 502);
     }
-    const flupFlap = userId ? flupFlapCustomerId(userId) : undefined;
-    const products = rawProducts.map(product => {
-      const flupFlapRangeMinimum = flupFlap && owner === 'RELOADLY' && product.classification === 'AIRTIME' &&
-        product.amountType === 'RANGE' && operator.denominationType === 'RANGE' &&
-        Number.isFinite(operator.minAmount) && Number.isFinite(operator.maxAmount)
-        ? Math.max(1, operator.minAmount!)
-        : undefined;
-      return normalizeProduct({
-        ...product,
-        provider: owner,
-        ...(flupFlapRangeMinimum !== undefined ? {
-          price: flupFlapRangeMinimum,
-          minimumAmount: flupFlapRangeMinimum,
-          maximumAmount: Math.min(100, operator.maxAmount!),
-        } : {}),
-      });
-    }).filter(product => product.price >= (flupFlap && product.classification === 'AIRTIME' ? 1 : 5) &&
-      product.price <= 100 && (!classification || product.classification === classification));
+    // Keep the provider snapshot identical through quoting and submission.
+    const products = rawProducts.map(product => normalizeProduct({ ...product, provider: owner }))
+      .filter(product => product.price >= 5 && product.price <= 100 &&
+        (!classification || product.classification === classification));
     if (new Set(products.map(p => p.id)).size !== products.length) throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Duplicate provider product identity', 502);
     return { operator: { ...operator, provider: owner }, products };
   }
@@ -412,7 +399,7 @@ export class MobileTopUpService {
       throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
     const flupFlapAirtime = Boolean(flupFlapCustomerId(userId)) && product.classification === 'AIRTIME';
-    assertProductAmount(product, amount, flupFlapAirtime ? 100 : 500);
+    assertProductAmount(product, amount);
     const receiverQuote = validateReceiverQuote(this.provider.quoteReceiverValue
       ? await this.provider.quoteReceiverValue(product, amount)
       : productReceiverQuote(product, amount), product, amount);
@@ -461,7 +448,7 @@ export class MobileTopUpService {
     // Legacy records lack a benefits snapshot; never fulfill unreviewed legacy data plans.
     if (!quote.productSnapshot && current.classification !== 'AIRTIME') throw new MobileTopUpError('TOPUP_QUOTE_CHANGED', 'This plan requires a new quote', 400);
     if (quote.productSnapshot) assertSameProduct(quote.productSnapshot, current);
-    assertProductAmount(current, quote.providerAmount, flupFlapCustomerId(quote.userId) && current.classification === 'AIRTIME' ? 100 : 500);
+    assertProductAmount(current, quote.providerAmount);
   }
 
   private requestHash(userId: string, quoteId: string, recipientId?: string) {
@@ -933,7 +920,7 @@ export class MobileTopUpService {
         failureCode: rejected ? 'TOPUP_REJECTED' : 'TOPUP_SUBMISSION_UNKNOWN',
         paymentRecoveryCode: rejected ? 'PAYMENT_RECOVERY_REQUIRED' : 'FULFILLMENT_RECONCILIATION_REQUIRED',
         ...(rejected ? { failedAt: this.clock().toISOString() } : {}) });
-      await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', id, { rejected });
+      await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_RECONCILIATION_REQUIRED', 'MobileTopUpTransaction', id, { rejected, code: error instanceof MobileTopUpError ? error.code : 'UNEXPECTED_ERROR' });
       if (rejected) await this.recoverPayment(id);
       throw new MobileTopUpError(rejected ? 'TOPUP_REJECTED' : 'TOPUP_SUBMISSION_UNKNOWN', 'Recharge needs reconciliation; retrying will not resubmit airtime', 502);
     }

@@ -36,7 +36,7 @@ export function approvedRechargePrice(amountUsd: number) {
 // Final FlupFlap AIRTIME fees, inclusive bounds in integer cents.
 // Applied only when creating a new applicable quote; never reprice stored records.
 const flupFlapAirtimeFeeTiers = [
-  [100, 999, 99],
+  [500, 999, 99],
   [1000, 1999, 164],
   [2000, 2999, 234],
   [3000, 3999, 284],
@@ -46,7 +46,7 @@ const flupFlapAirtimeFeeTiers = [
 ] as const;
 
 export function flupFlapAirtimePrice(amountUsd: number) {
-  const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd, 100);
+  const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd);
   const tier = flupFlapAirtimeFeeTiers.find(([minimum, maximum]) => amountMinorUnits >= minimum && amountMinorUnits <= maximum)!;
   const feeMinorUnits = tier[2];
   return { amountMinorUnits, feeMinorUnits, totalMinorUnits: amountMinorUnits + feeMinorUnits };

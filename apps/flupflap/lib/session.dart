@@ -42,6 +42,13 @@ class FlupFlapSession extends ChangeNotifier {
             return;
           }
           options.followRedirects = false;
+          if (options.extra['retried'] == true &&
+              options.extra['sessionEpoch'] != _epoch) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Session changed'));
+            return;
+          }
+          options.extra['sessionEpoch'] = _epoch;
           for (final key in options.headers.keys
               .where((key) => key.toLowerCase() == 'authorization').toList()) {
             options.headers.remove(key);
@@ -54,15 +61,19 @@ class FlupFlapSession extends ChangeNotifier {
         onError: (error, handler) async {
           final request = error.requestOptions;
           if (error.response?.statusCode == 401 &&
+              request.extra['sessionEpoch'] == _epoch &&
               !request.path.startsWith('/flupflap/auth/') &&
               request.extra['retried'] != true) {
+            final epoch = _epoch;
             try {
               await refresh();
               request.extra['retried'] = true;
               handler.resolve(await dio.fetch<dynamic>(request));
               return;
             } catch (_) {
-              await clear();
+              if (epoch == _epoch) {
+                await clear();
+              }
             }
           }
           handler.next(error);

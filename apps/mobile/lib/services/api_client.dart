@@ -32,7 +32,20 @@ class ApiClient {
               .where((key) => key.toLowerCase() == 'authorization').toList()) {
             options.headers.remove(key);
           }
+          final version = StorageService.instance.tokenVersion;
+          if (options.extra['authRetried'] == true &&
+              options.extra['sessionVersion'] != version) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Session changed'));
+            return;
+          }
           final token = await StorageService.instance.accessToken;
+          if (version != StorageService.instance.tokenVersion) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Session changed'));
+            return;
+          }
+          options.extra['sessionVersion'] = version;
           if (token != null) {
             options.headers['Authorization'] = _buildBearerHeader(token);
           }
@@ -41,17 +54,13 @@ class ApiClient {
         onError: (error, handler) async {
           final alreadyRetried =
               error.requestOptions.extra['authRetried'] == true;
-          if (error.response?.statusCode == 401 && !alreadyRetried) {
+          if (error.response?.statusCode == 401 && !alreadyRetried &&
+              error.requestOptions.extra['sessionVersion'] == StorageService.instance.tokenVersion) {
             final refreshed = await _refreshOnce();
-            if (refreshed) {
+            if (refreshed != null) {
               final requestOptions = error.requestOptions;
               requestOptions.extra['authRetried'] = true;
-              final token = await StorageService.instance.accessToken;
-              if (token != null) {
-                requestOptions.headers['Authorization'] = _buildBearerHeader(
-                  token,
-                );
-              }
+              requestOptions.extra['sessionVersion'] = refreshed;
               try {
                 final response = await _dio.fetch(requestOptions);
                 return handler.resolve(response);
@@ -78,7 +87,7 @@ class ApiClient {
   static final ApiClient instance = ApiClient._internal();
 
   late final Dio _dio;
-  Future<bool>? _refreshInFlight;
+  Future<int?>? _refreshInFlight;
 
   /// Bare Dio instance (no auth interceptor) used solely for refreshing
   /// the access token, so refresh requests aren't recursively intercepted.
@@ -93,7 +102,7 @@ class ApiClient {
 
   Dio get dio => _dio;
 
-  Future<bool> _refreshOnce() {
+  Future<int?> _refreshOnce() {
     final current = _refreshInFlight;
     if (current != null) return current;
     final refresh = _refreshAccessToken();
@@ -104,9 +113,12 @@ class ApiClient {
     return refresh;
   }
 
-  Future<bool> _refreshAccessToken() async {
+  Future<int?> _refreshAccessToken() async {
+    final version = StorageService.instance.tokenVersion;
     final refreshToken = await StorageService.instance.refreshToken;
-    if (refreshToken == null) return false;
+    if (refreshToken == null || version != StorageService.instance.tokenVersion) {
+      return null;
+    }
 
     try {
       final response = await _refreshDio.post(
@@ -115,16 +127,17 @@ class ApiClient {
       );
       final data = response.data as Map<String, dynamic>;
       final newAccessToken = data['accessToken'] as String?;
-      if (newAccessToken == null || newAccessToken.isEmpty) return false;
+      if (newAccessToken == null || newAccessToken.isEmpty) return null;
       final newRefreshToken = data['refreshToken'] as String? ?? refreshToken;
-      await StorageService.instance.saveTokens(
+      final replaced = await StorageService.instance.replaceTokensIfCurrent(
+        expectedVersion: version,
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
       );
-      return true;
+      return replaced ? version + 1 : null;
     } catch (_) {
-      await StorageService.instance.clearTokens();
-      return false;
+      await StorageService.instance.clearTokens(expectedVersion: version);
+      return null;
     }
   }
 

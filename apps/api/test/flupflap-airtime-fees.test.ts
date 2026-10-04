@@ -3,13 +3,14 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
 import { flupFlapOwner } from '../src/flupflap/owner.js';
+import { ReloadlySandboxTopUpProvider } from '../src/topup/reloadly-provider.js';
 import { MemoryMobileTopUpRepository } from '../src/topup/repository.js';
 import { MobileTopUpService } from '../src/topup/service.js';
 import { StripeHostedCheckoutProvider } from '../src/topup/stripe-provider.js';
 import type { StripeConfig } from '../src/topup/stripe-config.js';
 import { MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpOperator, type MobileTopUpProvider } from '../src/topup/types.js';
 
-const cases = [[1,99],[9.99,99],[10,164],[19.99,164],[20,234],[29.99,234],[30,284],[39.99,284],
+const cases = [[9.99,99],[10,164],[19.99,164],[20,234],[29.99,234],[30,284],[39.99,284],
   [40,334],[49.99,334],[50,384],[74.99,384],[75,484],[100,484],[5,99],[15,164],[25,234],[35,284],[45,334],[60,384],[90,484]];
 const config: MobileTopUpConfig = { enabled:true, environment:'sandbox', paymentMode:'stripe_sandbox',
   productionEnabled:false, approvedForLiveUse:false, billingCurrency:'USD', quoteTtlSeconds:300,
@@ -41,6 +42,28 @@ beforeEach(()=>{resetStore();vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('R
 afterEach(()=>vi.unstubAllGlobals());
 
 describe('new FlupFlap airtime quotes',()=>{
+  it.each([5, 10, 13, 100])('submits a FlupFlap $%s range quote through the real Reloadly adapter', async amount => {
+    const transport = vi.fn<typeof fetch>(async (url, init) => {
+      const path = String(url);
+      if (path === config.authUrl) return new Response(JSON.stringify({access_token:'fixture-token',expires_in:3600}));
+      if (path.endsWith('/operators/77')) return new Response(JSON.stringify({operatorId:77,name:operator.name,
+        country:{isoName:'JM'},denominationType:'RANGE',senderCurrencyCode:'USD',destinationCurrencyCode:'JMD',minAmount:1,maxAmount:100}));
+      if (path.endsWith('/operators/fx-rate')) return new Response(JSON.stringify({id:77,fxRate:amount*130,currencyCode:'JMD'}));
+      if (path.endsWith('/topups-async')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({operatorId:77,amount,useLocalAmount:false});
+        return new Response(JSON.stringify({transactionId:12345}));
+      }
+      throw new Error('Unexpected provider endpoint');
+    });
+    const runtime = {...config,paymentMode:'mock' as const,clientId:'fixture-id',clientSecret:'fixture-secret'};
+    const provider = new ReloadlySandboxTopUpProvider(runtime, transport);
+    const repository = new MemoryMobileTopUpRepository();
+    const service = new MobileTopUpService(runtime,provider,new MockMobileTopUpPaymentProvider(),repository,async()=>{});
+    const quote = await service.createQuote(owner,{...input(amount),productId:'reloadly:JM:77:airtime:range',amount});
+    expect(quote.productSnapshot).toMatchObject({price:5,minimumAmount:5,maximumAmount:100});
+    expect(await service.purchase(owner,{quoteId:quote.id},'range-'+randomUUID())).toMatchObject({status:'PROCESSING',providerTransactionId:'12345'});
+    expect(transport.mock.calls.filter(([url])=>String(url).endsWith('/topups-async'))).toHaveLength(1);
+  });
   it.each(cases)('production $%s keeps principal/delivery and charges exactly %s cents fee',async(amount,fee)=>{
     const f=fixture(true);const q=await f.service.createQuote(owner,input(amount));
     expect(q).toMatchObject({providerAmount:amount,providerCurrency:'USD',feeUsd:fee/100,totalChargeUsd:(Math.round(amount*100)+fee)/100,
@@ -54,11 +77,11 @@ describe('new FlupFlap airtime quotes',()=>{
     expect(f.submit).not.toHaveBeenCalled();
     expect((await f.repository.getQuote(owner,q.id))?.receiverQuote).toEqual(q.receiverQuote);
   });
-  it('exposes $1-$100 Reloadly range only to FlupFlap while TiCash keeps the $5 minimum',async()=>{
+  it('exposes the same $5-$100 Reloadly range to FlupFlap and TiCash',async()=>{
     const f=fixture();
     f.provider.getOperator=async()=>({...operator,denominationType:'RANGE',fixedAmounts:[],localFixedAmounts:[],minAmount:1,maxAmount:100});
     const flupFlap=(await f.service.products('JM',77,undefined,owner)).products[0];
-    expect(flupFlap).toMatchObject({price:1,minimumAmount:1,maximumAmount:100,classification:'AIRTIME',amountType:'RANGE'});
+    expect(flupFlap).toMatchObject({price:5,minimumAmount:5,maximumAmount:100,classification:'AIRTIME',amountType:'RANGE'});
     const ticash=(await f.service.products('JM',77,undefined,'ticash-customer')).products[0];
     expect(ticash).toMatchObject({price:5,minimumAmount:5,maximumAmount:100,classification:'AIRTIME',amountType:'RANGE'});
   });
@@ -81,12 +104,12 @@ describe('new FlupFlap airtime quotes',()=>{
     await expect(f.service.createQuote(owner,{...input(5),amount:1})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
     f.provider.getOperator=async()=>({...operator,denominationType:'RANGE',minAmount:1,maxAmount:20});
     f.provider.listProducts=async()=>[{id:'reloadly:JM:77:airtime:range',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification:'AIRTIME',kind:'AIRTIME',
-      name:'Provider range',price:1,priceCurrency:'USD',amountType:'RANGE',minimumAmount:1,maximumAmount:20,amountIncrement:0.25,deliveredCurrency:'JMD'}];
+      name:'Provider range',price:5,priceCurrency:'USD',amountType:'RANGE',minimumAmount:5,maximumAmount:20,amountIncrement:0.25,deliveredCurrency:'JMD'}];
     f.provider.quoteReceiverValue=async(p,amount)=>({amount:amount*130,currency:'JMD',senderAmount:amount,senderCurrency:p.priceCurrency,source:'RELOADLY_FX',quotedAt:new Date().toISOString()});
     const range={...input(1),productId:'reloadly:JM:77:airtime:range'};
-    expect(await f.service.createQuote(owner,{...range,amount:1})).toMatchObject({providerAmount:1,feeUsd:0.99,totalChargeUsd:1.99});
+    expect(await f.service.createQuote(owner,{...range,amount:5})).toMatchObject({providerAmount:5,feeUsd:0.99,totalChargeUsd:5.99});
     expect(await f.service.createQuote(owner,{...range,amount:15.25})).toMatchObject({providerAmount:15.25,feeUsd:1.64,totalChargeUsd:16.89});
-    for(const amount of [0.99,20.25,100.01,1.01,1.001]) await expect(f.service.createQuote(owner,{...range,amount})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
+    for(const amount of [0.99,1,4.99,20.25,100.01,5.01,5.001]) await expect(f.service.createQuote(owner,{...range,amount})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
     const q=await f.service.createQuote(owner,{...range,amount:5});
     const prior=f.provider.listProducts;
     f.provider.listProducts=async(c,id)=>(await prior(c,id))!.map(p=>({...p,amountIncrement:0.5}));
@@ -105,7 +128,7 @@ describe('new FlupFlap airtime quotes',()=>{
     const posts=f.transport.mock.calls.filter(call=>(call as unknown as [string,RequestInit])[1].method==='POST');
     expect(posts).toHaveLength(1);expect(f.submit).not.toHaveBeenCalled();
   });
-  it('API accepts provider-backed $1, rejects client fees/totals and preserves guest separation',async()=>{
+  it('API accepts provider-backed $5, rejects client fees/totals and preserves guest separation',async()=>{
     const f=fixture();const app=createApp({flupFlapConfig:{enabled:true,accessSecret:'test-flupflap-identity-secret-at-least-32-characters'},
       mobileTopUpConfig:config,mobileTopUpProvider:f.provider,mobileTopUpStripeProvider:f.stripe,stripeConfig:f.stripeConfig});
     const guest=await request(app).post('/api/flupflap/auth/guest').send({}).expect(201);
@@ -113,13 +136,13 @@ describe('new FlupFlap airtime quotes',()=>{
     for(const field of ['fee','feeUsd','totalChargeUsd','providerAmount','paymentStatus']) {
       await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send({...input(1),[field]:0}).expect(400);
     }
-    const q=(await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send(input(1)).expect(201)).body.quote;
-    expect(q).toMatchObject({providerAmount:1,feeUsd:0.99,totalChargeUsd:1.99});
+    const q=(await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send(input(5)).expect(201)).body.quote;
+    expect(q).toMatchObject({providerAmount:5,feeUsd:0.99,totalChargeUsd:5.99});
     for(const field of ['fee','feeUsd','totalChargeUsd','amountMinor']) await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'})
       .set('Idempotency-Key','api-fee-session').send({quoteId:q.id,billingCountry:'US',[field]:0}).expect(400);
     await request(app).patch('/api/flupflap/auth/me').auth(token,{type:'bearer'}).send({countryCode:'US'}).expect(403);
     expect((await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'}).set('Idempotency-Key','api-fee-session')
-      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(199);
+      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(599);
     expect(f.submit).not.toHaveBeenCalled();
   });
 });

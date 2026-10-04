@@ -889,6 +889,35 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       if (!historical) button('refresh', j.busy ? null : j.refresh),
       if (!historical && !r.terminal && j.hosted != null)
         button('openCheckout', j.busy ? null : openCheckout),
+      if (historical && r.terminal && r.id != null)
+        TextButton.icon(
+          key: ValueKey('receipt-delete-${r.id}'),
+          icon: const Icon(Icons.delete_outline),
+          label: Text(context.ft('Delete receipt')),
+          onPressed: j.busy ? null : () async {
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: Text(context.ft('Delete receipt')),
+                content: Text(context.ft('This removes the receipt from your history.')),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: Text(context.ft('Cancel')),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: Text(context.ft('Delete')),
+                  ),
+                ],
+              ),
+            );
+            if (confirmed == true && r.id != null) {
+              await j.client.removeReceipt(r.id!);
+              await j.loadHistory();
+            }
+          },
+        ),
       if (historical && r.terminal)
         button(
           'repeat',

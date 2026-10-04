@@ -7,11 +7,12 @@ export class FlupFlapIdentityRepository {
   private resets = new Map<string, FlupFlapPasswordResetToken>();
   constructor(private readonly db?: PrismaClient) {}
   async customer(id: string) { return this.db ? this.db.flupFlapCustomer.findUnique({ where: { id } }) : this.customers.get(id) ?? null; }
+  async byGoogleSubject(subject: string) { return this.db ? this.db.flupFlapCustomer.findUnique({ where: { googleSubject: subject } }) : [...this.customers.values()].find(c => c.googleSubject === subject) ?? null; }
   async byEmail(email: string) { return this.db ? this.db.flupFlapCustomer.findUnique({ where: { email } }) : [...this.customers.values()].find(c => c.email === email) ?? null; }
-  async create(input: { email?: string; passwordHash?: string; firstName?: string; lastName?: string; phone?: string; countryCode?: string; guestExpiresAt?: Date }) {
+  async create(input: { email?: string; passwordHash?: string; googleSubject?: string; firstName?: string; lastName?: string; phone?: string; countryCode?: string; guestExpiresAt?: Date }) {
     if (this.db) return this.db.flupFlapCustomer.create({ data: input });
     if (input.email && [...this.customers.values()].some(c => c.email === input.email)) throw Object.assign(new Error('Duplicate identity'), { code: 'P2002' });
-    const customer: FlupFlapCustomer = { id: randomUUID(), email: input.email ?? null, passwordHash: input.passwordHash ?? null,
+    const customer: FlupFlapCustomer = { id: randomUUID(), email: input.email ?? null, passwordHash: input.passwordHash ?? null, googleSubject: input.googleSubject ?? null,
       firstName: input.firstName ?? null, lastName: input.lastName ?? null, countryCode: input.countryCode ?? null,
       guestExpiresAt: input.guestExpiresAt ?? null, emailVerifiedAt: null, phone: input.phone ?? null,
       phoneVerifiedAt: null, status: 'ACTIVE', rechargeRestricted: false, authVersion: 0, failedLoginAttempts: 0, loginLockedUntil: null,

@@ -360,7 +360,15 @@ export class ReloadlyTopUpProvider implements MobileTopUpProvider {
 
   async listOperators(countryCode: string): Promise<MobileTopUpOperator[]> {
     const normalizedCountry = normalizeTopUpCountryCode(countryCode);
-    const body = await this.request(`operators/countries/${normalizedCountry}`);
+    // Fetch the full service catalog: data and bundles can have their own
+    // operator IDs, which must survive selection and product revalidation.
+    // Do not use dataOnly/bundlesOnly here: this list also serves airtime.
+    const query = new URLSearchParams({
+      includeData: 'true',
+      includeBundles: 'true',
+      includeCombo: 'true',
+    });
+    const body = await this.request(`operators/countries/${normalizedCountry}?${query}`);
     const raw = Array.isArray(body) ? body : body.content;
     if (!Array.isArray(raw) || raw.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
       throw new MobileTopUpError('INVALID_PROVIDER_RESPONSE', 'Reloadly returned an invalid catalog', 502);

@@ -8,7 +8,7 @@ void main() {
     fakeAsync((time) {
       final (adapter, _, journey) = fixture(autoDispose: false);
       journey.resume('a' * 43);
-      time.flushMicrotasks();
+      time.elapse(Duration.zero);
       expect(journey.result?.status, 'PROCESSING');
       for (var i = 0; i < 24; i++) {
         time.elapse(const Duration(seconds: 5));
@@ -35,7 +35,7 @@ void main() {
     fakeAsync((time) {
       final (adapter, _, journey) = fixture(autoDispose: false);
       journey.resume('a' * 43);
-      time.flushMicrotasks();
+      time.elapse(Duration.zero);
       journey.setStatusPollingActive(false);
       final calls = adapter.requests.length;
       time.elapse(const Duration(minutes: 5));
@@ -43,7 +43,7 @@ void main() {
       adapter.transactionStatus = 'DELIVERED';
       adapter.paymentStatus = 'CAPTURED';
       journey.setStatusPollingActive(true);
-      time.flushMicrotasks();
+      time.elapse(Duration.zero);
       expect(journey.result?.status, 'DELIVERED');
       expect(adapter.requests.length, calls + 1);
       journey.dispose();
@@ -54,7 +54,7 @@ void main() {
     fakeAsync((time) {
       final (adapter, _, journey) = fixture(guest: false, autoDispose: false);
       reviewed(journey).then((_) => journey.pay());
-      time.flushMicrotasks();
+      time.elapse(Duration.zero);
       expect(journey.hosted, isNotNull);
       adapter.failStatus = true;
       time.elapse(const Duration(seconds: 5));
@@ -76,7 +76,7 @@ void main() {
     fakeAsync((time) {
       final (adapter, _, journey) = fixture(autoDispose: false);
       journey.resume('a' * 43);
-      time.flushMicrotasks();
+      time.elapse(Duration.zero);
       journey.dispose();
       final calls = adapter.requests.length;
       time.elapse(const Duration(minutes: 5));

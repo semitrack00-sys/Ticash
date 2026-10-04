@@ -33,9 +33,9 @@ export function approvedRechargePrice(amountUsd: number) {
   return { amountMinorUnits, feeMinorUnits, totalMinorUnits: amountMinorUnits + feeMinorUnits };
 }
 
-// Final FlupFlap AIRTIME fees, inclusive bounds in integer cents.
+// Shared FlupFlap AIRTIME, DATA and BUNDLE fees, inclusive bounds in integer cents.
 // Applied only when creating a new applicable quote; never reprice stored records.
-const flupFlapAirtimeFeeTiers = [
+const flupFlapRechargeFeeTiers = [
   [500, 999, 99],
   [1000, 1999, 164],
   [2000, 2999, 234],
@@ -45,9 +45,12 @@ const flupFlapAirtimeFeeTiers = [
   [7500, 10000, 484],
 ] as const;
 
-export function flupFlapAirtimePrice(amountUsd: number) {
+export function flupFlapRechargePrice(amountUsd: number) {
   const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd);
-  const tier = flupFlapAirtimeFeeTiers.find(([minimum, maximum]) => amountMinorUnits >= minimum && amountMinorUnits <= maximum)!;
+  const tier = flupFlapRechargeFeeTiers.find(([minimum, maximum]) => amountMinorUnits >= minimum && amountMinorUnits <= maximum)!;
   const feeMinorUnits = tier[2];
   return { amountMinorUnits, feeMinorUnits, totalMinorUnits: amountMinorUnits + feeMinorUnits };
 }
+
+// Compatibility for existing airtime callers; both use the same fee schedule.
+export const flupFlapAirtimePrice = flupFlapRechargePrice;

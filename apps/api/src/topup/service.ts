@@ -1511,11 +1511,21 @@ export class MobileTopUpService {
     this.assertEnabled();
     const record = await this.repository.getTransaction(userId, id);
     if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
-    if (!(record.status === 'FAILED' && record.paymentStatus === 'FAILED' && record.failureCode === 'CANCELLED_BY_CUSTOMER')) {
-      throw new MobileTopUpError('TOPUP_NOT_DELETABLE', 'Only a cancelled recharge can be deleted', 409);
+    const deletable =
+      record.status === 'FAILED' &&
+      record.paymentStatus === 'FAILED' &&
+      record.failureCode === 'CANCELLED_BY_CUSTOMER' &&
+      !record.providerTransactionId &&
+      !record.paymentAuthorizationId &&
+      !record.paymentProviderTransactionId;
+    if (!deletable) {
+      throw new MobileTopUpError('TOPUP_NOT_DELETABLE', 'Only a safely cancelled recharge can be removed from history', 409);
     }
-    await this.repository.deleteTransaction(userId, id);
-    await this.audit(userId, 'MOBILE_TOPUP_CANCELLED_HISTORY_DELETED', 'MobileTopUpTransaction', id);
+    const hiddenAt = this.clock().toISOString();
+    if (!await this.repository.hideTransactionFromCustomer(userId, id, hiddenAt)) {
+      throw new MobileTopUpError('TOPUP_NOT_DELETABLE', 'This recharge can no longer be removed from history', 409);
+    }
+    await this.audit(userId, 'MOBILE_TOPUP_HIDDEN_BY_CUSTOMER', 'MobileTopUpTransaction', id, { hiddenAt });
   }
 
   async hideTransactionFromHistory(userId: string, id: string) {

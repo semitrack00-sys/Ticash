@@ -61,8 +61,11 @@ fi
 dump_launcher
 adb exec-out screencap -p > splash-capture/launcher.png
 if ! read -r x y < <(launcher_point FlupFlap); then
-  echo 'FlupFlap launcher entry not found; inspect launcher.xml/png' >&2
-  exit 1
+  # Launcher layouts vary across Android emulator images. If the icon is not
+  # exposed through UIAutomator, cold-launch the exported launcher activity.
+  echo 'FlupFlap launcher entry not exposed; falling back to launcher activity' >&2
+  x=''
+  y=''
 fi
 fi
 capture_startup() {
@@ -70,10 +73,9 @@ capture_startup() {
   adb shell screenrecord --time-limit 12 /sdcard/flupflap-startup.mp4 &
   record_pid=$!
   sleep 1
-  if (( api >= 31 )); then
+  if (( api >= 31 )) && [[ -n "${x:-}" && -n "${y:-}" ]]; then
     adb shell input tap "$x" "$y"
   else
-    # Before Android 12, a shell cold launch includes the full native splash.
     adb shell am start -W -n com.ticash.flupflap/.MainActivity
   fi
   wait "$record_pid"

@@ -1,18 +1,17 @@
-# TiCash + FlupFlap worldwide capacity test
+# Staging health capacity test
 
-This safe k6 harness ramps **500 -> 1,000 -> 2,500 -> 5,000 -> 10,000 concurrent virtual users**. It exercises only read-only health and FlupFlap country-catalog paths; it does not create payments, quotes, top-ups, customers, or provider transactions.
+This k6 harness tests only `GET /api/health` on `https://ticash-api-staging-v2.onrender.com`. Other hosts, including production, are blocked. It does not exercise catalogs, databases through business requests, payments, top-ups, or providers.
 
-## Safety
-Production is blocked by default. Run against staging with production-like infrastructure. Do not run destructive purchase-flow load tests against live Stripe, Reloadly, or other providers.
+Choose one maximum load level: 25, 500, 1,000, 2,500, 5,000, or 10,000 concurrent virtual users. Each run ramps to that level over one minute, holds it for two minutes, and ramps down over one minute. Each user waits one second after each request; virtual users are not requests per second.
 
-## Run
+The **Staging capacity test** GitHub workflow splits the 10,000-user run across four runners with 2,500 users each. All runners wait for a common start time after ten consecutive healthy PostgreSQL-mode readiness checks. A runner that misses the start fails the run. Avoid staging deployments during a capacity run; readiness checks cannot prevent a deployment that begins later.
 
-    BASE_URL=https://ticash-api-staging.onrender.com k6 run load/flupflap-capacity.js
+For a single-runner local check:
 
-## Gates
-Error rate must stay below 1%, p95 below 1 second, and p99 below 2 seconds. Observe API CPU/RAM, database CPU/connections, 429/5xx responses, event-loop pressure, and provider latency. Stop a run if infrastructure becomes unhealthy rather than forcing the next stage.
+    BASE_URL=https://ticash-api-staging-v2.onrender.com CAPACITY_LEVEL=25 k6 run load/flupflap-capacity.js
 
-The highest passing stage is a measured **read-path concurrency envelope for the tested environment**. It is not a guarantee for payment/recharge throughput or total registered subscribers. Provider/payment flows require separate rate-limit-aware tests using mocks/sandboxes.
+Create `artifacts/capacity/shard-0` first for summary output. The workflow handles directories and uploads all shard diagnostics plus the aggregate report.
 
-## Worldwide scaling roadmap
-The first major engineering target is 1M+ registered accounts and 10,000 concurrent active users. Before treating that as production capacity, validate database connection pooling, horizontal API scaling, queues for asynchronous provider/payment work, caching, observability/alerts, and provider rate limits. Multi-region deployment should be evaluated from measured traffic/geography and resilience requirements rather than assumed from account count alone.
+Every shard must reach its requested concurrency, finish successfully, keep errors below 1%, and keep successful-response latency below 1 second at p95 and 2 seconds at p99. Network errors and non-200 HTTP responses are counted separately. Load requests are not retried. Readiness requests may retry before load begins.
+
+A passing run measures staging health-endpoint capacity only. Payment/recharge capacity requires separate sandbox tests that cover database work, queues, business endpoints, and provider rate limits.

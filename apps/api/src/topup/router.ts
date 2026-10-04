@@ -191,7 +191,7 @@ export function createMobileTopUpRouter(options: {
 
   router.delete('/transactions/:id', ...protectedRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
-    await options.service.deleteCancelledTransactionFromHistory(req.userId!, id);
+    await options.service.hideTransactionFromHistory(req.userId!, id);
     res.status(204).end();
   }));
 

@@ -385,6 +385,11 @@ class FlupFlapClient {
               as List)
           .map((v) => RechargeResult(object(v)))
           .toList();
+  Future<void> removeReceipt(String id) async {
+    if (!_uuid.hasMatch(id)) throw const FormatException('Invalid receipt');
+    await dio.delete('$base/transactions/${Uri.encodeComponent(id)}');
+  }
+
   Future<Map<String, dynamic>?> promotion(String quoteId) async =>
       object(
             (await dio.get(

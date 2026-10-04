@@ -137,6 +137,8 @@ class FlupFlapSession extends ChangeNotifier {
     'password': password,
   });
   Future<void> enterGuest() => _authenticate('guest', {});
+  Future<void> google(String idToken) =>
+      _authenticate('google', {'idToken': idToken});
   Future<void> refresh() {
     if (_loggingOut) return Future.error(StateError('Signing out'));
     return _refreshing ??= _refresh().whenComplete(() => _refreshing = null);

@@ -36,6 +36,14 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+        env:
+          FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/flupflap-screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-ui-screenshots
+          path: flupflap-screenshots/*.png
+          if-no-files-found: ignore
 
   build-test-android:
     name: Build FlupFlap APK and AAB

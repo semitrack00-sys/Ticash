@@ -250,6 +250,8 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
           GoRoute(
             path: '/recharge',
             builder: (_, state) => RechargeJourneyScreen(
+              key: ValueKey(state.uri.queryParameters['service']),
+              initialInternet: state.uri.queryParameters['service'] == 'internet',
               journey: journey,
               initialRecipient: state.extra is MobileTopUpRecipient
                   ? state.extra as MobileTopUpRecipient
@@ -656,12 +658,9 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           if (widget.resetToken == null) ...[
             const SizedBox(height: 12),
-            SizedBox(
-              height: 36,
-              child: OutlinedButton(
-                onPressed: busy ? null : () => run(() => widget.session.enterGuest()),
-                child: Text(context.ft('Continue as guest')),
-              ),
+            OutlinedButton(
+              onPressed: busy ? null : () => run(() => widget.session.enterGuest()),
+              child: Text(context.ft('Continue as guest'), textAlign: TextAlign.center),
             ),
             Wrap(
               alignment: WrapAlignment.center,
@@ -1433,6 +1432,16 @@ class _AccountScreenState extends State<AccountScreen> {
               'This account is separate from your TiCash remittance account.',
             ),
             style: const TextStyle(color: _muted, fontSize: 13),
+          ),
+          const SizedBox(height: 20),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.wifi_rounded, color: _blue),
+              title: Text(context.ft('internetBundles')),
+              subtitle: Text(context.ft('internetBundlesHelp')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => context.go('/recharge?service=internet'),
+            ),
           ),
           const SizedBox(height: 20),
           AccountParity(

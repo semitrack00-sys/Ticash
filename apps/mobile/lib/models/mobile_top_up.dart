@@ -159,6 +159,8 @@ class MobileTopUpOperator {
     required this.name,
     required this.countryCode,
     required this.bundle,
+    this.data = false,
+    this.combo = false,
     this.provider,
     this.logoUrl,
   });
@@ -166,6 +168,9 @@ class MobileTopUpOperator {
   final String name;
   final String countryCode;
   final bool bundle;
+  final bool data;
+  final bool combo;
+  bool get internetService => bundle || data || combo;
   final String? provider;
   final String? logoUrl;
   factory MobileTopUpOperator.fromJson(Map<String, dynamic> json) =>
@@ -174,6 +179,8 @@ class MobileTopUpOperator {
         name: json['name'] as String,
         countryCode: _countryCodeFromJson(json),
         bundle: json['bundle'] as bool? ?? false,
+        data: json['data'] as bool? ?? false,
+        combo: json['combo'] as bool? ?? false,
         provider: json['provider'] as String?,
         logoUrl: parseLogoUrl(json['logoUrl']),
       );

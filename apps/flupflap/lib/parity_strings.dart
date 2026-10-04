@@ -16,6 +16,9 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "internetBundles": "Internet & bundles",
+    "internetBundlesHelp": "Choose a destination and operator to see available plans.",
+    "noInternetOperators": "Internet bundles are not available for this destination.",
     "nationalPhoneHelp":
         "Enter your local number. We add the country code automatically.",
     "invalidNationalPhone":
@@ -308,6 +311,9 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Email",
   },
   "ht": {
+    "internetBundles": "Entènèt ak pake",
+    "internetBundlesHelp": "Chwazi yon destinasyon ak operatè pou wè pake ki disponib yo.",
+    "noInternetOperators": "Pa gen pake entènèt disponib pou destinasyon sa a.",
     "nationalPhoneHelp":
         "Antre nimewo lokal ou. Nou ajoute kòd peyi a otomatikman.",
     "invalidNationalPhone":
@@ -593,6 +599,9 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Imèl",
   },
   "fr": {
+    "internetBundles": "Internet et forfaits",
+    "internetBundlesHelp": "Choisissez une destination et un opérateur pour voir les forfaits disponibles.",
+    "noInternetOperators": "Aucun forfait internet disponible pour cette destination.",
     "nationalPhoneHelp":
         "Saisissez votre numéro local. Nous ajoutons l’indicatif automatiquement.",
     "invalidNationalPhone":
@@ -884,6 +893,9 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "E-mail",
   },
   "es": {
+    "internetBundles": "Internet y paquetes",
+    "internetBundlesHelp": "Elige un destino y operador para ver los planes disponibles.",
+    "noInternetOperators": "No hay paquetes de internet para este destino.",
     "nationalPhoneHelp":
         "Introduce tu número local. Añadimos el prefijo del país automáticamente.",
     "invalidNationalPhone":
@@ -1168,6 +1180,9 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Correo electrónico",
   },
   "pt": {
+    "internetBundles": "Internet e pacotes",
+    "internetBundlesHelp": "Escolha um destino e uma operadora para ver os planos disponíveis.",
+    "noInternetOperators": "Não há pacotes de internet para este destino.",
     "nationalPhoneHelp":
         "Digite seu número local. Adicionamos o código do país automaticamente.",
     "invalidNationalPhone": "Digite um número válido para o país selecionado.",

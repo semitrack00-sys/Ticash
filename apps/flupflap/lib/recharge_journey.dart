@@ -42,6 +42,25 @@ class RechargeJourney extends ChangeNotifier {
   String? country, billingCountry, recipientId, error, notice;
   String phone = '', amount = '', nickname = '';
   int? recurringIntervalDays;
+  bool internet = false;
+  List<MobileTopUpOperator> get serviceOperators => operators
+      .where((o) => o.internetService == internet).toList();
+
+  void selectService(bool value) {
+    _editable();
+    if (step != RechargeStep.destination && step != RechargeStep.product) return;
+    if (internet == value) return;
+    internet = value;
+    _revision++;
+    operator = null;
+    product = null;
+    products = [];
+    amount = '';
+    _invalidateQuote();
+    error = null;
+    _emit();
+  }
+
   MobileTopUpOperator? operator;
   MobileTopUpProduct? product;
   MobileTopUpQuote? quote;
@@ -466,7 +485,7 @@ class RechargeJourney extends ChangeNotifier {
     operator = detected == null
         ? null
         : list
-              .where((o) => o.id == detected!.id && o.countryCode == country)
+              .where((o) => o.id == detected!.id && o.countryCode == country && o.internetService == internet)
               .firstOrNull;
     product = null;
     products = [];
@@ -478,7 +497,7 @@ class RechargeJourney extends ChangeNotifier {
     }
   });
   Future<void> selectOperator(MobileTopUpOperator value) => _run((v) async {
-    if (locked || !operators.contains(value) || value.countryCode != country) {
+    if (locked || !serviceOperators.contains(value) || value.countryCode != country) {
       throw StateError('Invalid operator');
     }
     operator = value;

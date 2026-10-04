@@ -9,6 +9,7 @@ Scope: current TiCash repository API, TiCash mobile app, and FlupFlap Android ap
 - Recursively redact credential, cookie, payment-card, and account fields in audit metadata, including nested arrays. Bound recursion and handle circular references without mutating the original event.
 - Parse malformed authentication cookies safely, preserving refresh-token validation and the browser-origin guard.
 - Fence TiCash token refresh by session version and serialize token writes/deletion. Late responses after logout or a newer sign-in cannot restore or erase another session.
+- Fence login/registration completion and account UI updates against newer authentication actions. Clear local TiCash credentials before waiting for remote logout, so a delayed logout cannot erase a newer login. Token readers wait for pending token mutations.
 - Bind automatic 401 retries to the session that sent the original request in both mobile clients. An old request cannot be replayed under a newly signed-in account.
 - Disable Android backup and plaintext traffic in the TiCash main manifest, matching FlupFlap's existing protections. The existing TiCash debug manifest permits local development HTTP; the transport guard still rejects remote HTTP.
 - Update the locked `ip-address` dependency from 10.7.0 to 10.7.3, addressing GHSA-j6r3-76f7-8jcv and GHSA-h3mg-xc3c-68pw. No unrelated dependency upgrades.

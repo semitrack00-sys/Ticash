@@ -9,6 +9,14 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     await storage.clearTokens();
   });
+  test('token readers wait for queued writes and deletion', () async {
+    final save = storage.saveTokens(accessToken: 'new-access', refreshToken: 'new-refresh');
+    expect(await storage.accessToken, 'new-access');
+    await save;
+    final clear = storage.takeRefreshTokenAndClear();
+    expect(await storage.accessToken, isNull);
+    expect(await clear, 'new-refresh');
+  });
   test('refresh arriving after logout cannot restore tokens', () async {
     await storage.saveTokens(accessToken: 'old-access', refreshToken: 'old-refresh');
     final version = storage.tokenVersion;

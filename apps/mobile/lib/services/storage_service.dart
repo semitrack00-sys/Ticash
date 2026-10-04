@@ -66,10 +66,25 @@ class StorageService {
     return version == _tokenVersion;
   });
 
-  Future<String?> get accessToken => _secureStorage.read(key: _accessTokenKey);
+  Future<String?> get accessToken async {
+    await _tokenWork;
+    return _secureStorage.read(key: _accessTokenKey);
+  }
 
-  Future<String?> get refreshToken =>
-      _secureStorage.read(key: _refreshTokenKey);
+  Future<String?> get refreshToken async {
+    await _tokenWork;
+    return _secureStorage.read(key: _refreshTokenKey);
+  }
+
+  Future<String?> takeRefreshTokenAndClear() {
+    _tokenVersion++;
+    return _mutateTokens(() async {
+      final token = await _secureStorage.read(key: _refreshTokenKey);
+      await _secureStorage.delete(key: _accessTokenKey);
+      await _secureStorage.delete(key: _refreshTokenKey);
+      return token;
+    });
+  }
 
   Future<void> clearTokens({int? expectedVersion}) {
     if (expectedVersion != null && expectedVersion != _tokenVersion) {

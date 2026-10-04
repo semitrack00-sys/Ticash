@@ -13,16 +13,21 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
   }
 
   final AuthService _authService;
+  int _epoch = 0;
 
   Future<void> restoreSession() async {
-    state = await AsyncValue.guard(_authService.restoreSession);
+    final epoch = ++_epoch;
+    final next = await AsyncValue.guard(_authService.restoreSession);
+    if (epoch == _epoch) state = next;
   }
 
   Future<void> login(String email, String password) async {
+    final epoch = ++_epoch;
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(
+    final next = await AsyncValue.guard(
       () => _authService.login(email: email, password: password),
     );
+    if (epoch == _epoch) state = next;
   }
 
   Future<void> register({
@@ -37,8 +42,9 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     String? region,
     String? postalCode,
   }) async {
+    final epoch = ++_epoch;
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(
+    final next = await AsyncValue.guard(
       () => _authService.register(
         email: email,
         password: password,
@@ -52,11 +58,13 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
         postalCode: postalCode,
       ),
     );
+    if (epoch == _epoch) state = next;
   }
 
   Future<void> logout() async {
-    await _authService.logout();
+    _epoch++;
     state = const AsyncValue.data(null);
+    await _authService.logout();
   }
 
   Future<void> changePassword(String currentPassword, String newPassword) {
@@ -77,6 +85,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     String? region,
     String? postalCode,
   }) async {
+    final epoch = _epoch;
     final user = await _authService.updateProfile(
       firstName: firstName,
       lastName: lastName,
@@ -88,22 +97,24 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
       region: region,
       postalCode: postalCode,
     );
-    state = AsyncValue.data(user);
+    if (epoch == _epoch) state = AsyncValue.data(user);
   }
 
   Future<void> requestKycReview() async {
+    final epoch = _epoch;
     final user = await _authService.requestKycReview();
-    state = AsyncValue.data(user);
+    if (epoch == _epoch) state = AsyncValue.data(user);
   }
 
   Future<void> refreshCurrentUser() async {
+    final epoch = _epoch;
     final current = state.valueOrNull;
     if (current == null) return;
     try {
       final user = await _authService.getCurrentUser();
-      state = AsyncValue.data(user);
+      if (epoch == _epoch) state = AsyncValue.data(user);
     } catch (_) {
-      state = AsyncValue.data(current);
+      if (epoch == _epoch) state = AsyncValue.data(current);
       rethrow;
     }
   }

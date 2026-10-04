@@ -485,6 +485,7 @@ void main() {
       );
       final createAccount = find.widgetWithText(FilledButton, 'Create account');
       await t.ensureVisible(createAccount);
+      await t.pumpAndSettle();
       await t.runAsync(() async {
         await t.tap(createAccount);
         await Future<void>.delayed(const Duration(milliseconds: 100));

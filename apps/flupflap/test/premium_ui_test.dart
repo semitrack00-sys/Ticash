@@ -313,6 +313,15 @@ void main() {
         await tap(tester, find.text('Sign out'));
         expect(find.text('Welcome'), findsOneWidget);
         if (scale == 1) await screenshot(tester, 'login-${width.toInt()}');
+        final guestButton = find.widgetWithText(OutlinedButton, 'Continue as guest');
+        await tester.ensureVisible(guestButton);
+        await tester.pumpAndSettle();
+        final buttonRect = tester.getRect(guestButton);
+        final labelRect = tester.getRect(find.text('Continue as guest'));
+        expect(buttonRect.height, greaterThanOrEqualTo(54));
+        expect(buttonRect.contains(labelRect.topLeft), isTrue);
+        expect(buttonRect.contains(labelRect.bottomRight), isTrue);
+
         await tap(tester, find.text('Create account'));
         tester.view.viewInsets = const FakeViewPadding(bottom: 300);
         addTearDown(tester.view.resetViewInsets);
@@ -329,6 +338,15 @@ void main() {
       });
     }
   }
+
+  testWidgets('account internet shortcut opens the internet recharge selection', (tester) async {
+    final (_, adapter) = await app(tester, 390);
+    await tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
+    await tap(tester, find.text('Internet & bundles'));
+    expect(find.text('Destination'), findsWidgets);
+    expect(adapter.requests.where((r) => r.path.endsWith('/payment-sessions')), isEmpty);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'saved recipient prefills recharge; AUTO, quote and purchase remain server-authoritative',
@@ -573,6 +591,12 @@ void main() {
     (tester) async {
       final (session, adapter) = await app(tester, 390);
       await tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
+      await tester.scrollUntilVisible(
+        find.widgetWithText(TextField, 'Country code'),
+        150,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextField, 'Country code'),
         'ht',

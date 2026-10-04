@@ -86,12 +86,14 @@ class RechargeJourneyScreen extends StatefulWidget {
     super.key,
     required this.journey,
     this.initialRecipient,
+    this.initialInternet = false,
     this.history = false,
     this.resumeToken,
     this.returnOnly = false,
   });
   final RechargeJourney journey;
   final MobileTopUpRecipient? initialRecipient;
+  final bool initialInternet;
   final bool history;
   final String? resumeToken;
   final bool returnOnly;
@@ -188,6 +190,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       if (widget.initialRecipient != null && !j.locked && !j.busy) {
         j.selectRecipient(widget.initialRecipient!);
         phone.text = j.phone;
+      }
+      if (widget.initialInternet && !widget.history && !j.locked && !j.busy) {
+        j.selectService(true);
       }
       if (widget.history) await j.loadHistory();
     });
@@ -353,11 +358,30 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 16),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final internet in [false, true])
+            ChoiceChip(
+              label: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME')),
+              selected: j.internet == internet,
+              onSelected: j.busy || j.locked ? null : (_) {
+                j.selectService(internet);
+                amount.clear();
+              },
+            ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      if (j.serviceOperators.isEmpty && !j.busy)
+        Text(context.ft(j.internet ? 'noInternetOperators' : 'noProducts')),
       DropdownButtonFormField<int>(
+        key: ValueKey('${j.country}:${j.internet}:${j.operator?.id}'),
         isExpanded: true,
         initialValue: j.operator?.id,
         decoration: InputDecoration(labelText: context.ft('operator')),
-        items: j.operators
+        items: j.serviceOperators
             .map(
               (o) => DropdownMenuItem(
                 value: o.id,

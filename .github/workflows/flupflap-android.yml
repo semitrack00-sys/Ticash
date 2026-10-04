@@ -35,7 +35,21 @@ jobs:
           java-version: '17'
       - run: flutter pub get
       - run: flutter analyze
+      - name: Prepare UI preview fonts
+        run: |
+          mkdir -p "$RUNNER_TEMP/flupflap-fonts"
+          cp "$(find "$FLUTTER_ROOT" -name Roboto-Regular.ttf -print -quit)" "$RUNNER_TEMP/flupflap-fonts/Roboto.ttf"
+          cp "$(find "$FLUTTER_ROOT" -iname MaterialIcons-Regular.otf -print -quit)" "$RUNNER_TEMP/flupflap-fonts/materialicons-regular.otf"
       - run: flutter test
+        env:
+          FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/flupflap-ui-preview
+          FLUPFLAP_TEST_FONT: ${{ runner.temp }}/flupflap-fonts/Roboto.ttf
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-plan-ui-preview
+          path: flupflap-ui-preview/*.png
+          if-no-files-found: ignore
 
   build-test-android:
     name: Build FlupFlap APK and AAB

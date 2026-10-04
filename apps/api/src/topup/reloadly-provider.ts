@@ -158,8 +158,16 @@ function mapOperator(raw: Record<string, unknown>): MobileTopUpOperator {
       raw.localFixedAmounts.every(value => typeof value === 'number' && Number.isFinite(value) && value > 0) &&
       Array.isArray(raw.fixedAmounts) && raw.fixedAmounts.every(value => typeof value === 'number' && Number.isFinite(value) && value > 0)
       ? raw.localFixedAmounts as number[] : [],
-    fixedAmountsPlanNames: stringMap(raw.fixedAmountsPlanNames),
-    localFixedAmountsPlanNames: stringMap(raw.localFixedAmountsPlanNames),
+    // Reloadly calls denomination labels "Descriptions". Keep our internal
+    // PlanNames contract, preferring the documented provider fields.
+    fixedAmountsPlanNames: {
+      ...stringMap(raw.fixedAmountsPlanNames),
+      ...stringMap(raw.fixedAmountsDescriptions),
+    },
+    localFixedAmountsPlanNames: {
+      ...stringMap(raw.localFixedAmountsPlanNames),
+      ...stringMap(raw.localFixedAmountsDescriptions),
+    },
     minAmount: Number.isFinite(minAmount) && minAmount > 0 ? minAmount : undefined,
     maxAmount: Number.isFinite(maxAmount) && maxAmount > 0 ? maxAmount : undefined,
   };

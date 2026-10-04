@@ -28,9 +28,9 @@ describe('Reloadly Sandbox top-up provider', () => {
       senderCurrencyCode: 'USD', destinationCurrencyCode: 'JMD', fixedAmounts: [5] };
     const catalog = [
       { ...base, operatorId: 12, name: 'Carrier Airtime' },
-      { ...base, operatorId: 13, name: 'Carrier Data', data: true, fixedAmountsPlanNames: { '5.00': '1 GB / 7 days' } },
-      { ...base, operatorId: 14, name: 'Carrier Bundle', bundle: true, fixedAmountsPlanNames: { '5': 'Weekly social pack' } },
-      { ...base, operatorId: 15, name: 'Carrier Combo', combo: true, fixedAmountsPlanNames: { '5.0': 'Voice and data pack' } },
+      { ...base, operatorId: 13, name: 'Carrier Data', data: true, fixedAmountsDescriptions: { '5.00': '1 GB / 7 days' } },
+      { ...base, operatorId: 14, name: 'Carrier Bundle', bundle: true, fixedAmountsDescriptions: { '5': 'Weekly social pack' } },
+      { ...base, operatorId: 15, name: 'Carrier Combo', combo: true, fixedAmountsDescriptions: { '5.0': 'Voice and data pack' } },
       { ...base, operatorId: 16, name: 'Unnamed data', data: true },
       { ...base, operatorId: 17, name: 'Inactive bundle', bundle: true, status: false },
     ];
@@ -61,6 +61,36 @@ describe('Reloadly Sandbox top-up provider', () => {
     expect(new Set(products.map(item => item.id)).size).toBe(4);
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST').map(([url]) => String(url)))
       .toEqual([config.authUrl]);
+  });
+
+  it('maps documented sender and local descriptions without mixing denomination currencies', async () => {
+    const raw = { operatorId: 682, name: 'Bundle fixture', country: { isoName: 'HT' }, bundle: true,
+      denominationType: 'FIXED', senderCurrencyCode: 'USD', destinationCurrencyCode: 'HTG',
+      fixedAmounts: [10, 20, 30], localFixedAmounts: [1300, 2600, 3900],
+      fixedAmountsDescriptions: { '10': 'Provider bundle A', '20.00': 'Provider bundle B', '30': null },
+      localFixedAmountsDescriptions: { '1300': 'Local bundle A', '2600': 'Local bundle B', '3900': 'Local only label' },
+      fixedAmountsPlanNames: { '10': 'Legacy description' } };
+    const fetcher = vi.fn<typeof fetch>(async url => String(url) === config.authUrl
+      ? json({ access_token: 'fixture-token', expires_in: 3600 })
+      : json(new URL(String(url)).pathname === '/operators/countries/HT' ? [raw] : raw));
+    const provider = new ReloadlySandboxTopUpProvider(config, fetcher);
+    for (const operator of [(await provider.listOperators('HT'))[0]!, await provider.getOperator(682)]) {
+      expect(operator.fixedAmountsPlanNames).toEqual({ '10': 'Provider bundle A', '20.00': 'Provider bundle B' });
+      expect(operator.localFixedAmountsPlanNames).toEqual(raw.localFixedAmountsDescriptions);
+    }
+    expect(await provider.listProducts('HT', 682)).toEqual([
+      expect.objectContaining({ operatorId: 682, classification: 'BUNDLE', name: 'Provider bundle A', price: 10 }),
+      expect.objectContaining({ operatorId: 682, classification: 'BUNDLE', name: 'Provider bundle B', price: 20 }),
+    ]);
+  });
+
+  it.each([undefined, null, [], ['Unbound label'], { '5': 7 }, { '5': null }])('does not create bundle plans from missing or malformed descriptions: %j', async descriptions => {
+    const raw = { operatorId: 172, name: 'Bundle fixture', country: { isoName: 'HT' }, bundle: true,
+      denominationType: 'FIXED', senderCurrencyCode: 'USD', destinationCurrencyCode: 'HTG',
+      fixedAmounts: [5], fixedAmountsDescriptions: descriptions };
+    const fetcher = vi.fn<typeof fetch>(async url => String(url) === config.authUrl
+      ? json({ access_token: 'fixture-token', expires_in: 3600 }) : json(raw));
+    expect(await new ReloadlySandboxTopUpProvider(config, fetcher).listProducts('HT', 172)).toEqual([]);
   });
 
   it('keeps an airtime-only catalog usable without inventing internet plans', async () => {

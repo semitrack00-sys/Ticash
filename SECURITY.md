@@ -1,5 +1,8 @@
 # Security baseline
 
+See [the October 2026 hardening review](SECURITY_HARDENING_REVIEW.md) for the
+current API/mobile changes, validation scope, and rollout requirements.
+
 Before production:
 
 - Replace development OTP with an approved SMS/verification provider.

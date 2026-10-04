@@ -1,7 +1,9 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../config/api_config.dart';
 import 'storage_service.dart';
+import 'trusted_api_transport.dart';
 
 /// Thin wrapper around [Dio] configured with base options and interceptors
 /// for attaching JWT access tokens and refreshing them on 401 responses.
@@ -12,6 +14,7 @@ class ApiClient {
         baseUrl: ApiConfig.baseUrl,
         connectTimeout: ApiConfig.connectTimeout,
         receiveTimeout: ApiConfig.receiveTimeout,
+        followRedirects: false,
         headers: {'Content-Type': 'application/json'},
       ),
     );
@@ -19,6 +22,13 @@ class ApiClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          if (!isTrustedApiRequest(options, ApiConfig.baseUrl, allowLocalHttp: !kReleaseMode)) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Trusted API endpoint required'));
+            return;
+          }
+          options.followRedirects = false;
+          options.headers.removeWhere((key, _) => key.toLowerCase() == 'authorization');
           final token = await StorageService.instance.accessToken;
           if (token != null) {
             options.headers['Authorization'] = _buildBearerHeader(token);
@@ -51,6 +61,15 @@ class ApiClient {
         },
       ),
     );
+    _refreshDio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+      if (!isTrustedApiRequest(options, ApiConfig.baseUrl, allowLocalHttp: !kReleaseMode)) {
+        handler.reject(DioException(requestOptions: options,
+          type: DioExceptionType.cancel, message: 'Trusted API endpoint required'));
+        return;
+      }
+      options.followRedirects = false;
+      handler.next(options);
+    }));
   }
 
   static final ApiClient instance = ApiClient._internal();
@@ -65,6 +84,7 @@ class ApiClient {
       baseUrl: ApiConfig.baseUrl,
       connectTimeout: ApiConfig.connectTimeout,
       receiveTimeout: ApiConfig.receiveTimeout,
+      followRedirects: false,
     ),
   );
 

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:ticash/services/trusted_api_transport.dart';
 
 abstract interface class SessionStorage {
   Future<String?> read();
@@ -22,13 +23,15 @@ class SecureSessionStorage implements SessionStorage {
 /// Own client, token namespace and session. No TiCash ApiClient or auth provider.
 class FlupFlapSession extends ChangeNotifier {
   FlupFlapSession({required this.dio, required this.storage}) {
+    final trustedBaseUrl = dio.options.baseUrl;
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
           // Fail closed if a reused screen attempts a TiCash API or absolute URL.
           if (!options.path.startsWith('/flupflap/') ||
               options.path.contains('..') ||
-              options.path.contains('%')) {
+              options.path.contains('%') ||
+              !isTrustedApiRequest(options, trustedBaseUrl)) {
             handler.reject(
               DioException(
                 requestOptions: options,
@@ -38,7 +41,8 @@ class FlupFlapSession extends ChangeNotifier {
             );
             return;
           }
-          options.headers.remove('Authorization');
+          options.followRedirects = false;
+          options.headers.removeWhere((key, _) => key.toLowerCase() == 'authorization');
           if (_accessToken != null) {
             options.headers['Authorization'] = 'Bearer $_accessToken';
           }

@@ -140,6 +140,29 @@ describe('security and compliance hardening', () => {
       .toEqual({ token: '[REDACTED]', accountNumber: '[REDACTED]', reason: 'review' });
   });
 
+  it('redacts secrets inside objects and arrays without mutating audit input', () => {
+    const input = { reason: 'review', details: { credentials: { refreshToken: 'secret', cookie: 'session-cookie' },
+      rows: [{ cardNumber: '4111111111111111', cvv: '123', status: 'FAILED' }] } };
+    const result = redactAuditMetadata(input);
+    expect(result).toEqual({ reason: 'review', details: { credentials: { refreshToken: '[REDACTED]', cookie: '[REDACTED]' },
+      rows: [{ cardNumber: '[REDACTED]', cvv: '[REDACTED]', status: 'FAILED' }] } });
+    expect(input.details.credentials.refreshToken).toBe('secret');
+    expect(JSON.stringify(result)).not.toContain('4111111111111111');
+  });
+
+  it('bounds deep or cyclic audit data instead of crashing the logger', () => {
+    const circular: Record<string, unknown> = { reason: 'review' };
+    circular.details = circular;
+    expect(redactAuditMetadata(circular)).toEqual({ reason: 'review', details: '[CIRCULAR]' });
+    let deep: Record<string, unknown> = { token: 'secret' };
+    for (let i = 0; i < 20; i++) deep = { details: deep };
+    expect(JSON.stringify(redactAuditMetadata(deep))).toContain('[DEPTH_LIMIT]');
+    expect(JSON.stringify(redactAuditMetadata(deep))).not.toContain('secret');
+    const timestamp = new Date('2026-10-04T12:00:00Z');
+    expect(redactAuditMetadata({ details: { timestamp } }))
+      .toEqual({ details: { timestamp: timestamp.toISOString() } });
+  });
+
   it('rejects incomplete limits and parses live-gate booleans without enabling behavior by itself', () => {
     expect(() => securityConfig({ TRANSFER_LIMITS_ENABLED: 'true' })).toThrow(/All transfer limit/);
     expect(securityConfig({ LIVE_MONEY_ENABLED: 'true' }).liveMoneyEnabled).toBe(true);

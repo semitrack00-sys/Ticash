@@ -104,6 +104,30 @@ class FixtureAdapter implements HttpClientAdapter {
 }
 
 void main() {
+  test('session rejects changed API destinations before sending credentials', () async {
+    final (session, adapter, _) = fixture();
+    await session.login('flup@example.test', 'test-password');
+    for (final base in [
+      'https://attacker.example/api', 'http://api.example.test/api',
+      'https://api.example.test:444/api', 'https://api.example.test/other',
+    ]) {
+      session.dio.options.baseUrl = base;
+      await expectLater(session.dio.get<dynamic>('/flupflap/auth/me'),
+        throwsA(isA<DioException>()));
+      await expectLater(session.login('flup@example.test', 'test-password'),
+        throwsA(isA<DioException>()));
+    }
+    expect(adapter.requests.length, 1);
+  });
+  test('session disables redirects even when a caller enables them', () async {
+    final (session, adapter, _) = fixture();
+    await session.login('flup@example.test', 'test-password');
+    await session.dio.get<dynamic>('/flupflap/mobile-topups/countries',
+      options: Options(followRedirects: true, headers: {'authorization': 'Bearer wrong-token'}));
+    expect(adapter.requests.every((r) => !r.followRedirects), isTrue);
+    expect(adapter.requests.last.headers.entries.where((e) => e.key.toLowerCase() == 'authorization')
+      .map((e) => e.value), ['Bearer fixture-access']);
+  });
   testWidgets('registration sends locale-based national phone in E.164', (
     tester,
   ) async {

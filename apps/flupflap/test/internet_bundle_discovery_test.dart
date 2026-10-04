@@ -22,7 +22,7 @@ void main() {
   testWidgets('internet selector clears airtime and loads the separate bundle ID', (t) async {
     final (adapter, _, j) = fixture();
     addTearDown(j.dispose);
-    await loadProducts(j);
+    await t.runAsync(() => loadProducts(j));
     final bundle = MobileTopUpOperator.fromJson({
       'id': 682, 'name': 'Natcom Haiti Bundles', 'countryCode': 'HT', 'bundle': true,
     });

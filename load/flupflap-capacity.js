@@ -49,10 +49,14 @@ export function setup() {
   }
   throw new Error('Staging did not remain healthy in PostgreSQL mode before the start deadline.');
 }
+let sampledErrors = 0;
 export default function () {
   const response = http.get(`${BASE_URL}/api/health`, { timeout: '10s', redirects: 0, tags: { endpoint: 'health' } });
   const ok = check(response, { 'health 200': r => r.status === 200 });
   errors.add(!ok);
+  if (!ok && __VU <= 4 && sampledErrors++ < 3) {
+    console.error(JSON.stringify({ shard, timestamp: Date.now(), status: response.status, errorCode: response.error_code, error: response.error }));
+  }
   if (response.status === 0) networkErrors.add(1, { error_code: String(response.error_code) });
   else if (!ok) httpErrors.add(1, { status: String(response.status) });
   sleep(1);

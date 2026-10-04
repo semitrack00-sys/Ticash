@@ -71,7 +71,7 @@ jobs:
         run: |
           mkdir -p "artifacts/capacity/shard-$CAPACITY_SHARD"
           set +e
-          k6 run --log-level error load/flupflap-capacity.js 2>&1 | tee "artifacts/capacity/shard-$CAPACITY_SHARD/k6.log"
+          k6 run --log-output "file=artifacts/capacity/shard-$CAPACITY_SHARD/errors.log,level=error" load/flupflap-capacity.js 2>&1 | tee "artifacts/capacity/shard-$CAPACITY_SHARD/k6.log"
           K6_EXIT=${PIPESTATUS[0]}
           echo "k6_exit_code=$K6_EXIT" | tee "artifacts/capacity/shard-$CAPACITY_SHARD/result.txt"
           exit "$K6_EXIT"

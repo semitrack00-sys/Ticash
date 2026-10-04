@@ -676,24 +676,36 @@ class _AuthScreenState extends State<AuthScreen> {
           if (widget.resetToken == null) ...[
             const SizedBox(height: 12),
             SizedBox(
-              height: 40,
-              child: OutlinedButton.icon(
-                key: const ValueKey('google-sign-in'),
-                style: OutlinedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                ),
-                onPressed: busy ? null : signInWithGoogle,
-                icon: const Icon(Icons.account_circle_outlined, size: 18),
-                label: Text(context.ft('Continue with Google')),
+              height: 36,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const ValueKey('google-sign-in'),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: busy ? null : signInWithGoogle,
+                      icon: const Icon(Icons.account_circle_outlined, size: 18),
+                      label: Text(context.ft('Google')),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: busy
+                          ? null
+                          : () => run(() => widget.session.enterGuest()),
+                      child: Text(context.ft('Guest')),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 4),
-            OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () => run(() => widget.session.enterGuest()),
-              child: Text(context.ft('Continue as guest')),
             ),
             Wrap(
               alignment: WrapAlignment.center,

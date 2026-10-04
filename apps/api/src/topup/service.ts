@@ -1507,6 +1507,17 @@ export class MobileTopUpService {
     return (await this.repository.getTransaction(userId, id))!;
   }
 
+  async deleteCancelledTransactionFromHistory(userId: string, id: string) {
+    this.assertEnabled();
+    const record = await this.repository.getTransaction(userId, id);
+    if (!record) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
+    if (!(record.status === 'FAILED' && record.paymentStatus === 'FAILED' && record.failureCode === 'CANCELLED_BY_CUSTOMER')) {
+      throw new MobileTopUpError('TOPUP_NOT_DELETABLE', 'Only a cancelled recharge can be deleted', 409);
+    }
+    await this.repository.deleteTransaction(userId, id);
+    await this.audit(userId, 'MOBILE_TOPUP_CANCELLED_HISTORY_DELETED', 'MobileTopUpTransaction', id);
+  }
+
   async hideTransactionFromHistory(userId: string, id: string) {
     this.assertEnabled();
     const record = await this.repository.getTransaction(userId, id);

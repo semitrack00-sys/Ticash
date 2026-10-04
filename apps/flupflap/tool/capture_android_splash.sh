@@ -5,9 +5,13 @@ apk=$(find android-builds -name app-debug.apk -print -quit)
 test -n "$apk"
 mkdir -p splash-capture/frames
 adb install -r "$apk"
-adb shell svc wifi disable
-adb shell svc data disable
-adb shell cmd connectivity airplane-mode enable
+adb shell svc wifi disable || true
+adb shell svc data disable || true
+# Toggling radios can restart system services on a shared CI emulator and kill
+# the adb shell command (exit 137); this is best-effort, so wait and continue.
+adb shell cmd connectivity airplane-mode enable || true
+adb wait-for-device
+sleep 5
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 adb shell am force-stop com.ticash.flupflap
@@ -20,8 +24,17 @@ screen=$(adb shell wm size | tr -d '\r' | tail -1 | awk '{print $NF}')
 width=${screen%x*}
 height=${screen#*x}
 dump_launcher() {
-  adb shell uiautomator dump /sdcard/flupflap-launcher.xml
-  adb pull /sdcard/flupflap-launcher.xml splash-capture/launcher.xml
+  local try
+  for try in 1 2 3 4 5; do
+    if adb shell uiautomator dump /sdcard/flupflap-launcher.xml &&
+      adb pull /sdcard/flupflap-launcher.xml splash-capture/launcher.xml; then
+      return 0
+    fi
+    echo "uiautomator dump attempt $try/5 failed" >&2
+    adb wait-for-device
+    sleep 3
+  done
+  return 1
 }
 launcher_point() {
   /usr/bin/python3 - "$1" <<'PY'

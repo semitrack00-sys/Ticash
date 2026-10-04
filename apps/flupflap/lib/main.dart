@@ -70,7 +70,7 @@ class FlupFlapApp extends StatefulWidget {
   State<FlupFlapApp> createState() => _FlupFlapAppState();
 }
 
-class _FlupFlapAppState extends State<FlupFlapApp> {
+class _FlupFlapAppState extends State<FlupFlapApp> with WidgetsBindingObserver {
   late FlupFlapClient client;
   late RechargeJourney journey;
   late RechargeJourney resumeJourney;
@@ -79,6 +79,7 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _resetJourney();
     resumeJourney = RechargeJourney(
       FlupFlapClient(widget.session.dio),
@@ -86,6 +87,19 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
       storedBillingCountry: () => null,
     );
     widget.session.addListener(_sessionChanged);
+    _syncStatusPolling();
+  }
+
+  void _syncStatusPolling() {
+    final state = WidgetsBinding.instance.lifecycleState;
+    final active = state == null || state == AppLifecycleState.resumed;
+    journey.setStatusPollingActive(active);
+    resumeJourney.setStatusPollingActive(active);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _syncStatusPolling();
   }
 
   void _resetJourney({bool preserveClient = false}) {
@@ -114,6 +128,7 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
         );
       }
       _resetJourney(preserveClient: signingIn);
+      _syncStatusPolling();
       if (signingIn) client.claim().catchError((Object _) {});
     }
   }
@@ -283,6 +298,7 @@ class _FlupFlapAppState extends State<FlupFlapApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.session.removeListener(_sessionChanged);
     journey.dispose();
     client.clearCapabilities();

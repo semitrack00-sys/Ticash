@@ -18,7 +18,7 @@ import type {
 } from './types.js';
 import { MobileTopUpError } from './types.js';
 import { usdMinorUnits } from './payment-utils.js';
-import { approvedRechargePrice, flupFlapAirtimePrice } from './recharge-fee-grid.js';
+import { approvedRechargePrice, flupFlapRechargePrice } from './recharge-fee-grid.js';
 import { flupFlapCustomerId } from '../flupflap/owner.js';
 import { reloadlyProducts, normalizeProduct, assertSameProduct, assertProductAmount } from './product-catalog.js';
 import type { StripeHostedCheckoutProvider } from './stripe-provider.js';
@@ -398,13 +398,14 @@ export class MobileTopUpService {
     } else if (input.amount !== undefined) {
       throw new MobileTopUpError('INVALID_TOPUP_AMOUNT', 'Fixed provider product prices cannot be customized', 400);
     }
-    const flupFlapAirtime = Boolean(flupFlapCustomerId(userId)) && product.classification === 'AIRTIME';
+    const flupFlapRecharge = Boolean(flupFlapCustomerId(userId)) &&
+      ['AIRTIME', 'DATA', 'BUNDLE'].includes(product.classification ?? '');
     assertProductAmount(product, amount);
     const receiverQuote = validateReceiverQuote(this.provider.quoteReceiverValue
       ? await this.provider.quoteReceiverValue(product, amount)
       : productReceiverQuote(product, amount), product, amount);
     receiverQuote.preferredLanguage = operator.preferredLanguage;
-    const pricing = flupFlapAirtime ? flupFlapAirtimePrice(amount) : approvedRechargePrice(amount);
+    const pricing = flupFlapRecharge ? flupFlapRechargePrice(amount) : approvedRechargePrice(amount);
     const createdAt = this.clock();
     const quote = await this.repository.createQuote({
       userId,

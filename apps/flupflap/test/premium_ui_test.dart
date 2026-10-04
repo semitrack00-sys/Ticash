@@ -591,6 +591,12 @@ void main() {
     (tester) async {
       final (session, adapter) = await app(tester, 390);
       await tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
+      await tester.scrollUntilVisible(
+        find.widgetWithText(TextField, 'Country code'),
+        150,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextField, 'Country code'),
         'ht',

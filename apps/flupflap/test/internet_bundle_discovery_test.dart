@@ -21,7 +21,6 @@ void main() {
 
   testWidgets('internet selector clears airtime and loads the separate bundle ID', (t) async {
     final (adapter, _, j) = fixture();
-    addTearDown(j.dispose);
     await t.runAsync(() => loadProducts(j));
     final bundle = MobileTopUpOperator.fromJson({
       'id': 682, 'name': 'Natcom Haiti Bundles', 'countryCode': 'HT', 'bundle': true,
@@ -59,7 +58,6 @@ void main() {
 
   test('internet preference never substitutes the detected airtime operator', () async {
     final (_, _, j) = fixture();
-    addTearDown(j.dispose);
     j.selectService(true);
     await loadProducts(j);
     expect(j.operator, isNull);

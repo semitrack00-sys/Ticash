@@ -20,6 +20,8 @@ const actualStart = new Gauge('capacity_start_time');
 const errors = new Rate('capacity_errors');
 const networkErrors = new Counter('capacity_network_errors');
 const httpErrors = new Counter('capacity_http_errors');
+const throttled = new Counter('capacity_http_429');
+const badGateway = new Counter('capacity_http_502');
 export const options = {
   discardResponseBodies: true,
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(95)', 'p(99)'],
@@ -27,7 +29,7 @@ export const options = {
   scenarios: { health_ramp: { executor: 'ramping-vus', startVUs: 0,
     stages: [{ duration: '1m', target: targetVus }, { duration: '2m', target: targetVus }, { duration: '1m', target: 0 }],
     gracefulRampDown: '30s' } },
-  thresholds: { http_req_failed: ['rate<0.01'], capacity_errors: ['rate<0.01'],
+  thresholds: { http_req_failed: ['rate<0.01'], capacity_errors: [{ threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: '1m' }],
     'http_req_duration{status:200}': ['p(95)<1000', 'p(99)<2000'] },
 };
 export function setup() {
@@ -51,14 +53,18 @@ export function setup() {
 }
 let sampledErrors = 0;
 export default function () {
-  const response = http.get(`${BASE_URL}/api/health`, { timeout: '10s', redirects: 0, tags: { endpoint: 'health' } });
+  const response = http.get(`${BASE_URL}/api/health`, { timeout: '10s', redirects: 0, responseType: __VU <= 4 ? 'text' : 'none', tags: { endpoint: 'health' } });
   const ok = check(response, { 'health 200': r => r.status === 200 });
   errors.add(!ok);
   if (!ok && __VU <= 4 && sampledErrors++ < 3) {
-    console.error(JSON.stringify({ shard, timestamp: Date.now(), status: response.status, errorCode: response.error_code, error: response.error }));
+    console.error(JSON.stringify({ shard, timestamp: Date.now(), status: response.status, errorCode: response.error_code, error: response.error,
+      headers: Object.fromEntries(Object.entries(response.headers).filter(([key]) => /^(server|cf-ray|cf-mitigated|retry-after|ratelimit.*|x-ratelimit.*|content-type|x-render.*)$/i.test(key))),
+      body: typeof response.body === 'string' ? response.body.slice(0, 2000) : null }));
   }
   if (response.status === 0) networkErrors.add(1, { error_code: String(response.error_code) });
   else if (!ok) httpErrors.add(1, { status: String(response.status) });
+  if (response.status === 429) throttled.add(1);
+  if (response.status === 502) badGateway.add(1);
   sleep(1);
 }
 export function handleSummary(data) {

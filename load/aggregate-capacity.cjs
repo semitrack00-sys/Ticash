@@ -20,7 +20,7 @@ function aggregate(root, level, count, startAt) {
       if (!(errorRate < 0.01) || !(values('http_req_failed')?.rate < 0.01)) failures.push(`Shard ${shard}: error rate must be below 1%`);
       if (!(latency?.['p(95)'] < 1000) || !(latency?.['p(99)'] < 2000)) failures.push(`Shard ${shard}: successful-response latency exceeded limits`);
       if (fs.readFileSync(path.join(dir, 'result.txt'), 'utf8').trim() !== 'k6_exit_code=0') failures.push(`Shard ${shard}: k6 failed`);
-      shards.push({ shard, actualStartAt, requests, peakVus: peak, errorRate, p95: latency?.['p(95)'], p99: latency?.['p(99)'], networkErrors: values('capacity_network_errors')?.count || 0, httpErrors: values('capacity_http_errors')?.count || 0 });
+      shards.push({ shard, actualStartAt, requests, peakVus: peak, errorRate, p95: latency?.['p(95)'], p99: latency?.['p(99)'], networkErrors: values('capacity_network_errors')?.count || 0, httpErrors: values('capacity_http_errors')?.count || 0, throttled: values('capacity_http_429')?.count || 0, badGateway: values('capacity_http_502')?.count || 0 });
     } catch (error) { failures.push(`Shard ${shard}: ${error.message}`); }
   }
   return { passed: failures.length === 0, scope: 'health-only', level, shardCount: count, startAt, requests: shards.reduce((sum, s) => sum + s.requests, 0), shards, failures };

@@ -12,6 +12,6 @@ For a single-runner local check:
 
 Create `artifacts/capacity/shard-0` first for summary output. The workflow handles directories and uploads all shard diagnostics plus the aggregate report.
 
-Every shard must reach its requested concurrency, finish successfully, keep errors below 1%, and keep successful-response latency below 1 second at p95 and 2 seconds at p99. Network errors and non-200 HTTP responses are counted separately. Load requests are not retried. Readiness requests may retry before load begins.
+Every shard must reach its requested concurrency, finish successfully, keep errors below 1%, and keep successful-response latency below 1 second at p95 and 2 seconds at p99. Network errors, non-200 HTTP responses, 429s, and 502s are counted separately. A bounded sample from four users per runner records response headers and up to 2 KB of error body. After the first minute, the run aborts if its error threshold fails. Load requests are not retried. Readiness requests may retry before load begins.
 
 A passing run measures staging health-endpoint capacity only. Payment/recharge capacity requires separate sandbox tests that cover database work, queues, business endpoints, and provider rate limits.

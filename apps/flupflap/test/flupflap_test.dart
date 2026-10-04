@@ -148,6 +148,20 @@ void main() {
       expect(adapter.requests.where((r) => r.path.endsWith('/countries')).length, 1);
     });
   }
+  test('startup refresh cannot clear a newer signed-in account', () async {
+    final (session, adapter, storage) = fixture();
+    storage.value = 'old-refresh';
+    adapter.holdRefresh = Completer<void>();
+    final initialize = session.initialize();
+    await adapter.refreshStarted.future;
+    adapter.user = {...adapter.user, 'id': 'new-account'};
+    await session.login('new@example.test', 'test-password');
+    adapter.holdRefresh!.complete();
+    await initialize;
+    expect(session.user?['id'], 'new-account');
+    expect(session.authenticated, isTrue);
+    expect(storage.value, 'fixture-refresh');
+  });
   test('session rejects changed API destinations before sending credentials', () async {
     final (session, adapter, _) = fixture();
     await session.login('flup@example.test', 'test-password');

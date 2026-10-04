@@ -93,10 +93,13 @@ class FlupFlapSession extends ChangeNotifier {
   bool get authenticated => user != null && _accessToken != null;
   bool get guest => user?['guest'] == true;
   Future<void> initialize() async {
+    final epoch = _epoch;
     try {
       if (await storage.read() != null) await refresh();
     } catch (_) {
-      await clear();
+      if (epoch == _epoch) {
+        await clear();
+      }
     } finally {
       ready = true;
       notifyListeners();

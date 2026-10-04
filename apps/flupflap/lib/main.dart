@@ -2,7 +2,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:ticash/providers/mobile_top_up_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ticash/localization/app_localizations.dart';
@@ -520,24 +519,6 @@ class _AuthScreenState extends State<AuthScreen> {
     });
   }
 
-  Future<void> signInWithGoogle() async {
-    const clientId = String.fromEnvironment('FLUPFLAP_GOOGLE_CLIENT_ID');
-    if (clientId.isEmpty) {
-      setState(() => message = context.ft('Google sign-in is not configured.'));
-      return;
-    }
-    await run(() async {
-      final account = await GoogleSignIn(
-        scopes: const ['email'],
-        serverClientId: clientId,
-      ).signIn();
-      if (account == null) return;
-      final token = (await account.authentication).idToken;
-      if (token == null || token.isEmpty) throw StateError('Missing Google credential');
-      await widget.session.google(token);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final signIn = !registration && widget.resetToken == null;
@@ -677,37 +658,9 @@ class _AuthScreenState extends State<AuthScreen> {
             const SizedBox(height: 12),
             SizedBox(
               height: 36,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      key: const ValueKey('google-sign-in'),
-                      style: OutlinedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                      ),
-                      onPressed: busy ? null : signInWithGoogle,
-                      icon: const Icon(Icons.account_circle_outlined, size: 18),
-                      label: Text(context.ft('Google')),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                      ),
-                      onPressed: busy
-                          ? null
-                          : () => run(() => widget.session.enterGuest()),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(context.ft('Continue as guest')),
-                      ),
-                    ),
-                  ),
-                ],
+              child: OutlinedButton(
+                onPressed: busy ? null : () => run(() => widget.session.enterGuest()),
+                child: Text(context.ft('Continue as guest')),
               ),
             ),
             Wrap(

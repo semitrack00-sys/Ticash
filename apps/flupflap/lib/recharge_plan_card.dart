@@ -10,11 +10,11 @@ const _muted = Color(0xFF64748B);
 String planSummary(MobileTopUpProduct product, String fallback) {
   if (product.kind == MobileTopUpKind.airtime) return product.name;
   final data = RegExp(
-    r'\b\d+(?:\.\d+)?\s*(?:GB|MB)\b(?:\s*\+\s*\d+(?:\.\d+)?\s*(?:GB|MB)\b(?:\s*Bonus)?)?',
+    r'\b\d+(?:\.\d+)?\s*(?:GB|MB)\b(?:\s*(?:Data)?\s*\+\s*\d+(?:\.\d+)?\s*(?:GB|MB)\b(?:\s*Bonus)?)?',
     caseSensitive: false,
   ).firstMatch(product.name)?.group(0);
   if (data != null) {
-    return data.replaceAllMapped(
+    return data.replaceAll(RegExp(r'\s+Data(?=\s*\+)', caseSensitive: false), '').replaceAllMapped(
       RegExp(r'(\d)\s*(GB|MB)', caseSensitive: false),
       (m) => '${m[1]} ${m[2]!.toUpperCase()}',
     );
@@ -25,9 +25,12 @@ String planSummary(MobileTopUpProduct product, String fallback) {
   return product.name.length <= 48 ? product.name : fallback;
 }
 
-String? planValidity(MobileTopUpProduct product) => product.validityLabel ??
-    RegExp(r'\b\d+\s*(?:hours?|days?|weeks?|months?)\b', caseSensitive: false)
-        .firstMatch(product.name)?.group(0);
+String? planValidity(MobileTopUpProduct product) {
+  if (product.validityLabel != null) return product.validityLabel;
+  final match = RegExp(r'\b(\d+)\s*(hours?|days?|weeks?|months?)\b', caseSensitive: false)
+      .firstMatch(product.name);
+  return match == null ? null : '${match[1]} ${match[2]!.toLowerCase()}';
+}
 
 class RechargePlanCard extends StatelessWidget {
   const RechargePlanCard({
@@ -139,13 +142,13 @@ class RechargePlanCard extends StatelessWidget {
                 )),
                 if (product.amountType == 'FIXED') ...[
                   const SizedBox(width: 10),
-                  Flexible(child: Column(
+                  Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(price, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: _navy)),
                       Text(product.priceCurrency, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _muted)),
                     ],
-                  )),
+                  ),
                 ],
               ],
             ),

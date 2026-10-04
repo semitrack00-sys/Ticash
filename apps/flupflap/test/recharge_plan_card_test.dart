@@ -26,6 +26,8 @@ void main() {
   test('display summaries preserve bonus quantities and do not invent validity', () {
     expect(planSummary(plan(providerName), 'Bundle'), '7 GB');
     expect(planValidity(plan(providerName)), '7 days');
+    expect(planValidity(plan('2GB Data + 2GB Bonus Data, 7DAYS')), '7 days');
+    expect(planSummary(plan('2GB Data + 2GB Bonus Data, 7DAYS'), 'Bundle'), '2 GB + 2 GB Bonus');
     expect(planSummary(plan('4GB + 4GB Bonus Data, Unlimited calls'), 'Bundle'), '4 GB + 4 GB Bonus');
     expect(planSummary(plan('Unlimited WhatsApp and unlimited calls, data allowance unknown'), 'Bundle'), 'Bundle');
     expect(planValidity(plan('Unnamed provider offer')), isNull);

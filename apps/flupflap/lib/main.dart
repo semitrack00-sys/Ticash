@@ -701,7 +701,10 @@ class _AuthScreenState extends State<AuthScreen> {
                       onPressed: busy
                           ? null
                           : () => run(() => widget.session.enterGuest()),
-                      child: Text(context.ft('Guest')),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(context.ft('Continue as guest')),
+                      ),
                     ),
                   ),
                 ],

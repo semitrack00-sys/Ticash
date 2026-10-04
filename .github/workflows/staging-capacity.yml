@@ -9,9 +9,6 @@ on:
         default: smoke
         type: choice
         options: [smoke, '25', '500', '1000', '2500', '5000', '10000']
-  push:
-    branches: [codex/staging-capacity-repair-20261004]
-    paths: ['load/**', '.github/workflows/staging-capacity.yml']
 
 permissions:
   contents: read
@@ -33,7 +30,7 @@ jobs:
         run: node --test load/capacity.test.cjs
       - id: plan
         env:
-          LEVEL: ${{ inputs.level || '10000' }}
+          LEVEL: ${{ inputs.level }}
         run: |
           echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
           if [ "$LEVEL" = 10000 ]; then

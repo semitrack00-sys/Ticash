@@ -29,7 +29,7 @@ export const options = {
   scenarios: { health_ramp: { executor: 'ramping-vus', startVUs: 0,
     stages: [{ duration: '1m', target: targetVus }, { duration: '2m', target: targetVus }, { duration: '1m', target: 0 }],
     gracefulRampDown: '30s' } },
-  thresholds: { http_req_failed: ['rate<0.01'], capacity_errors: [{ threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: '1m' }],
+  thresholds: { http_req_failed: ['rate<0.01'], capacity_errors: [{ threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: `${Math.ceil((Math.max(0, startAt - Date.now()) + 60000) / 1000)}s` }],
     'http_req_duration{status:200}': ['p(95)<1000', 'p(99)<2000'] },
 };
 export function setup() {

@@ -76,7 +76,7 @@ class RechargeJourney extends ChangeNotifier {
       _transactionId,
       _resumeToken;
   CheckoutMode? _attemptMode;
-  bool _attemptGuest = false, _disposed = false;
+  bool _attemptGuest = false, _disposed = false, _statusPollingActive = true;
   int _revision = 0, _polls = 0;
   Timer? _timer, _quoteTimer;
   Future<void>? _refreshFlight;
@@ -690,6 +690,7 @@ class RechargeJourney extends ChangeNotifier {
       if (_resumeToken == null && updated.id != _transactionId) {
         throw const FormatException('Transaction mismatch');
       }
+      error = null;
       result = updated;
       _updateHistory(updated);
       step = updated.terminal ? RechargeStep.result : RechargeStep.recovery;
@@ -767,16 +768,29 @@ class RechargeJourney extends ChangeNotifier {
 
   void _schedule() {
     if (_disposed ||
+        !_statusPollingActive ||
         _timer?.isActive == true ||
-        _polls >= 24 ||
         (result?.terminal == true && !_historyCheckRequired) ||
         (_transactionId == null && _resumeToken == null)) {
       return;
     }
-    _timer = Timer(const Duration(seconds: 5), () {
-      _polls++;
+    // Providers can finish after the initial two-minute checkout window.
+    // Continue read-only checks with a slower cadence until canonical final state.
+    final delay = Duration(seconds: _polls < 24 ? 5 : 15);
+    _timer = Timer(delay, () {
+      if (_polls < 24) _polls++;
       refresh();
     });
+  }
+
+  void setStatusPollingActive(bool active) {
+    if (_disposed || _statusPollingActive == active) return;
+    _statusPollingActive = active;
+    _timer?.cancel();
+    if (active && locked) {
+      refresh();
+      _schedule();
+    }
   }
 
   RecurringRechargeSchedule? recurringFor(String transactionId) {

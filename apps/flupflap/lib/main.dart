@@ -675,13 +675,20 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           if (widget.resetToken == null) ...[
             const SizedBox(height: 12),
-            OutlinedButton.icon(
-              key: const ValueKey('google-sign-in'),
-              onPressed: busy ? null : signInWithGoogle,
-              icon: const Icon(Icons.account_circle_outlined),
-              label: Text(context.ft('Continue with Google')),
+            SizedBox(
+              height: 40,
+              child: OutlinedButton.icon(
+                key: const ValueKey('google-sign-in'),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                onPressed: busy ? null : signInWithGoogle,
+                icon: const Icon(Icons.account_circle_outlined, size: 18),
+                label: Text(context.ft('Continue with Google')),
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 4),
             OutlinedButton(
               onPressed: busy
                   ? null

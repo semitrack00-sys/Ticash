@@ -33,6 +33,7 @@ jobs:
         with:
           distribution: zulu
           java-version: '17'
+      - run: python3 -m unittest discover -s tool -p 'test_*.py'
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
@@ -54,6 +55,11 @@ jobs:
       - run: flutter pub get
       - name: Build APK
         run: flutter build apk --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - name: Verify built QA manifest and plugin permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print build/app/outputs/flutter-apk/app-debug.apk | python3 tool/check_android_manifest.py --allow-debug-qa
       - name: Build AAB
         run: flutter build appbundle --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
       - uses: actions/upload-artifact@v4
@@ -72,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [30, 31]
+        api: [30, 31, 36]
     defaults:
       run:
         working-directory: .

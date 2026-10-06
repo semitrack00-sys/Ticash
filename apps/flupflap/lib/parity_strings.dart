@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'privacy_strings.dart';
 import 'package:ticash/localization/app_localizations.dart';
 
 extension FlupFlapTranslations on BuildContext {
   String ft(String key, [Map<String, String> values = const {}]) {
     var text =
+        privacyStrings[appLanguage.code]?[key] ??
         flupFlapStrings[appLanguage.code]?[key] ??
         flupFlapStrings['en']?[key] ??
         key;

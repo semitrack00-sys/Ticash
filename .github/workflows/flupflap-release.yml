@@ -1,0 +1,109 @@
+name: FlupFlap signed release bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: Unique Play version code greater than all previously uploaded codes
+        required: true
+        type: string
+      version_name:
+        description: Public version in major.minor.patch format
+        required: true
+        type: string
+      api_base_url:
+        description: Reviewed production HTTPS API URL ending in /api
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flupflap-signed-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: flupflap-release
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    env:
+      RELEASE_VERSION_CODE: ${{ inputs.version_code }}
+      RELEASE_VERSION_NAME: ${{ inputs.version_name }}
+      RELEASE_API_BASE_URL: ${{ inputs.api_base_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - name: Validate release inputs and provision upload signing
+        env:
+          FLUPFLAP_UPLOAD_KEYSTORE_BASE64: ${{ secrets.FLUPFLAP_UPLOAD_KEYSTORE_BASE64 }}
+          FLUPFLAP_UPLOAD_KEY_ALIAS: ${{ secrets.FLUPFLAP_UPLOAD_KEY_ALIAS }}
+          FLUPFLAP_UPLOAD_KEY_PASSWORD: ${{ secrets.FLUPFLAP_UPLOAD_KEY_PASSWORD }}
+          FLUPFLAP_UPLOAD_STORE_PASSWORD: ${{ secrets.FLUPFLAP_UPLOAD_STORE_PASSWORD }}
+        run: python3 tool/prepare_release_signing.py
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: python3 -m unittest discover -s tool -p 'test_*.py'
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - name: Build signed release AAB
+        run: |
+          flutter build appbundle --release \
+            --build-number="$RELEASE_VERSION_CODE" \
+            --build-name="$RELEASE_VERSION_NAME" \
+            --dart-define="FLUPFLAP_API_BASE_URL=$RELEASE_API_BASE_URL"
+      - name: Verify built release manifest
+        run: |
+          set -euo pipefail
+          flutter build apk --release \
+            --build-number="$RELEASE_VERSION_CODE" \
+            --build-name="$RELEASE_VERSION_NAME" \
+            --dart-define="FLUPFLAP_API_BASE_URL=$RELEASE_API_BASE_URL"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print build/app/outputs/flutter-apk/app-release.apk | python3 tool/check_android_manifest.py
+      - name: Verify bundle signature and record provenance
+        run: |
+          set -euo pipefail
+          bundle=build/app/outputs/bundle/release/app-release.aab
+          test -s "$bundle"
+          jarsigner -verify "$bundle" > /dev/null
+          keytool -printcert -jarfile "$bundle" > /dev/null
+          mkdir -p build/play-release
+          cp "$bundle" build/play-release/FlupFlap-release.aab
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          path = Path('build/play-release/FlupFlap-release.aab')
+          sha = hashlib.sha256(path.read_bytes()).hexdigest()
+          (path.parent / 'SHA256SUMS.txt').write_text(sha + '  ' + path.name + '\n')
+          (path.parent / 'release-provenance.json').write_text(json.dumps({
+              'commit': os.environ['GITHUB_SHA'],
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'application_id': 'com.ticash.flupflap',
+              'version_code': int(os.environ['RELEASE_VERSION_CODE']),
+              'version_name': os.environ['RELEASE_VERSION_NAME'],
+              'api_base_url': os.environ['RELEASE_API_BASE_URL'],
+              'sha256': sha,
+          }, indent=2) + '\n')
+          PY
+      - name: Remove private signing files
+        if: always()
+        run: rm -f android/key.properties android/upload-keystore.jks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-play-release-${{ inputs.version_code }}
+          retention-days: 14
+          if-no-files-found: error
+          path: apps/flupflap/build/play-release/

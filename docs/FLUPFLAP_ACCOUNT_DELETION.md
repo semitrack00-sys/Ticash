@@ -84,7 +84,7 @@ This table documents current deletion behavior and outstanding decisions. It is 
 
 For each retained category, record the owner, purpose, fields, retention clock, duration or objective expiry criterion, legal-hold exception and deletion procedure. Restrict legal holds to records actually needed for the matter; review holds periodically. Do not use a blanket financial-record exception to retain erased account profiles.
 
-The owner confirmed on 2026-10-06 that FlupFlap provides recharge only. Confirm the company's registration jurisdiction before selecting applicable rules; do not assume TiCash money-transmission obligations apply to FlupFlap. For U.S. tax records, [IRS guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) uses different periods depending on the record and circumstances; it does not establish a universal seven-year rule for all customer data. If California privacy law applies, [the current CPPA materials](https://cppa.ca.gov/regulations/) require a separate applicability and minimization review; being in California alone does not establish that every business is covered.
+The owner confirmed on 2026-10-06 that FlupFlap provides recharge only. The owner confirmed the company is registered in Nevada, USA on 2026-10-06 UTC. This policy covers FlupFlap recharge; do not assume TiCash money-transmission obligations apply to FlupFlap. For U.S. tax records, [IRS guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) uses different periods depending on the record and circumstances; it does not establish a universal seven-year rule for all customer data. If California privacy law applies, [the current CPPA materials](https://cppa.ca.gov/regulations/) require a separate applicability and minimization review; being in California alone does not establish that every business is covered.
 
 Publish per-category retention wording only after these decisions are confirmed and the corresponding operational expiry exists. The public privacy page must describe actual practice. Do not promise a numeric backup or provider deadline that has not been verified.
 
@@ -99,3 +99,31 @@ Publish per-category retention wording only after these decisions are confirmed 
 - Deliberately rolled back the outer transaction. Follow-up queries confirmed staff, customer/control and audit rows did not persist.
 - This rehearsal wrapped the deletion function in the outer test transaction. It does not validate a normal committed CLI run, request verification, drained maintenance, public HTTP login behavior, concurrent worker execution, processor cleanup or backup restoration.
 - Original service branch `main` was restored after the rehearsal. The additive staging migration remains applied; no production deployment or PR merge occurred.
+
+
+## Nevada / USA retention basis and proposed operating rules
+
+Scope confirmed by the owner: Ticash-App LLC, Nevada, United States; FlupFlap provides mobile recharge only. The registration state does not determine all customer-location, provider-contract or tax obligations. Treat money-transmission records in the separate TiCash service separately.
+
+[NRS 603A.200](https://www.leg.state.nv.us/nrs/nrs-603a.html#NRS603ASec200) requires reasonable destruction measures when a business stops maintaining personal records. NRS 603A.210 addresses reasonable security for covered Nevada-resident records. These provisions do not supply a universal customer-data retention duration.
+
+For records supporting U.S. tax returns, apply the relevant tax limitation period and documented exceptions rather than a blanket duration for every customer field. [IRS guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) generally describes three years in ordinary cases, six years for certain substantial income omissions, seven for specified bad-debt/worthless-security claims and indefinite retention for unfiled or fraudulent returns. The retention clock depends on the return and circumstances; account deletion does not start that clock. Check other actual contractual/legal requirements before releasing financial evidence.
+
+Proposed operating rules to finalize before launch:
+
+- Erase ordinary account profile and access data when verified deletion executes, after pending payment work is reconciled. Do not defer profile erasure merely because transaction evidence remains.
+- Retain only transaction fields needed to evidence recharge, payment/refund, accounting or a specific dispute. Current retained transactions and required quotes can include recipient phone numbers. Record this explicitly in the customer response; the current CLI does not anonymize those financial rows.
+- Determine financial-record release from the applicable tax period, actual provider/insurance obligations and closure of documented disputes or legal holds. Give each hold an owner, scope and review date. A hold must not authorize reuse for marketing.
+- Limit support verification evidence to what establishes the request. Define a separate support-ticket expiry before promising a duration; the Gmail inbox does not automatically implement this policy.
+- Keep an opaque deletion receipt/suppression identifier only for the documented audit or restore-suppression purpose. Determine the audit expiry separately from credentials and profile data.
+- Obtain processor cleanup evidence separately. Do not promise that Stripe, recharge providers or email/SMS services erase every record immediately.
+
+### Backup inventory checked
+
+On 2026-10-06 UTC, the production Render database recovery page for `ticash-db` reported point-in-time recovery for the past seven days. It also states that logical export files are retained for **at least** seven days; this is not a maximum export lifetime.
+
+This observation covers Render's recovery feature only. Inventory downloads, independent exports, replicas, support attachments and processor copies before stating full backup expiry. Restored data must have the deletion suppression applied before customer access or worker execution resumes. The current PR does not implement a durable suppression ledger independent of a restored database, so the restore drill remains a release requirement.
+
+### Public wording
+
+The website draft separates account/profile erasure, retained recharge/payment evidence, security/support records and backup/processor copies. It uses objective retention criteria until category-specific periods and expiry procedures are established. Do not publish a numeric whole-account erasure guarantee based solely on the seven-day Render recovery window.

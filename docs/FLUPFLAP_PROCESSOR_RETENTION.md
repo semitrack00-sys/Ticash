@@ -124,9 +124,22 @@ Read-only connector checks confirmed Gmail access to the configured support mail
 | Store | Confirmed evidence | Next verification / disposal gate |
 | --- | --- | --- |
 | Support mailbox | Gmail access confirmed; no case-closure workflow verified | Maintain a private per-case closure timestamp, exact message/attachment references, product scope and hold decision before calculating 30/90-day eligibility. Check forwarded copies and exports separately. |
-| Resend | Password-reset and recharge-receipt loaders exist in source | Verify deployment settings and provider retention/removal controls. Code support alone is not proof that delivery is enabled. |
-| Telnyx | Receiver SMS loader requires API key, sender number and messaging profile together | Verify deployment enablement and provider message-history controls; preserve unresolved delivery evidence. Never include configuration values in a review report. |
-| Render logs / drains | Production service identified; runtime destinations not verified | Dashboard sign-in is required to inspect destinations. Record external drains, export copies, operator and available disposal mechanism before claiming 180-day enforcement. |
+| Resend | Production runtime check: API key, provider selections and email sender configuration absent | Disabled in the checked deployment. Record NOT_APPLICABLE for current production email delivery; this does not prove historical Resend records do not exist. Recheck after any configuration change. |
+| Telnyx | Production runtime check: all three required SMS settings present; deployed service is running | Treat Telnyx as an active processor for review. Configuration is not proof of individual message delivery. Verify provider message-history retention/removal controls and preserve unresolved delivery evidence. No configuration values were collected. |
+| Render logs / drains | Service uses workspace default; endpoint/token show None. Workspace has no default log destination; Pro plan confirmed | Native runtime log availability is documented as 14 days on Pro. No Render-managed external log stream is configured. Review downloads, past drains and application-managed exports separately; provider log unavailability is not independent proof of physical erasure. |
 | LoginSecurityState | Login route uses an email-scoped HMAC; table has no verified FlupFlap ownership classification | Do not select rows for FlupFlap-only expiry merely by age or an email match. Confirm scope and lockout behavior before proposing any cleanup. |
 
 No store has yet qualified for an operational disposal test through this inventory. Prepare a synthetic staging rehearsal only after its exact storage mechanism and independently reviewed source attestations are available. The planner's synthetic tests remain useful eligibility checks, not evidence of Gmail, provider or Render disposal. Production expiry and restore release remain blocked.
+
+The runtime configuration check emitted only presence/selection booleans, made no provider calls and did not change configuration, files or customer records. The checked deployment remains commit `023074d373fa96a763386c16538583bf59e90183`. Render's 14-day native log availability is shorter than the approved 180-day ordinary-security limit; no longer retention or new external log stream is proposed. This observation does not classify mixed database audit records as ordinary logs. Render documents log availability, not a customer-specific erasure certificate:
+https://render.com/docs/logging
+
+### Operational rehearsal prerequisites
+
+| Target | Synthetic rehearsal scope | Pass evidence before a real disposal |
+| --- | --- | --- |
+| Gmail support / verification | Dedicated disposable staging messages with explicit synthetic case closure and product labels; expired/unexpired, held/unheld, shared and unresolved controls | Privately verified message and attachment IDs, independently checked closure/holds, reviewed provider action and approval, primary/trash/attachment outcome and unchanged controls. Received date or a label alone cannot authorize disposal. |
+| Telnyx message history | Separate provider test account or documented test mechanism; do not send a production SMS merely to create a deletion fixture | Confirm supported history removal or provider case process and residual retention first. Record test action/case evidence without recipient details or message bodies. No API deletion endpoint is assumed. |
+| Render native runtime logs | Harmless unique staging marker followed through the workspace's native availability window | Verify the marker's timestamp and later unavailability after that window, plus unchanged controls. A filter, clearing the live-tail display or finding no matches is not deletion evidence. The elapsed-window test cannot be completed immediately. |
+
+These are prepared test specifications, not completed operational rehearsals or authorization to mutate provider data. Keep the irreversible disposal approval attached to an exact verified case scope; do not turn the read-only planner into a generic mailbox or audit-table purge.

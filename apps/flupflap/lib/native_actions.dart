@@ -3,6 +3,12 @@ import 'checkout_contract.dart';
 
 class NativeActions {
   static const channel = MethodChannel('com.ticash.flupflap/customer-actions');
+  static Future<void> privacyAction(String action) {
+    if (!const {'policy', 'deletionPage', 'deletionEmail'}.contains(action)) {
+      throw const FormatException('Invalid privacy action');
+    }
+    return channel.invokeMethod<void>('privacy', action);
+  }
   static Future<void> checkout(Uri uri) async {
     if (!HostedSession.safeUrl(uri.toString())) {
       throw const FormatException('Invalid checkout');

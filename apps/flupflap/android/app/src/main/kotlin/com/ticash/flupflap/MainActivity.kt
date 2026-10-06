@@ -12,6 +12,25 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.ticash.flupflap/customer-actions").setMethodCallHandler { call, result ->
             try {
                 when (call.method) {
+                    "privacy" -> {
+                        val action = call.arguments as? String
+                        val uri = when (action) {
+                            "policy" -> Uri.parse("https://www.flupflap.com/legal/privacy/")
+                            "deletionPage" -> Uri.parse("https://www.flupflap.com/legal/delete-account/")
+                            "deletionEmail" -> Uri.parse("mailto:contact@ticash-app.com").buildUpon()
+                                .appendQueryParameter("subject", "FlupFlap account deletion request")
+                                .appendQueryParameter("body", "Please delete my FlupFlap account and associated personal data.\n\nMy registered account email: \n\nPlease tell me about any verification steps, recurring recharges and records that need to be retained.")
+                                .build()
+                            else -> null
+                        }
+                        if (uri == null) {
+                            result.error("INVALID_PRIVACY_ACTION", "Invalid privacy action", null)
+                        } else {
+                            val intent = Intent(if (action == "deletionEmail") Intent.ACTION_SENDTO else Intent.ACTION_VIEW, uri)
+                            startActivity(intent)
+                            result.success(null)
+                        }
+                    }
                     "checkout" -> {
                         val uri = Uri.parse(call.arguments as? String ?: "")
                         if (uri.scheme != "https" || uri.host != "checkout.stripe.com" || uri.userInfo != null || (uri.port != -1 && uri.port != 443)) {

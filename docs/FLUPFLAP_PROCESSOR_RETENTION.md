@@ -197,7 +197,7 @@ Sources:
 - https://developers.telnyx.com/api-reference/messages/retrieve-a-message
 - https://support.telnyx.com/en/articles/5170721-best-practices-for-contacting-support
 
-The owner explicitly authorized this request on 2026-10-06. It was sent from the configured support mailbox to the published `support@telnyx.com` address at 13:45:10 UTC (06:45:10 America/Los_Angeles), and the exact message was verified in Gmail Sent. The email contained no API keys, profile/message IDs or customer message data. Telnyx acknowledged receipt at 13:45:41 UTC and assigned a ticket; its exact reference remains in the private mailbox. The request and acknowledgment are labeled Provider pending. A substantive answer remains pending; acknowledgment is not confirmation of redaction activation or disposal. No fees, setting changes or customer data disposal were authorized. The request text below is retained for review.
+The owner explicitly authorized this request on 2026-10-06. It was sent from the configured support mailbox to the published `support@telnyx.com` address at 13:45:10 UTC (06:45:10 America/Los_Angeles), and the exact message was verified in Gmail Sent. The email contained no API keys, profile/message IDs or customer message data. Telnyx acknowledged receipt at 13:45:41 UTC and assigned a ticket; its exact reference remains in the private mailbox. A documentation-based reply from TAIA arrived at 13:51:49 UTC, reviewed below. All three confirmed messages are labeled Provider pending. Account-specific confirmation remains outstanding; receipt of a reply is not confirmation of redaction activation or disposal. No fees, setting changes or customer data disposal were authorized. The request text below is retained for review.
 
 > Subject: FlupFlap SMS redaction eligibility and retention controls
 >
@@ -213,3 +213,26 @@ The owner explicitly authorized this request on 2026-10-06. It was sent from the
 >
 > Thank you,
 > Ticash-App LLC
+
+### Support reply review and remaining account questions — 2026-10-06
+
+The TAIA support reply describes the public activation process and reports that the case is in the support queue. It does not demonstrate account-team approval, allowlist activation, agreed fees or physical disposal. Its source-backed findings and outstanding questions are separated below.
+
+| Category | Verified documentation / reply scope | Outstanding account evidence |
+| --- | --- | --- |
+| SMS body text | The linked Telnyx MDR help article expressly states that body text is stored for up to ten days, then wiped, with hashes remaining. This is a body-specific published statement, distinct from the Messages API retrieval window. | Account-applicable scope across primary systems, backups, exports, historical records and carriers; no individual removal was verified. |
+| Recipient identifiers / MDR metadata | Redaction masks the last four counterparty digits at read time; delivery metadata and content hashes remain. The reply supplies no fixed retention period for identifiers or delivery records. | Retained fields, purpose and objective expiry under the applicable merchant agreement. |
+| Activation and cost | Organization allowlisting precedes a per-profile change. The reply cites no published monetary activation fee; absence of a fee in documentation does not establish a free account entitlement. | Named account-team confirmation of eligibility, costs and activation scope before changes. |
+| Backups / carriers | The reply explicitly refers these questions to the account/privacy team. | Separate retention, removal process and residual-copy confirmation. |
+| Individual request route | The reply points to the privacy policy's regulatory contact and data-control page. | Confirm the merchant's processor request route and identity/binding requirements; do not treat account deletion as recipient-data erasure. |
+| Test mechanism | The reply proposes a separate messaging profile and controlled SMS; no dedicated redaction sandbox is documented. | Review organization sharing, profile/number setup, test recipient consent, costs and exact authorized changes before a real test. |
+
+The ten-day body statement does not prove deletion of recipient identifiers, MDR metadata, backups, hashes or carrier copies. Preserve pending status until account-specific confirmation and an operational test provide the missing evidence. The redaction guide also warns that older records can remain readable; ask the account team to reconcile historical retrieval with the body-specific retention statement rather than treating it as a blanket erasure guarantee.
+
+Sources checked against the reply:
+- https://support.telnyx.com/en/articles/1130611-understand-telnyx-sms-mdr-report-log
+- https://developers.telnyx.com/docs/messaging/messages/message-redaction
+- https://telnyx.com/privacy-policy
+- https://telnyx.com/request-to-control-review-data
+
+Prepared follow-up scope, not sent: ask a named account/privacy reviewer to confirm the merchant-specific activation cost and eligibility; the scope of the ten-day body statement and historical records; identifier/MDR, backup and carrier retention; the supported processor request path; and a separate-profile test with any charges disclosed. Do not request activation, a paid service or customer-data removal before the exact action is authorized.

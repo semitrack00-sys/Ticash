@@ -7,6 +7,11 @@ https://support.google.com/googleplay/android-developer/answer/11926878
 
 The regular Android workflow continues to produce **debug QA builds**. Its
 offline native startup capture also runs on API 36 alongside API 30 and 31.
+A separate release-mode CI check uses a disposable two-day certificate and an
+invalid API hostname to exercise optimized APK/AAB builds without production
+signing credentials. It uploads only validation reports. Both the CI check and
+production workflow verify 64-bit ELF alignment, APK ZIP alignment and the AAB
+signature. Static alignment checks do not replace testing on a 16 KB device.
 Those captures test launch behavior; they are not a complete Android 16 review.
 Test back navigation, keyboard/insets, checkout return, recovery links and
 large-screen layout on Android 16 before distributing a release.

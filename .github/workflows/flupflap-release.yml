@@ -73,19 +73,24 @@ jobs:
             --build-name="$RELEASE_VERSION_NAME" \
             --dart-define="FLUPFLAP_API_BASE_URL=$RELEASE_API_BASE_URL"
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print build/app/outputs/flutter-apk/app-release.apk | python3 tool/check_android_manifest.py
+          python3 tool/check_native_alignment.py build/app/outputs/flutter-apk/app-release.apk
+          python3 tool/check_native_alignment.py --bundle build/app/outputs/bundle/release/app-release.aab
       - name: Verify bundle signature and record provenance
         run: |
           set -euo pipefail
           bundle=build/app/outputs/bundle/release/app-release.aab
           test -s "$bundle"
-          jarsigner -verify "$bundle" > /dev/null
           keytool -printcert -jarfile "$bundle" > /dev/null
           mkdir -p build/play-release
           cp "$bundle" build/play-release/FlupFlap-release.aab
           python3 - <<'PY'
-          import hashlib, json, os
+          import hashlib, json, os, subprocess
           from pathlib import Path
           path = Path('build/play-release/FlupFlap-release.aab')
+          verification = subprocess.run(['jarsigner', '-J-Duser.language=en', '-J-Duser.country=US',
+                                         '-verify', str(path)], capture_output=True, text=True, check=True)
+          if 'jar verified.' not in verification.stdout:
+              raise SystemExit('AAB signature verification failed.')
           sha = hashlib.sha256(path.read_bytes()).hexdigest()
           (path.parent / 'SHA256SUMS.txt').write_text(sha + '  ' + path.name + '\n')
           (path.parent / 'release-provenance.json').write_text(json.dumps({

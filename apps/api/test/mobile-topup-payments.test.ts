@@ -386,6 +386,44 @@ describe('sandbox payment foundation',()=>{
   });
 });
 
+describe('automatic reconciliation environment isolation', () => {
+  it.each(['SANDBOX', 'PRODUCTION'] as const)('reconciles %s after more than a full batch of foreign records', async environment => {
+    const f = fixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', { quoteId: quote.id }, 'environment-template');
+    const template = (await f.repository.getTransactionById(session.transactionId))!;
+    const foreignEnvironment = environment === 'SANDBOX' ? 'PRODUCTION' : 'SANDBOX';
+    const foreign = [];
+    for (let i = 0; i < 30; i++) {
+      const q = await f.service.createQuote('customer', quoteInput);
+      const record = { ...template, id: `foreign-${i}`, quoteId: q.id, idempotencyKey: `foreign-${i}`,
+        paymentEnvironment: foreignEnvironment, rechargeEnvironment: foreignEnvironment,
+        testMode: foreignEnvironment === 'SANDBOX', paymentProvider: 'STRIPE' as const,
+        status: 'PENDING' as const, paymentStatus: i % 2 ? 'PENDING' as const : 'SESSION_CREATED' as const,
+        updatedAt: '2026-01-01T00:00:00.000Z' };
+      await f.repository.reserveTransaction(record);
+      foreign.push(record);
+    }
+    const q = await f.service.createQuote('customer', quoteInput);
+    const valid = { ...template, id: 'current-environment', quoteId: q.id, idempotencyKey: 'current-environment',
+      paymentEnvironment: environment, rechargeEnvironment: environment, testMode: environment === 'SANDBOX',
+      status: 'PROCESSING' as const, paymentStatus: 'CAPTURED' as const,
+      providerTransactionId: 'reloadly-fixture', updatedAt: '2026-01-02T00:00:00.000Z' };
+    await f.repository.reserveTransaction(valid);
+    const lookup = vi.spyOn(f.provider, 'getTopUpStatus');
+    const service = new MobileTopUpService(environment === 'SANDBOX' ? config : productionConfig,
+      f.provider, new MockMobileTopUpPaymentProvider(), f.repository, f.audit);
+
+    await expect(service.reconcilePendingTransactions(1)).resolves.toEqual({ scanned: 1, resolved: 1, pending: 0, errors: 0 });
+    expect((await f.repository.getTransactionById(valid.id))?.status).toBe('DELIVERED');
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(f.submit).not.toHaveBeenCalled();
+    for (const record of foreign) expect(await f.repository.getTransactionById(record.id)).toEqual(record);
+    expect(f.audit).not.toHaveBeenCalledWith(expect.anything(), 'MOBILE_TOPUP_AUTOMATIC_RECONCILIATION_FAILED',
+      expect.anything(), expect.anything(), expect.anything());
+  });
+});
+
 describe('payment routes and guest restrictions',()=>{
   it('requires authentication and reports honest permanent/guest method availability',async()=>{
     const f=fixture();const app=createApp({mobileTopUpConfig:config,mobileTopUpProvider:f.provider});

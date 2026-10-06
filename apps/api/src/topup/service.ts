@@ -1410,7 +1410,7 @@ export class MobileTopUpService {
   async reconcilePendingTransactions(limit = 25) {
     this.assertEnabled();
     const staleBefore = new Date(this.clock().getTime() - 15_000).toISOString();
-    const candidates = await this.repository.listReconciliationCandidates(limit, staleBefore);
+    const candidates = await this.repository.listReconciliationCandidates(limit, staleBefore, this.runtimeEnvironment());
     let resolved = 0;
     let pending = 0;
     let errors = 0;

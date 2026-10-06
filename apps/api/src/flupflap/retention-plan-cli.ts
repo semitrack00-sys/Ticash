@@ -1,9 +1,10 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { planFlupFlapRetention } from './retention-plan.js';
+import { planSupportCaseRetention } from './support-retention.js';
 
 const args = process.argv.slice(2);
-if (args.length !== 2 || args[0] !== '--input-file') {
-  console.error('Usage: retention-plan-cli.js --input-file PRIVATE_JSON_FILE (read-only; no execute mode)');
+if (args.length !== 2 || !['--input-file', '--support-cases-file'].includes(args[0]!)) {
+  console.error('Usage: retention-plan-cli.js --input-file FILE | --support-cases-file FILE (private; read-only; no execute mode)');
   process.exitCode = 1;
 } else {
   let fd: number | undefined;
@@ -21,7 +22,7 @@ if (args.length !== 2 || args[0] !== '--input-file') {
     }
     if (size > 1024 * 1024) throw new Error('INPUT_TOO_LARGE');
     const raw: unknown = JSON.parse(bytes.subarray(0, size).toString('utf8'));
-    console.log(JSON.stringify(planFlupFlapRetention(raw)));
+    console.log(JSON.stringify(args[0] === '--support-cases-file' ? planSupportCaseRetention(raw) : planFlupFlapRetention(raw)));
   } catch {
     // No input values, paths, validation diagnostics or credentials in errors.
     console.error('RETENTION_PLAN_FAILED_REVIEW_REQUIRED');

@@ -1,0 +1,19 @@
+# Proposed only. Do not apply until the owner approves the recurring charge.
+# Separate storage worker: no database credentials or public HTTP endpoint.
+services:
+  - type: worker
+    name: flupflap-deletion-ledger-storage
+    runtime: node
+    repo: https://github.com/semitrack00-sys/Ticash
+    branch: codex/flupflap-deletion-fulfillment
+    region: oregon
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: 'off'
+    buildCommand: node --version
+    startCommand: >-
+      node -e "const fs=require('node:fs');const p='/var/data/flupflap-ledger/private';fs.mkdirSync(p,{recursive:true,mode:0o700});fs.chmodSync(p,0o700);setInterval(()=>{},3600000)"
+    disk:
+      name: deletion-ledger
+      mountPath: /var/data/flupflap-ledger
+      sizeGB: 1

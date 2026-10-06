@@ -184,7 +184,7 @@ Sources:
 - https://developers.telnyx.com/api-reference/messages/retrieve-a-message
 - https://support.telnyx.com/en/articles/5170721-best-practices-for-contacting-support
 
-Prepared support request below is UNSENT. The published support address is `support@telnyx.com`. Do not send without the owner's explicit instruction. It requests information/activation procedure only and does not authorize fees, a setting change or customer data disposal.
+The owner explicitly authorized this request on 2026-10-06. It was sent from the configured support mailbox to the published `support@telnyx.com` address at 13:45:10 UTC (06:45:10 America/Los_Angeles), and the exact message was verified in Gmail Sent. The email contained no API keys, profile/message IDs or customer message data. The request text below is retained for review. Provider reply/ticket number remains pending; sending the request is not confirmation of redaction activation or disposal. No fees, setting changes or customer data disposal were authorized.
 
 > Subject: FlupFlap SMS redaction eligibility and retention controls
 >

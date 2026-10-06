@@ -18,6 +18,7 @@ adb shell am force-stop com.ticash.flupflap
 api=$(adb shell getprop ro.build.version.sdk | tr -d '\r')
 # Android 12 can omit the native splash icon for adb/IDE launches. Tap the
 # actual launcher entry, as a customer would, using its observed UI bounds.
+prepare_launcher() {
 if (( api >= 31 )); then
 adb shell input keyevent KEYCODE_HOME
 screen=$(adb shell wm size | tr -d '\r' | tail -1 | awk '{print $NF}')
@@ -58,6 +59,11 @@ else
   # Start above the dock/search bar so it cannot consume the upward gesture.
   adb shell input swipe "$((width / 2))" "$((height * 7 / 10))" "$((width / 2))" "$((height / 4))" 500
 fi
+# Launcher predictions can shift the app grid after the drawer first opens.
+# Wait for that layout and take fresh bounds before tapping an icon.
+sleep 3
+dump_launcher
+sleep 2
 dump_launcher
 adb exec-out screencap -p > splash-capture/launcher.png
 if ! read -r x y < <(launcher_point FlupFlap); then
@@ -68,7 +74,9 @@ if ! read -r x y < <(launcher_point FlupFlap); then
   y=''
 fi
 fi
+}
 capture_startup() {
+  prepare_launcher
   rm -f splash-capture/frames/*.png
   adb shell screenrecord --time-limit 12 /sdcard/flupflap-startup.mp4 &
   record_pid=$!
@@ -81,15 +89,20 @@ capture_startup() {
   wait "$record_pid"
   adb pull /sdcard/flupflap-startup.mp4 splash-capture/startup.mp4
   adb exec-out screencap -p > splash-capture/login-native.png
+  # A stale launcher coordinate must never count as FlupFlap startup evidence.
+  if ! adb shell dumpsys activity activities | awk '
+    /mResumedActivity|topResumedActivity/ && /com\.ticash\.flupflap\// { found=1 }
+    END { exit !found }
+  '; then
+    echo 'FlupFlap is not the foreground activity; refresh launcher and retry' >&2
+    return 1
+  fi
   ffmpeg -y -hide_banner -loglevel error -i splash-capture/startup.mp4 -vf fps=30 splash-capture/frames/%04d.png
   /usr/bin/python3 apps/flupflap/tool/select_splash_frame.py
 }
-# A cold start on a shared CI emulator can miss the splash window, so retry
-# the pre-Android 12 shell launch from a clean process state.
-attempts=1
-if (( api < 31 )); then
-  attempts=3
-fi
+# Retry a cold capture from a clean process and fresh launcher state. Keep the
+# strict F-only frame check: a retry never accepts a different app or logo.
+attempts=3
 for attempt in $(seq 1 "$attempts"); do
   if capture_startup; then
     exit 0

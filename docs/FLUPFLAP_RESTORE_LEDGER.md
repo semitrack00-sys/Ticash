@@ -1,6 +1,6 @@
 # FlupFlap restore suppression ledger
 
-This is operator-only tooling. It has no HTTP endpoint, makes no provider calls and does not provision durable storage. It is not a complete production backup system. Do not use it to release a restored environment until an independent durable ledger and checkpoint store have been selected, secured and verified.
+This is operator-only tooling. It has no HTTP endpoint, makes no provider calls and does not provision durable storage. It is not a complete production backup system. Do not use it to release a restored environment until the independent ledger, signing-key recovery and separate trusted checkpoint store have been secured and verified.
 
 ## Trust and storage
 
@@ -28,6 +28,24 @@ Exports merge previous entries with current deletion receipts. This prevents a r
 
 After each verified deletion, keep the maintenance window open until the merged ledger is durably saved and the trusted checkpoint updated. If export or durable write fails, keep the deletion's opaque receipt in the controlled operations record and keep restoration blocked until the complete ledger is recovered. Do not declare the backup portion of fulfillment complete merely because the database transaction committed.
 
+## Store an exported ledger on the separate worker
+
+The approved storage layout uses a standalone worker with a 1 GB disk mounted at `/var/data/flupflap-ledger`. Render owns the mount directory; create an application-owned `private` child with mode 0700 instead of trying to chmod the mount itself. No database credentials belong on this worker. Keep automatic deploys off.
+
+The storage CLI is independent of database initialization. Run it on the worker after a controlled transfer of the export, with the dedicated signing key and environment namespace available through the approved secret configuration:
+
+```sh
+node apps/api/dist/flupflap/deletion-ledger-storage-cli.js store --ledger /secure/incoming-ledger.json --checkpoint EXPORT_CHECKPOINT
+```
+
+Use the checkpoint returned by that export operation to verify the upload. For recovery freshness, the expected checkpoint must instead come from the separately maintained trusted current-release record; the uploaded file is not its own freshness authority.
+
+The CLI verifies an actual mount, signature, namespace and upload checkpoint before writing. It rejects symlinks, insecure directory/file permissions and oversized input files. It creates a 0600 temporary file, fsyncs it, publishes it atomically without overwriting any older ledger, fsyncs the directory and verifies the saved file again. Content-addressed filenames retain previous versions. A retry validates the existing file without replacing it. A conflicting or incomplete existing file fails closed for operator review.
+
+Successful output reports `mountedDiskVerified=true` and `storageReadbackVerified=true`, but always `trustedCheckpointUpdated=false` and `restoreReleaseAuthorized=false`. Neither fsync nor readback proves off-provider recoverability. Independently verify the saved artifact after a worker restart, maintain a controlled second recovery copy, and update the separate trusted checkpoint only after those checks succeed. Never keep the sole current checkpoint or sole recoverable signing key in the disk snapshot domain. Storage failure, incomplete transfer or checkpoint-update failure keeps restore release blocked.
+
+No automatic upload endpoint, production signing-key configuration, checkpoint destination, ledger pruning or retention schedule is created by this tooling. New signing-key deployment and access changes must be reviewed separately. Do not upload production identity records as part of a synthetic rehearsal.
+
 ## Restore procedure
 
 1. Restore into an isolated target. Stop customer ingress, all recharge/SMS/reconciliation/marketing workers and external writers before loading any backup rows. Finish the full restore before applying suppression. Verify the target environment, namespace, signing key and latest independent checkpoint. Apply the deletion migration and build the reviewed code first.
@@ -53,4 +71,3 @@ Verify old access/refresh/reset credentials fail, no saved recipient or recurrin
 The migrated PostgreSQL integration suite restores only synthetic pre-deletion rows into a separate PGlite database. It demonstrates that an older backup lacking the deletion receipt becomes suppressed using the independently held signed ledger, authentication tokens stop working, recurrence is removed, financial evidence remains and reruns are idempotent. It also rejects tampered files, wrong namespaces, insufficient keys and stale checkpoints.
 
 This logical fixture drill does not replace a Render physical recovery drill, independent durable storage setup, key recovery/rotation planning, public ingress verification, processor cleanup or retained-record expiry procedures. No production ledger, signing secret or deployment is created by these code changes. Keep the release blocked until those operational requirements are satisfied.
-

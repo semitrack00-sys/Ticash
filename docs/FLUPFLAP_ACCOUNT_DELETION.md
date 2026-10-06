@@ -50,7 +50,7 @@ The tool does not contact Stripe, Reloadly, an email/SMS provider or backup stor
 
 ## Render staging rehearsal
 
-Status checked on 2026-10-06 UTC: the rehearsal has not run. The connected Render tools cannot change a service branch or execute this CLI. The staging database rejects external connections; do not broaden its network allowlist just to run this test.
+Status updated on 2026-10-06 UTC: a PostgreSQL database rehearsal passed in a deliberately rolled-back transaction; the committed operational CLI, HTTP login test, provider cleanup and restore drill remain outstanding. The connected Render tools cannot change a service branch or execute this CLI. The staging database rejects external connections; do not broaden its network allowlist just to run this test.
 
 Use [ticash-api-staging-v2](https://dashboard.render.com/web/srv-daup1bp7lnhs739d6110) with branch `codex/flupflap-deletion-fulfillment`. Record the deployed commit and successful pre-deploy migration. Do not merge to `main` to obtain a staging deployment: production also automatically deploys `main`.
 
@@ -84,6 +84,18 @@ This table documents current deletion behavior and outstanding decisions. It is 
 
 For each retained category, record the owner, purpose, fields, retention clock, duration or objective expiry criterion, legal-hold exception and deletion procedure. Restrict legal holds to records actually needed for the matter; review holds periodically. Do not use a blanket financial-record exception to retain erased account profiles.
 
-Confirm the company's jurisdiction and whether this FlupFlap service provides airtime/data recharge only or also money transmission before selecting applicable rules. For U.S. tax records, [IRS guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) uses different periods depending on the record and circumstances; it does not establish a universal seven-year rule for all customer data. If California privacy law applies, [the current CPPA materials](https://cppa.ca.gov/regulations/) require a separate applicability and minimization review; being in California alone does not establish that every business is covered.
+The owner confirmed on 2026-10-06 that FlupFlap provides recharge only. Confirm the company's registration jurisdiction before selecting applicable rules; do not assume TiCash money-transmission obligations apply to FlupFlap. For U.S. tax records, [IRS guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) uses different periods depending on the record and circumstances; it does not establish a universal seven-year rule for all customer data. If California privacy law applies, [the current CPPA materials](https://cppa.ca.gov/regulations/) require a separate applicability and minimization review; being in California alone does not establish that every business is covered.
 
 Publish per-category retention wording only after these decisions are confirmed and the corresponding operational expiry exists. The public privacy page must describe actual practice. Do not promise a numeric backup or provider deadline that has not been verified.
+
+
+### Rehearsal evidence — 2026-10-06 UTC
+
+- Render service: ticash-api-staging-v2, deployed commit `562e5f598395cc544f6196f11e814076c1d24caa`, deployment `dep-db282fp7lnhs73dvl230` reached live.
+- Confirmed database hostname matches the separate staging instance and does not match production. Payment mode was mock and recharge environment sandbox.
+- Render pre-deploy successfully applied `202610060400_flupflap_account_deletion` to `ticash_db_staging`.
+- Created disposable staff, customer, control customer, session, reset token, recipient, settled synthetic transaction and recurring schedule within one serializable transaction. No provider calls or real payments were made.
+- Exercised preview, wrong verified email rejection, erasure, auth-version increment, session/reset removal, recipient/schedule removal, financial preservation, control-account isolation, audit receipt and ALREADY_DELETED behavior. All assertions passed.
+- Deliberately rolled back the outer transaction. Follow-up queries confirmed staff, customer/control and audit rows did not persist.
+- This rehearsal wrapped the deletion function in the outer test transaction. It does not validate a normal committed CLI run, request verification, drained maintenance, public HTTP login behavior, concurrent worker execution, processor cleanup or backup restoration.
+- Original service branch `main` was restored after the rehearsal. The additive staging migration remains applied; no production deployment or PR merge occurred.

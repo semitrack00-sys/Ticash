@@ -73,4 +73,51 @@ Keep a real populated copy outside this repository.
 ## Readiness evidence
 As of 2026-10-06, the provider PITR rehearsal passed for an empty ledger: 20 migrations, 45 tables unchanged after preview/two executions; temporary recovery copy deleted. Prior synthetic logical restore tests exercised nonempty suppression. The physical rehearsal did not test resurrection suppression with real deletion receipts.
 
-This procedure is prepared, not yet approved or exercised. Outstanding: owner approval of operational roles/nonfinancial limits; actual provider/destination inventory and capabilities; accountant review of financial obligations; synthetic expiry/provider cleanup rehearsal; implementation of the approved expiry actions. Restore release remains blocked. Documentation alone must not close those gates.
+The read-only planner described below has synthetic regression coverage. This procedure is not yet approved or exercised against provider systems or actual expiry destinations. Outstanding: owner approval of operational roles/nonfinancial limits; actual provider/destination inventory and capabilities; accountant review of financial obligations; operational expiry/provider cleanup rehearsal; implementation of the approved expiry actions. Restore release remains blocked. Planning tests must not close those gates.
+
+## Read-only retention planner
+
+Build the API, then run from the repository root:
+
+```sh
+node apps/api/dist/flupflap/retention-plan-cli.js --input-file /secure/retention-review.json
+```
+
+The input must be a regular private file (0600 or stricter), no symlink, at most 1 MiB. The CLI rejects extra arguments, including --execute. It imports no database or provider client. It does not install a timer or grant disposal authority. A successful exit means a valid review plan was produced, not that the records may be erased.
+
+The following synthetic template intentionally uses a PROPOSED policy and null durations. No proposed duration is installed by default. Populate only opaque references and reviewed attestations in a private working copy; do not copy real customer details into Git. An APPROVED label supplied by an operator is not independent approval verification, so every output still states executionAuthorized=false.
+
+```json
+{
+  "version": 1,
+  "asOf": "2026-10-06T00:00:00Z",
+  "policy": {
+    "reference": "POLICY_REVIEW_0001",
+    "status": "PROPOSED",
+    "approvedAt": null,
+    "durationsDays": {
+      "VERIFICATION_ATTACHMENT": null,
+      "SUPPORT_CORRESPONDENCE": null,
+      "SECURITY_LOG": null
+    }
+  },
+  "records": [{
+    "reference": "SYNTHETIC_RECORD_0001",
+    "product": "FLUPFLAP",
+    "category": "VERIFICATION_ATTACHMENT",
+    "source": "SUPPORT",
+    "clock": "CASE_CLOSED",
+    "startAt": "2026-09-01T00:00:00Z",
+    "inventoryVerified": false,
+    "ownership": "UNKNOWN",
+    "hold": "UNKNOWN",
+    "unresolvedWork": false
+  }]
+}
+```
+
+Supported nonfinancial categories are VERIFICATION_ATTACHMENT, SUPPORT_CORRESPONDENCE and SECURITY_LOG. Security logs use EVENT_OCCURRED; support and verification records use CASE_CLOSED. Days mean elapsed 24-hour periods in UTC, with eligibility for review at the expiry boundary. Future starts, missing clocks/durations and future approval dates block review. Duplicate references and extra input fields reject the entire input.
+
+FINANCIAL_EVIDENCE, DELETION_LEDGER and BACKUP always remain blocked for specialist review. TICASH, unverified inventory, shared/unknown ownership, active/unknown holds and unresolved work are blocked. Expired Stripe, Reloadly and email records require provider review; they never become local disposal candidates. Output hashes input references rather than echoing them, and excludes credentials and customer details. Keep the private reference mapping separately; a hash is not a deletion receipt or anonymization proof.
+
+Only exclusively owned expired LOCAL or SUPPORT nonfinancial records with all supplied gates clear become REVIEW_CANDIDATE. This is a suggestion for the reviewed monthly operation above, not an executable plan or an authorization. Operational ownership, source, holds and approval still need independent verification. Test coverage includes expiry boundaries, timezone offsets, retained records, policy/hold/product/provider guards, private-file restrictions, sanitized errors and rejection of execute mode.

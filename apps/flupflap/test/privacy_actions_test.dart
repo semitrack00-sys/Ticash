@@ -29,7 +29,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls.single.method, 'privacy');
     expect(calls.single.arguments, 'deletionEmail');
-    await tester.ensureVisible(find.text('Open deletion webpage'));
+    await tester.scrollUntilVisible(find.text('Open deletion webpage'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Open deletion webpage'));
     await tester.pumpAndSettle();
     expect(calls.last.arguments, 'deletionPage');

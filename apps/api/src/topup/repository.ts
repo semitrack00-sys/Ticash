@@ -109,7 +109,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   reserveTransaction(input: MobileTopUpTransactionRecord): Promise<{ record: MobileTopUpTransactionRecord; created: boolean }>;
   getTransactionById(id: string): Promise<MobileTopUpTransactionRecord | undefined>;
   getTransactionByCheckoutResumeTokenHash(tokenHash: string): Promise<MobileTopUpTransactionRecord | undefined>;
-  listReconciliationCandidates(limit: number, staleBefore: string): Promise<MobileTopUpTransactionRecord[]>;
+  listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment): Promise<MobileTopUpTransactionRecord[]>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
   registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string): Promise<boolean>;
@@ -173,9 +173,12 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     return [...transactions.values()].find((item) => item.checkoutResumeTokenHash === tokenHash);
   }
 
-  async listReconciliationCandidates(limit: number, staleBefore: string) {
+  async listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment) {
     return [...transactions.values()]
       .filter((item) =>
+        item.paymentEnvironment === environment &&
+        item.rechargeEnvironment === environment &&
+        item.testMode === (environment === 'SANDBOX') &&
         (
           (item.status === 'PROCESSING' &&
             ['AUTHORIZED', 'CAPTURED'].includes(item.paymentStatus)) ||
@@ -521,9 +524,13 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     return record ? transactionFromDb(record) : undefined;
   }
 
-  async listReconciliationCandidates(limit: number, staleBefore: string) {
+  // Filter before take: foreign-environment records must not starve this worker.
+  async listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment) {
     const records = await this.prisma.mobileTopUpTransaction.findMany({
       where: {
+        paymentEnvironment: environment,
+        rechargeEnvironment: environment,
+        testMode: environment === 'SANDBOX',
         OR: [
           { status: 'PROCESSING', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
           { paymentProvider: 'STRIPE', status: 'PENDING', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } },

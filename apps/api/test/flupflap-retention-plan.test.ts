@@ -91,6 +91,30 @@ describe('private retention planner CLI', () => {
       expect(readFileSync(file, 'utf8')).toBe(bytes);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it('accepts a private case registry and sanitizes invalid closure metadata', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'support-retention-'));
+    try {
+      const file = join(dir, 'cases.json'); const base = input();
+      const cases = { version: 1, asOf: base.asOf, policy: base.policy, cases: [{
+        reference: 'CASE_SENTINEL', product: 'FLUPFLAP', status: 'CLOSED',
+        openedAt: '2026-01-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z',
+        closureRecordedBy: 'OPERATOR_SENTINEL', closureReviewedAt: '2026-09-01T00:00:00Z',
+        inventoryVerified: true, ownership: 'EXCLUSIVE', hold: 'CLEAR', unresolvedWork: false,
+        items: [{ reference: 'ITEM_SENTINEL', category: 'VERIFICATION_ATTACHMENT', source: 'EMAIL' }],
+      }] };
+      writeFileSync(file, JSON.stringify(cases), { mode: 0o600 });
+      const result = run(['--support-cases-file', file]);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).records[0]?.reason).toBe('PROVIDER_REVIEW_REQUIRED');
+      expect(result.stdout).not.toContain('SENTINEL');
+      Object.assign(cases.cases[0]!, { closureRecordedBy: null });
+      writeFileSync(file, JSON.stringify(cases));
+      const invalid = run(['--support-cases-file', file]);
+      expect(invalid.status).toBe(1); expect(invalid.stdout).toBe('');
+      expect(invalid.stderr.trim()).toBe('RETENTION_PLAN_FAILED_REVIEW_REQUIRED');
+      expect(run(['--support-cases-file', file, '--execute']).status).toBe(1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it('rejects execute mode, public input, symlinks, oversized input and malformed input without exposing it', () => {
     const dir = mkdtempSync(join(tmpdir(), 'retention-plan-'));
     try {

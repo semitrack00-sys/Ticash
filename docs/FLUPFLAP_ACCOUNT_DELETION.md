@@ -127,3 +127,33 @@ This observation covers Render's recovery feature only. Inventory downloads, ind
 ### Public wording
 
 The website draft separates account/profile erasure, retained recharge/payment evidence, security/support records and backup/processor copies. It uses objective retention criteria until category-specific periods and expiry procedures are established. Do not publish a numeric whole-account erasure guarantee based solely on the seven-day Render recovery window.
+
+
+## Full-workflow preflight — 2026-10-06 UTC
+
+The staging service's database binding was rechecked and matches `ticash-db-staging`. An aggregate query found **zero unlocked ADMIN/SUPER_ADMIN users**. The committed CLI rehearsal is blocked until an authorized staging-only operator identity exists.
+
+Prepared test scope:
+
+1. Establish a temporary operator in staging only, with no production role or credentials. Record its UUID. Disable the identity after testing; audit foreign keys can require retaining the disabled operator row.
+2. Create disposable recharge customer/control fixtures with unique reserved test-domain addresses. Keep tokens/passwords in a permission-restricted temporary test file or process memory, never logs. Do not send test email or call payment/recharge providers.
+3. Stop staging API ingress and background workers, not just the edge maintenance page. The API contains recurring, SMS and reconciliation timers. Record what was stopped and drained before setting maintenanceConfirmed.
+4. Preview and execute the ordinary CLI against the disposable customer, with real persistent staging PostgreSQL transactions. Validate the CLI audit UUID and counts.
+5. Resume staging and test old password login, access token, refresh token and reset token through HTTP. Confirm the unrelated control customer remains usable and no recurring schedule can run.
+6. Verify the final identity is a DELETED tombstone and the expected financial test evidence remains. Disable the test operator and remove transient credential/request files under the test cleanup procedure.
+
+### Restore release procedure to implement and rehearse
+
+An audit row in the same database is insufficient as the only deletion suppression source: a backup from before deletion will not contain it.
+
+- Maintain a restricted durable deletion ledger outside the restorable database. Store only customer UUID, deletion time, audit/request reference and the minimum evidence needed to reapply erasure. Do not include erased profile data or credentials. Protect ledger access and preserve it until every affected restorable copy has expired.
+- Before restoring service access, load every deletion entry newer than the restore point and apply idempotent suppression. Invalidate sessions/reset tokens and recurring bindings; remove profile/recipient/marketing data, while preserving legitimately retained financial evidence.
+- Fail the restore release if the independent ledger is missing, incomplete, unreadable or suppression verification fails. Keep API ingress and all workers stopped until the release succeeds.
+- Test with an isolated copy of disposable data captured before deletion. After restoring that copy and applying suppression, verify old login/tokens fail and no recurring schedule survives.
+- A physical Render recovery drill may create another billed database. Select the target and cost before provisioning; never restore over production.
+
+### Retained-record expiry procedure to finalize
+
+Review retained categories monthly and after resolving a dispute. For each proposed disposal, record the data category, period/start event, tax or contractual basis, holds checked, scope, executor and verification result. Separate financial recipient phone numbers from ordinary saved-recipient/profile data. Resolve foreign-key dependencies before deleting financial evidence.
+
+Support tickets, raw verification evidence, security logs and provider records need their own documented expiry; the financial-record tax period must not automatically be applied to them. This PR does not yet automate those expiry operations or provide an independent restore ledger. Do not mark the retention rollout complete until the procedures have an assigned operator and have been exercised.

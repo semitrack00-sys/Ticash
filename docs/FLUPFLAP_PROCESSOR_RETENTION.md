@@ -143,3 +143,27 @@ https://render.com/docs/logging
 | Render native runtime logs | Harmless unique staging marker followed through the workspace's native availability window | Verify the marker's timestamp and later unavailability after that window, plus unchanged controls. A filter, clearing the live-tail display or finding no matches is not deletion evidence. The elapsed-window test cannot be completed immediately. |
 
 These are prepared test specifications, not completed operational rehearsals or authorization to mutate provider data. Keep the irreversible disposal approval attached to an exact verified case scope; do not turn the read-only planner into a generic mailbox or audit-table purge.
+
+## Private support case-closure registry
+
+The read-only CLI now accepts an operator-maintained case registry:
+
+```sh
+node apps/api/dist/flupflap/retention-plan-cli.js --support-cases-file /secure/support-cases.json
+```
+
+Start with `flupflap-support-cases-template.json` in a private 0600 working copy outside Git. Update `asOf` for each review. This is file-based review tooling, not a deployed ticket system, automatic Gmail workflow or production disposal job. The CLI applies the same private-file, size, no-symlink, sanitized-error and no-execute restrictions as record review.
+
+Each case requires an opaque `reference`, `product`, `status`, `openedAt`, nullable `closedAt`, nullable `closureRecordedBy` (opaque operator reference), nullable `closureReviewedAt`, `inventoryVerified`, `ownership`, `hold`, `unresolvedWork` and an `items` array. Each item has a unique opaque `reference`, category `VERIFICATION_ATTACHMENT` or `SUPPORT_CORRESPONDENCE`, and source `EMAIL`, `SUPPORT` or `LOCAL`. Keep the exact mailbox/provider IDs and operator identity mapping in separately controlled private records; never use names, email addresses, message bodies or tokens as references. Review ownership, case closure and holds independently before supplying attestations.
+
+An OPEN case must have null closure fields and always remains blocked, regardless of how old its correspondence is. CLOSED requires all three closure fields: closure cannot precede opening, review cannot precede closure and neither opening nor closure review can be in the future. Duplicate case/item references, extra fields and inventories over 10,000 items reject the input. Reopened cases return to OPEN with null current closure fields; preserve prior closure/hold history separately rather than overwriting the accountability record. Holds and unresolved work still block closed cases.
+
+The mapper derives retention start from `closedAt`, never receipt or opening time. Gmail items use `EMAIL`: even expired items remain blocked for provider review. Outputs hash item references and omit case/operator references; they remain independently unverified suggestions with `executionAuthorized=false`. The registry does not contact Gmail, synchronize labels, verify attestations or erase data.
+
+## Telnyx public control review — 2026-10-06
+
+The published DPA distinguishes message content from communications usage data (including recipient identifiers and message logs); it treats Telnyx as an independent controller for usage data. Sections 11.1–11.3 describe possible self-service features and written-request assistance using supplied identifiers. They do not guarantee that an SMS history deletion endpoint exists. Section 9 concerns agreement expiry/termination and allows legally required retention; it is not an individual customer's account-deletion clock. The AI retention controls in section 3.6 do not establish SMS retention settings.
+
+Confirm the agreement actually applicable to this merchant account and request a provider-specific written scope: SMS body, recipient identifier, message detail/delivery records, downstream copies, removable fields, retained purposes and objective expiry, supported case route, test mechanism and any charges. Exact message IDs must come from verified private case bindings. No numerical SMS retention promise or deletion endpoint was established in this public review, and no provider request was sent or fee accepted. This provider gate remains pending.
+
+Source: https://telnyx.com/legal/data-processing-addendum (definitions, sections 2.2, 3.6, 9 and 11).

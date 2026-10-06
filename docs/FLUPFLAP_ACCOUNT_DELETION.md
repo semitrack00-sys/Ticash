@@ -45,4 +45,45 @@ Any unresolved transaction, recurring worker claim, mismatched identity, invalid
 
 Record the audit UUID. Verify login/refresh/reset no longer work, saved recipients and recurring schedules are gone, and retained transactions still reconcile. Resume the services. Send the customer a completion response identifying retained categories, purpose and retention period. Do not claim full erasure while third-party or backup work is outstanding.
 
-The tool does not contact Stripe, Reloadly, an email/SMS provider or backup storage. Review provider records and saved payment methods separately; remove unnecessary customer metadata/consents when supported, retaining required payment evidence. Add the customer UUID to the restore-suppression procedure so backup restoration cannot recreate erased profile data. Keep request files and support tickets under the approved support retention schedule. A staged restore drill and an actual inbox receipt test remain launch requirements.
+The tool does not contact Stripe, Reloadly, an email/SMS provider or backup storage. Review provider records and saved payment methods separately; remove unnecessary customer metadata/consents when supported, retaining required payment evidence. Add the customer UUID to the restore-suppression procedure so backup restoration cannot recreate erased profile data. Keep request files and support tickets under the approved support retention schedule. The contact@ticash-app.com inbox receipt test passed on 2026-10-06 UTC. A staged restore drill remains a launch requirement.
+
+
+## Render staging rehearsal
+
+Status checked on 2026-10-06 UTC: the rehearsal has not run. The connected Render tools cannot change a service branch or execute this CLI. The staging database rejects external connections; do not broaden its network allowlist just to run this test.
+
+Use [ticash-api-staging-v2](https://dashboard.render.com/web/srv-daup1bp7lnhs739d6110) with branch `codex/flupflap-deletion-fulfillment`. Record the deployed commit and successful pre-deploy migration. Do not merge to `main` to obtain a staging deployment: production also automatically deploys `main`.
+
+Before any mutation, inspect the staging service's DATABASE_URL privately in Render and confirm it binds to `ticash-db-staging` (`dpg-dauotjojo6nc73e13v00-a`), not `ticash-db` (`dpg-dao5s7142hec738ilpng-a`). Do not copy the URL into a ticket or chat. Confirm payment and recharge integrations use test credentials or a mock adapter and cannot create a real charge or recharge. A service's staging name does not prove either condition.
+
+1. Create a disposable registered FlupFlap customer through staging. Use a controlled test email and a separate authorized test administrator. Record only UUIDs in the rehearsal record.
+2. Add a saved recipient and login session. Exercise recurring recharge only with provider test bindings and a settled test transaction. Keep an unrelated control customer. Capture counts and transaction totals before deletion.
+3. Complete identity verification. Generate the private request JSON described above, preview it, and record counts. Wrong verified email or a non-admin staff identity must reject the preview.
+4. Stop all ingress and any external schedules, consumers or staff actions writing to this database, then drain in-flight work. Render maintenance mode alone does not demonstrate that background or external work has stopped. Execute only when this drain is established.
+5. Run the CLI from an authorized private staging execution environment with its existing staging database binding. Record the opaque request reference and audit UUID. No customer credentials or request JSON belong in build logs.
+6. Confirm deleted status, null profile/credentials, no sessions/reset tokens/recipients/recurring schedules, disabled referral code, removed marketing attribution and unchanged retained financial totals. Confirm the control customer is unchanged.
+7. Resume staging and verify old login, access token, refresh token and reset token fail. An old token must not retrieve account history or authorize new work. Verify recurring processing cannot schedule another occurrence for the deleted customer. A second CLI execution must return ALREADY_DELETED.
+8. Review test provider records and run a restore drill in a separate isolated database. Apply deletion suppression before restoring service access; the restored customer must remain erased.
+9. Record pass/fail for each item, deployed commit, migration, timestamps and operator. Restore the service's original branch/configuration as appropriate. Reverting code does not undo a deletion or remove the applied migration.
+
+The migrated PGlite integration suite already covers erasure, retained transactions, identity/role restrictions, blocked pending work, invalidated credentials, SQL guards, isolation and atomic rollback. Those results do not substitute for the Render deployment, provider review or restore drill.
+
+## Retention decisions before public policy publication
+
+This table documents current deletion behavior and outstanding decisions. It is not an approved retention schedule. No automatic expiry of retained financial, audit, support or backup records is implemented by this PR.
+
+| Category | Behavior when verified deletion executes | Decision still required |
+| --- | --- | --- |
+| Profile, credentials, sessions, saved recipients, recurring payment bindings | Erased in the atomic deletion operation | Support response and fulfillment deadline; verify staffing can meet it |
+| Customer marketing attribution and linked visit/events | Removed; referral code disabled | Retention for other marketing records outside this relationship |
+| Recharge/payment transactions, required quotes, payment events, promotion accounting | Retained for reconciliation, disputes and accounting | Exact minimum fields, applicable obligations, period, start event and expiry mechanism |
+| Security/audit records and deletion receipt | Retained with an opaque customer UUID | Defined security/compliance purpose, period and restricted access |
+| Support emails and identity-verification evidence | Outside the CLI | Mailbox/ticket expiry and minimum verification evidence |
+| Stripe/recharge/email/SMS provider records | Outside the CLI | Each processor's deletion capability, required retention and completion evidence |
+| Backups and restore suppression | Outside the CLI | Actual backup expiry, who controls it and suppression retention long enough to cover every restorable copy |
+
+For each retained category, record the owner, purpose, fields, retention clock, duration or objective expiry criterion, legal-hold exception and deletion procedure. Restrict legal holds to records actually needed for the matter; review holds periodically. Do not use a blanket financial-record exception to retain erased account profiles.
+
+Confirm the company's jurisdiction and whether this FlupFlap service provides airtime/data recharge only or also money transmission before selecting applicable rules. For U.S. tax records, [IRS guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) uses different periods depending on the record and circumstances; it does not establish a universal seven-year rule for all customer data. If California privacy law applies, [the current CPPA materials](https://cppa.ca.gov/regulations/) require a separate applicability and minimization review; being in California alone does not establish that every business is covered.
+
+Publish per-category retention wording only after these decisions are confirmed and the corresponding operational expiry exists. The public privacy page must describe actual practice. Do not promise a numeric backup or provider deadline that has not been verified.

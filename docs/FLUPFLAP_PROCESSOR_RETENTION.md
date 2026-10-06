@@ -167,3 +167,36 @@ The published DPA distinguishes message content from communications usage data (
 Confirm the agreement actually applicable to this merchant account and request a provider-specific written scope: SMS body, recipient identifier, message detail/delivery records, downstream copies, removable fields, retained purposes and objective expiry, supported case route, test mechanism and any charges. Exact message IDs must come from verified private case bindings. No numerical SMS retention promise or deletion endpoint was established in this public review, and no provider request was sent or fee accepted. This provider gate remains pending.
 
 Source: https://telnyx.com/legal/data-processing-addendum (definitions, sections 2.2, 3.6, 9 and 11).
+
+### Verified messaging profile review — 2026-10-06
+
+A single authenticated GET of the production-configured messaging profile returned HTTP 200, an exact profile match and `enabled=true`. Neither redaction field was present. Both primary and failover webhook configuration were absent. Only sanitized flags were emitted; no profile ID, key, webhook URL, recipient or message body was exported. No provider settings were changed.
+
+Telnyx documents that `redaction_enabled` and `redaction_level` appear only for organizations on its redaction allowlist. The observed absence therefore indicates that organization activation likely needs support confirmation; it must not be treated as a verified `redaction_enabled=false` response. PATCH values can be silently ignored before activation, so do not attempt an unverified update.
+
+The documented control blanks content and partly masks the counterparty number in read/reporting surfaces while preserving delivery metadata. It applies to the redaction state captured for newly sent messages; earlier records can remain readable. It is not storage-level deletion, and the Messages API's ten-day retrieval window is not a deletion deadline: older records may be available through MDR reports. No 30/90/180-day internal policy is assigned to Telnyx SMS data by these observations.
+
+The current sender parses only the message ID from acceptance responses, and no webhook is configured on the reviewed profile. This reduces immediate compatibility concerns but does not replace a separate test of delivery metadata and all other applications sharing the organization/profile. After support confirmation, review exact profile scope and activation cost, obtain setting-change authorization, test redaction using an approved test mechanism, then independently read back both redaction fields. Keep historical disposal and carrier copies as separate unresolved work.
+
+Sources:
+- https://developers.telnyx.com/api-reference/profiles/retrieve-a-messaging-profile
+- https://developers.telnyx.com/docs/messaging/messages/message-redaction
+- https://developers.telnyx.com/api-reference/messages/retrieve-a-message
+- https://support.telnyx.com/en/articles/5170721-best-practices-for-contacting-support
+
+Prepared support request below is UNSENT. The published support address is `support@telnyx.com`. Do not send without the owner's explicit instruction. It requests information/activation procedure only and does not authorize fees, a setting change or customer data disposal.
+
+> Subject: FlupFlap SMS redaction eligibility and retention controls
+>
+> Hello Telnyx Support,
+>
+> We operate FlupFlap Recharge under Ticash-App LLC and use Telnyx for transactional recharge SMS. A read-only check of our configured messaging profile returned HTTP 200 and enabled=true, but neither redaction_enabled nor redaction_level was included.
+>
+> Please confirm the process and any costs for organization-level message-redaction activation. Please do not change settings or activate a paid service yet. We intend to review profile-level redaction at level 2 after eligibility and test procedures are confirmed.
+>
+> Please also confirm the account-applicable retention and removal process separately for SMS bodies, recipient identifiers, MDR/delivery records, backups and downstream carrier copies, including historical messages sent before redaction. Which fields remain, for what purpose, and for what retention period or objective expiry condition? Please provide the supported individual data-subject request route and a safe test mechanism.
+>
+> Please route this request to the account/privacy team as needed. We can verify the account and supply exact profile or message references through an authenticated channel if required. No API keys or customer message data are included in this request, and we are not requesting account cancellation.
+>
+> Thank you,
+> Ticash-App LLC

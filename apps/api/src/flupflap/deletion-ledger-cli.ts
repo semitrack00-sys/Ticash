@@ -13,8 +13,10 @@ if (!initialize && !exporting && !restoring) {
 } else if (!process.env.DATABASE_URL || process.env.NODE_ENV === 'test') {
   console.error('PERSISTENT_DATABASE_REQUIRED'); process.exitCode = 1;
 } else {
-  const { prisma, disconnectDatabase } = await import('../database.js');
+  let disconnect: (() => Promise<void>) | undefined;
   try {
+    const { prisma, disconnectDatabase } = await import('../database.js');
+    disconnect = disconnectDatabase;
     const key = process.env.FLUPFLAP_LEDGER_SIGNING_KEY ?? '';
     if (restoring) {
       const manifest: unknown = JSON.parse(readFileSync(args[2]!, 'utf8'));
@@ -32,5 +34,5 @@ if (!initialize && !exporting && !restoring) {
   } catch (error) {
     console.error(error instanceof AccountDeletionError ? error.code : 'LEDGER_FAILED_REVIEW_REQUIRED');
     process.exitCode = 1;
-  } finally { await disconnectDatabase(); }
+  } finally { await disconnect?.(); }
 }

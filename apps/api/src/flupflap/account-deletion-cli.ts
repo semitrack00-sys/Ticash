@@ -10,8 +10,10 @@ if (args.length < 2 || args.length > 3 || args[0] !== '--request-file' ||
   console.error('PERSISTENT_DATABASE_REQUIRED');
   process.exitCode = 1;
 } else {
-  const { prisma, disconnectDatabase } = await import('../database.js');
+  let disconnect: (() => Promise<void>) | undefined;
   try {
+    const { prisma, disconnectDatabase } = await import('../database.js');
+    disconnect = disconnectDatabase;
     const input: unknown = JSON.parse(readFileSync(args[1]!, 'utf8'));
     console.log(JSON.stringify(await deleteFlupFlapAccount(prisma, input, args[2] === '--execute')));
   } catch (error) {
@@ -19,6 +21,6 @@ if (args.length < 2 || args.length > 3 || args[0] !== '--request-file' ||
     console.error(error instanceof AccountDeletionError ? error.code : 'DELETION_FAILED_REVIEW_REQUIRED');
     process.exitCode = 1;
   } finally {
-    await disconnectDatabase();
+    await disconnect?.();
   }
 }

@@ -1,10 +1,12 @@
 # FlupFlap processor cleanup and retained-record expiry
-Version 1 — prepared 2026-10-06. Status: PROPOSED; not an approved policy or an implemented purge job.
+Version 2 — updated 2026-10-06. Status: NONFINANCIAL_PERIODS_APPROVED; expiry enforcement is not implemented.
+
+The owner approved 30 days for raw verification attachments, 90 days for support correspondence and 180 days for ordinary security logs in this conversation on 2026-10-06 at 05:36:54 America/Los_Angeles (12:36:54 UTC). Approval covers these periods and their previously documented clocks; it does not authorize a specific irreversible disposal, financial retention period, provider mutation or production deployment.
 
 Scope: FlupFlap airtime and data-bundle recharge operated by Ticash-App LLC, Nevada, USA. TiCash remittance identities and records are outside this procedure. Support: contact@ticash-app.com.
 
 ## Accountability and completion gates
-Proposed accountable owner: Dukens Bal. Execution must use a named authorized operator; owner approval of this role and the schedule below is still required. Review open cases weekly and expiry candidates monthly. These are operating cadences, not installed automations.
+Proposed accountable owner: Dukens Bal. Execution must use a named authorized operator. The three nonfinancial periods are approved; execution role assignment and an exercised disposal mechanism remain required. Review open cases weekly and expiry candidates monthly. These are operating cadences, not installed automations.
 
 Keep separate milestones: REQUEST_VERIFIED → LOCAL_ERASURE_VERIFIED → LEDGER_PUBLISHED → PROCESSOR_REVIEW → RETENTION_REVIEW → COMPLETE_WITH_DISCLOSED_RETENTION. A timeout or provider refusal stays OPEN or BLOCKED; it is never recorded as success. A customer response must distinguish local erasure from provider work still pending.
 
@@ -36,14 +38,14 @@ Reloadly distinguishes client-supplied recipient processing from its own control
 
 No provider mutation or message is authorized merely by approving this document. Execute real cases only with verified customer scope and the required action approval. This PR makes no provider calls.
 
-## Proposed retention schedule for owner review
-These are proposed internal limits, not claims that legislation mandates these durations. An unresolved hold must have a specific matter, minimum record scope, named owner and next review date. Re-review monthly; release it promptly when no longer needed.
+## Approved nonfinancial periods and remaining retention review
+The 30/90/180-day nonfinancial limits are owner-approved internal policy, not claims that legislation mandates these durations. Financial evidence, suppression receipts and backup rules still require their separate reviews. An unresolved hold must have a specific matter, minimum record scope, named owner and next review date. Re-review monthly; release it promptly when no longer needed.
 
-| Category | Minimum record scope | Proposed clock and expiry rule | Current mechanism / gate |
+| Category | Minimum record scope | Approved clock or remaining review rule | Current mechanism / gate |
 | --- | --- | --- | --- |
 | Account profile, credentials, sessions, saved recipients, recurring bindings | None after verified deletion; opaque tombstone only | Erase during verified fulfillment once payment/worker blockers are resolved | Existing atomic CLI; verify result and authentication rejection |
-| Raw identity-verification attachments | Evidence strictly needed to verify the request | 30 days after case closure, unless a specific documented dispute/hold requires longer | Proposed manual mailbox/provider disposal; not exercised |
-| Support correspondence | Minimum request, response and outcome | 90 days after case closure; keep the minimal deletion receipt separately | Proposed manual mailbox/ticket disposal; not exercised |
+| Raw identity-verification attachments | Evidence strictly needed to verify the request | 30 days after case closure, unless a specific documented dispute/hold requires longer | Manual mailbox/provider disposal required; not exercised |
+| Support correspondence | Minimum request, response and outcome | 90 days after case closure; keep the minimal deletion receipt separately | Manual mailbox/ticket disposal required; not exercised |
 | Ordinary security logs | Event/date, limited identifiers needed for incident review | 180 days from event; incident-specific evidence follows its documented hold | Inventory actual destinations and implement expiry before claiming this limit |
 | Customer-linked marketing data | No unnecessary profile, visit/event or attribution data | Remove during account deletion; external copies follow documented provider cleanup | Local linked data erased; other stores still require inventory |
 | Recharge/payment evidence and promotion accounting | Amount, currency, dates, outcome, payment/provider IDs and only essential reconciliation/dispute fields | Each record gets a reviewed expiry date based on its applicable tax return, dispute/refund, contract and hold requirements; dispose only after every applicable requirement ends | Accountant/owner review required; no blanket duration approved and no automated purge |
@@ -73,7 +75,7 @@ Keep a real populated copy outside this repository.
 ## Readiness evidence
 As of 2026-10-06, the provider PITR rehearsal passed for an empty ledger: 20 migrations, 45 tables unchanged after preview/two executions; temporary recovery copy deleted. Prior synthetic logical restore tests exercised nonempty suppression. The physical rehearsal did not test resurrection suppression with real deletion receipts.
 
-The read-only planner described below has synthetic regression coverage. This procedure is not yet approved or exercised against provider systems or actual expiry destinations. Outstanding: owner approval of operational roles/nonfinancial limits; actual provider/destination inventory and capabilities; accountant review of financial obligations; operational expiry/provider cleanup rehearsal; implementation of the approved expiry actions. Restore release remains blocked. Planning tests must not close those gates.
+The read-only planner described below has synthetic regression coverage. This procedure is not yet approved or exercised against provider systems or actual expiry destinations. Outstanding: execution role assignment; actual provider/destination inventory and capabilities; accountant review of financial obligations; operational expiry/provider cleanup rehearsal; implementation of the approved expiry actions. Restore release remains blocked. Planning tests must not close those gates.
 
 ## Read-only retention planner
 
@@ -85,34 +87,23 @@ node apps/api/dist/flupflap/retention-plan-cli.js --input-file /secure/retention
 
 The input must be a regular private file (0600 or stricter), no symlink, at most 1 MiB. The CLI rejects extra arguments, including --execute. It imports no database or provider client. It does not install a timer or grant disposal authority. A successful exit means a valid review plan was produced, not that the records may be erased.
 
-The following synthetic template intentionally uses a PROPOSED policy and null durations. No proposed duration is installed by default. Populate only opaque references and reviewed attestations in a private working copy; do not copy real customer details into Git. An APPROVED label supplied by an operator is not independent approval verification, so every output still states executionAuthorized=false.
+The following empty inventory template records the owner's approved nonfinancial periods. It contains no customer data and is not loaded automatically by production. The same template is saved as flupflap-retention-review-template.json. Populate only opaque references and reviewed attestations in a private working copy; do not copy real customer details into Git. An APPROVED label supplied by an operator is not independent approval verification, so every output still states executionAuthorized=false.
 
 ```json
 {
   "version": 1,
-  "asOf": "2026-10-06T00:00:00Z",
+  "asOf": "2026-10-06T12:36:54Z",
   "policy": {
-    "reference": "POLICY_REVIEW_0001",
-    "status": "PROPOSED",
-    "approvedAt": null,
+    "reference": "FLUPFLAP_RETENTION_V1",
+    "status": "APPROVED",
+    "approvedAt": "2026-10-06T12:36:54Z",
     "durationsDays": {
-      "VERIFICATION_ATTACHMENT": null,
-      "SUPPORT_CORRESPONDENCE": null,
-      "SECURITY_LOG": null
+      "VERIFICATION_ATTACHMENT": 30,
+      "SUPPORT_CORRESPONDENCE": 90,
+      "SECURITY_LOG": 180
     }
   },
-  "records": [{
-    "reference": "SYNTHETIC_RECORD_0001",
-    "product": "FLUPFLAP",
-    "category": "VERIFICATION_ATTACHMENT",
-    "source": "SUPPORT",
-    "clock": "CASE_CLOSED",
-    "startAt": "2026-09-01T00:00:00Z",
-    "inventoryVerified": false,
-    "ownership": "UNKNOWN",
-    "hold": "UNKNOWN",
-    "unresolvedWork": false
-  }]
+  "records": []
 }
 ```
 
@@ -121,3 +112,7 @@ Supported nonfinancial categories are VERIFICATION_ATTACHMENT, SUPPORT_CORRESPON
 FINANCIAL_EVIDENCE, DELETION_LEDGER and BACKUP always remain blocked for specialist review. TICASH, unverified inventory, shared/unknown ownership, active/unknown holds and unresolved work are blocked. Expired Stripe, Reloadly and email records require provider review; they never become local disposal candidates. Output hashes input references rather than echoing them, and excludes credentials and customer details. Keep the private reference mapping separately; a hash is not a deletion receipt or anonymization proof.
 
 Only exclusively owned expired LOCAL or SUPPORT nonfinancial records with all supplied gates clear become REVIEW_CANDIDATE. This is a suggestion for the reviewed monthly operation above, not an executable plan or an authorization. Operational ownership, source, holds and approval still need independent verification. Test coverage includes expiry boundaries, timezone offsets, retained records, policy/hold/product/provider guards, private-file restrictions, sanitized errors and rejection of execute mode.
+
+## Storage inventory constraints from the current code
+
+The Prisma schema has no support-ticket or raw-verification-attachment store with a case-closed clock; mailbox/ticket storage must be inventoried separately. AuditLog mixes TiCash and FlupFlap events and deletion receipts, so the approved ordinary-security period does not authorize purging that table by age. RechargeNotification stores recipient phone and delivery evidence linked to financial transactions; it is not an ordinary security log. Provider delivery histories, Render logs, downloaded attachments and forwarded emails require their own inventory and hold checks. These code observations do not verify which external destinations are enabled in production. The planner remains read-only until exact storage scope and disposal procedures have been established and exercised.

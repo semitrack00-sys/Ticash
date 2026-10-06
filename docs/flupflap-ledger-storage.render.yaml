@@ -12,7 +12,7 @@ services:
     autoDeployTrigger: 'off'
     buildCommand: node --version
     startCommand: >-
-      node -e "const fs=require('node:fs');const p='/var/data/flupflap-ledger';fs.mkdirSync(p,{recursive:true,mode:0o700});fs.chmodSync(p,0o700);setInterval(()=>{},3600000)"
+      node -e "const fs=require('node:fs');const p='/var/data/flupflap-ledger/private';fs.mkdirSync(p,{recursive:true,mode:0o700});fs.chmodSync(p,0o700);setInterval(()=>{},3600000)"
     disk:
       name: deletion-ledger
       mountPath: /var/data/flupflap-ledger

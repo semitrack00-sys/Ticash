@@ -1,5 +1,7 @@
 # FlupFlap support deletion procedure
 
+Current processor inventory, proposed expiry schedule and completion gates: [FLUPFLAP_PROCESSOR_RETENTION.md](FLUPFLAP_PROCESSOR_RETENTION.md). Capture exact provider bindings privately before local erasure removes recurring schedules. The proposed schedule still requires approval and an exercised expiry mechanism.
+
 Requests arrive at contact@ticash-app.com. This is a manual staff process. The public page and app open an email request; neither submits or completes deletion automatically.
 
 ## Verify and prepare

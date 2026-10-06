@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "asOf": "2026-10-06T12:36:54Z",
+  "policy": {
+    "reference": "FLUPFLAP_RETENTION_V1",
+    "status": "APPROVED",
+    "approvedAt": "2026-10-06T12:36:54Z",
+    "durationsDays": {
+      "VERIFICATION_ATTACHMENT": 30,
+      "SUPPORT_CORRESPONDENCE": 90,
+      "SECURITY_LOG": 180
+    }
+  },
+  "records": []
+}

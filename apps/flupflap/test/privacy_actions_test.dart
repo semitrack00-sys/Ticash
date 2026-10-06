@@ -29,7 +29,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls.single.method, 'privacy');
     expect(calls.single.arguments, 'deletionEmail');
-    await tester.scrollUntilVisible(find.text('Open deletion webpage'), 200);
+    await tester.scrollUntilVisible(
+      find.text('Open deletion webpage'),
+      200,
+      scrollable: find.descendant(
+        of: find.byType(ListView), matching: find.byType(Scrollable),
+      ).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Open deletion webpage'));
     await tester.pumpAndSettle();

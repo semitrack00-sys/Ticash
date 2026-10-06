@@ -51,6 +51,12 @@ void main() {
     await capture('02-recharge-draft');
     await fixtures.tap(tester, find.widgetWithText(NavigationDestination, 'Recipients'));
     await capture('03-recipients-draft');
+    await fixtures.tap(tester, find.text(fixtures.recipient['nickname']!));
+    await fixtures.tap(tester, find.text('Continue'));
+    await fixtures.tap(tester, find.text(fixtures.terms['productName'] as String));
+    await fixtures.tap(tester, find.text('Continue'));
+    expect(find.text('6.24 USD'), findsOneWidget);
+    await capture('08-purchase-review-draft');
     await fixtures.tap(tester, find.widgetWithText(NavigationDestination, 'History'));
     await capture('04-history-empty-draft');
     await fixtures.tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
@@ -67,5 +73,6 @@ void main() {
     await capture('07-login-draft');
     expect(adapter.requests.every((r) => r.path.startsWith('/flupflap/')), isTrue);
     expect(adapter.requests.where((r) => r.path.endsWith('/payment-sessions')), isEmpty);
+    expect(adapter.requests.where((r) => r.path.endsWith('/transactions') && r.method == 'POST'), isEmpty);
   });
 }

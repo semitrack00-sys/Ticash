@@ -47,8 +47,8 @@ jobs:
           from PIL import Image
           root = Path('build/play-capture-drafts')
           images = sorted(root.glob('*.png'))
-          if len(images) != 7:
-              raise SystemExit('Expected seven captured screens')
+          if len(images) != 8:
+              raise SystemExit('Expected eight captured screens')
           manifest = {'commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
                       'status': 'draft widget captures with fictional fixtures; review before store upload',
                       'production_catalog_verified': False, 'images': []}

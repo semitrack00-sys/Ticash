@@ -65,7 +65,7 @@ android {
     defaultConfig {
         applicationId "com.ticash.flupflap"
         minSdkVersion = flutter.minSdkVersion
-        targetSdk 34
+        targetSdk 36
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true

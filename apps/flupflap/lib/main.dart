@@ -13,6 +13,7 @@ import 'recharge_journey.dart';
 import 'recharge_screen.dart';
 import 'parity_strings.dart';
 import 'phone_country_field.dart';
+import 'privacy_actions.dart';
 
 import 'package:ticash/services/mobile_top_up_service.dart';
 import 'package:ticash/models/mobile_top_up.dart';
@@ -1466,6 +1467,8 @@ class _AccountScreenState extends State<AccountScreen> {
             language: widget.language,
             onLanguage: widget.onLanguage,
           ),
+          const PrivacyActions(),
+          const SizedBox(height: 20),
           if (!widget.session.guest)
             Text(
               context.ft('Profile'),

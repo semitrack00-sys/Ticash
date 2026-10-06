@@ -11,6 +11,7 @@ import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { createFlupFlapIdentity } from '../src/flupflap/auth.js';
 import { FlupFlapIdentityRepository } from '../src/flupflap/repository.js';
+import { exportDeletionLedger, ledgerCheckpoint, suppressRestoredFlupFlapAccounts, verifyDeletionLedger } from '../src/flupflap/deletion-ledger.js';
 
 const db = new PGlite();
 const prisma = new PrismaClient({ adapter: pglitePrisma(db) });
@@ -207,4 +208,87 @@ describe('controlled FlupFlap account erasure in migrated PostgreSQL', () => {
       await db.exec('DROP TRIGGER test_reject_deletion_audit ON "AuditLog"; DROP FUNCTION test_reject_deletion_audit();');
     }
   });
+
+  it('authenticates independent ledgers and rejects tampering, stale checkpoints and wrong namespaces', async () => {
+    const key = 'independent-test-only-signing-key-at-least-32-bytes';
+    const namespace = randomUUID();
+    const f = await fixture();
+    await deleteFlupFlapAccount(prisma, f.input, true);
+    const exported = await exportDeletionLedger(prisma, key, namespace);
+    expect(verifyDeletionLedger(exported.manifest, key, namespace, exported.checkpoint)).toEqual(exported.manifest);
+    expect(JSON.stringify(exported.manifest)).not.toContain(f.customer.email);
+    expect(() => verifyDeletionLedger(exported.manifest, 'short', namespace, exported.checkpoint)).toThrow('LEDGER_KEY_REQUIRED');
+    expect(() => verifyDeletionLedger(exported.manifest, key, randomUUID(), exported.checkpoint)).toThrow('LEDGER_NAMESPACE_MISMATCH');
+    expect(() => verifyDeletionLedger(exported.manifest, key, namespace, '0'.repeat(64))).toThrow('LEDGER_CHECKPOINT_MISMATCH');
+    const tampered = structuredClone(exported.manifest);
+    tampered.payload.entries[0]!.customerId = randomUUID();
+    expect(() => verifyDeletionLedger(tampered, key, namespace, ledgerCheckpoint(tampered))).toThrow('LEDGER_SIGNATURE_INVALID');
+    const later = await fixture(); await deleteFlupFlapAccount(prisma, later.input, true);
+    const merged = await exportDeletionLedger(prisma, key, namespace, exported);
+    expect(merged.manifest.payload.entries.some(value => value.customerId === f.customer.id)).toBe(true);
+    expect(merged.manifest.payload.entries.some(value => value.customerId === later.customer.id)).toBe(true);
+    expect(() => verifyDeletionLedger(exported.manifest, key, namespace, merged.checkpoint)).toThrow('LEDGER_CHECKPOINT_MISMATCH');
+  });
+
+  it('suppresses a pre-deletion logical backup without resurrecting auth or recurrence', async () => {
+    const f = await fixture();
+    const control = await fixture();
+    const refreshToken = 'r'.repeat(43); const resetToken = 's'.repeat(43);
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    await prisma.flupFlapSession.update({ where: { id: f.session.id }, data: { refreshHash: hash(refreshToken) } });
+    await prisma.flupFlapPasswordResetToken.updateMany({ where: { customerId: f.customer.id }, data: { tokenHash: hash(resetToken) } });
+    const backupSession = await prisma.flupFlapSession.findUniqueOrThrow({ where: { id: f.session.id } });
+    const backupReset = await prisma.flupFlapPasswordResetToken.findFirstOrThrow({ where: { customerId: f.customer.id } });
+    const restoredDb = new PGlite();
+    const restored = new PrismaClient({ adapter: pglitePrisma(restoredDb) });
+    try {
+      const root = fileURLToPath(new URL('../../../migrations/', import.meta.url));
+      for (const dir of readdirSync(root).sort()) if (dir.includes('_')) {
+        await restoredDb.exec(readFileSync(`${root}/${dir}/migration.sql`, 'utf8'));
+      }
+      // Restore only synthetic fixture rows captured before erasure, in an isolated database.
+      await restored.user.create({ data: f.staff });
+      await restored.flupFlapCustomer.create({ data: f.customer });
+      await restored.flupFlapCustomer.create({ data: control.customer });
+      await restored.flupFlapSession.create({ data: backupSession });
+      await restored.flupFlapPasswordResetToken.create({ data: backupReset });
+      await restored.mobileTopUpRecipient.create({ data: f.recipient });
+      await restored.mobileTopUpQuote.create({ data: f.quote });
+      await restored.mobileTopUpQuote.create({ data: f.unused });
+      await restored.mobileTopUpTransaction.create({ data: f.transaction });
+      await restored.flupFlapRecurringRecharge.create({ data: f.schedule });
+      const secret = 'isolated-restoration-test-only-access-secret';
+      const identity = createFlupFlapIdentity({ config: { enabled: true, accessSecret: secret },
+        repository: new FlupFlapIdentityRepository(restored), accessAllowed: () => true,
+        guestError: () => undefined, audit: async () => {}, emailService: { sendPasswordReset: async () => {} } });
+      const app = express(); app.use(express.json()); app.use('/auth', identity.router);
+      const token = jwt.sign({ sub: f.customer.id, type: 'access', domain: 'FLUPFLAP', sid: f.session.id, v: 0 }, secret,
+        { algorithm: 'HS256', issuer: 'flupflap-api', audience: 'flupflap-customer', expiresIn: 900 });
+      await request(app).get('/auth/me').set('Authorization', `Bearer ${token}`).expect(200);
+      await deleteFlupFlapAccount(prisma, f.input, true);
+      const key = 'independent-restore-test-only-signing-key-32-bytes'; const namespace = randomUUID();
+      const exported = await exportDeletionLedger(prisma, key, namespace);
+      const input = { staffId: f.staff.id, namespace, expectedCheckpoint: exported.checkpoint, maintenanceConfirmed: true };
+      await expect(suppressRestoredFlupFlapAccounts(restored, exported.manifest, key, { ...input, maintenanceConfirmed: false }, true)).rejects.toThrow('MAINTENANCE_REQUIRED');
+      await expect(suppressRestoredFlupFlapAccounts(restored, exported.manifest, key, { ...input, staffId: randomUUID() }, true)).rejects.toThrow('ADMIN_REQUIRED');
+      expect(await suppressRestoredFlupFlapAccounts(restored, exported.manifest, key, input)).toMatchObject({ mode: 'PREVIEW', suppressed: 1 });
+      expect((await restored.flupFlapCustomer.findUniqueOrThrow({ where: { id: f.customer.id } })).status).toBe('ACTIVE');
+      expect(await restored.auditLog.count({ where: { action: 'FLUPFLAP_ACCOUNT_DELETED' } })).toBe(0);
+      expect(await suppressRestoredFlupFlapAccounts(restored, exported.manifest, key, input, true)).toMatchObject({ mode: 'EXECUTED', suppressed: 1 });
+      await request(app).get('/auth/me').set('Authorization', `Bearer ${token}`).expect(401);
+      await request(app).post('/auth/refresh').send({ refreshToken }).expect(401);
+      await request(app).post('/auth/reset-password').send({ token: resetToken, password: 'safe-test-only-password-987' }).expect(400);
+      expect(await restored.flupFlapCustomer.findUnique({ where: { id: f.customer.id } })).toMatchObject({ status: 'DELETED', email: null, passwordHash: null, phone: null, authVersion: 1 });
+      expect(await restored.flupFlapRecurringRecharge.count()).toBe(0);
+      expect(await restored.mobileTopUpRecipient.count()).toBe(0);
+      expect(Number((await restored.mobileTopUpTransaction.findUniqueOrThrow({ where: { id: f.transaction.id } })).totalChargeUsd)).toBe(11);
+      expect(await restored.flupFlapCustomer.findUnique({ where: { id: control.customer.id } })).toEqual(control.customer);
+      expect(await suppressRestoredFlupFlapAccounts(restored, exported.manifest, key, input, true)).toMatchObject({ suppressed: 0, alreadyDeleted: 1 });
+      expect((await restored.flupFlapCustomer.findUniqueOrThrow({ where: { id: f.customer.id } })).authVersion).toBe(1);
+      expect(await restored.auditLog.count({ where: { action: 'FLUPFLAP_RESTORE_SUPPRESSED' } })).toBe(1);
+      // Carry the external ledger forward even when the restored DB lacks original receipts.
+      const carried = await exportDeletionLedger(restored, key, namespace, exported);
+      expect(carried.manifest.payload.entries).toEqual(exported.manifest.payload.entries);
+    } finally { await restored.$disconnect(); await restoredDb.close(); }
+  }, 60000);
 });

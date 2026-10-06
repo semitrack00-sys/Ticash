@@ -52,15 +52,29 @@ export async function deleteFlupFlapAccount(db: PrismaClient, raw: unknown, exec
     };
     if (!execute) return { mode: 'PREVIEW', customerId: customer.id, ...counts };
 
-    await tx.flupFlapSession.deleteMany({ where: { customerId: customer.id } });
-    await tx.flupFlapPasswordResetToken.deleteMany({ where: { customerId: customer.id } });
+    await eraseFlupFlapAccountData(tx, customer.id);
+    const audit = await tx.auditLog.create({ data: {
+      userId: staff.id, action: 'FLUPFLAP_ACCOUNT_DELETED', entity: 'FlupFlapCustomer', entityId: customer.id,
+      metadata: { requestReference: input.requestReference, verificationMethod: input.verificationMethod,
+        ...counts, retained: 'TRANSACTION_SECURITY_PROMOTION_ACCOUNTING', policyVersion: 1 },
+    } });
+    return { mode: 'EXECUTED', customerId: customer.id, auditId: audit.id, ...counts };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
+}
+
+// Internal maintenance primitive shared by verified deletion and authenticated restore suppression.
+// Call only inside a drained serializable transaction after the caller's authorization checks.
+export async function eraseFlupFlapAccountData(tx: Prisma.TransactionClient, customerId: string, incrementVersion = true) {
+    const owner = { flupFlapCustomerId: customerId };
+    await tx.flupFlapSession.deleteMany({ where: { customerId: customerId } });
+    await tx.flupFlapPasswordResetToken.deleteMany({ where: { customerId: customerId } });
     // Deleting schedules removes saved Stripe bindings and prevents future recurring charges.
-    await tx.flupFlapRecurringRecharge.deleteMany({ where: { customerId: customer.id } });
+    await tx.flupFlapRecurringRecharge.deleteMany({ where: { customerId: customerId } });
     await tx.mobileTopUpRecipient.deleteMany({ where: owner });
     // Financial quotes/redemptions stay with transaction history; unused browsing quotes are erased.
     await tx.mobileTopUpQuote.deleteMany({ where: { ...owner, transaction: null, promotion: null } });
     await tx.promotionRedemption.updateMany({ where: {
-      customerId: customer.id, status: 'RESERVED', quote: { transaction: null },
+      customerId: customerId, status: 'RESERVED', quote: { transaction: null },
     }, data: { status: 'EXPIRED' } });
     await tx.mobileTopUpQuote.updateMany({ where: { ...owner, transaction: null }, data: {
       recipientPhone: 'DELETED', receiverQuote: Prisma.DbNull, productSnapshot: Prisma.DbNull,
@@ -70,28 +84,21 @@ export async function deleteFlupFlapAccount(db: PrismaClient, raw: unknown, exec
       checkoutResumeTokenHash: null, checkoutResumeTokenExpiresAt: null, recurringIntervalDays: null,
     } });
     // Remove the customer's marketing attribution and linked visit/event capability.
-    const attribution = await tx.referralAttribution.findUnique({ where: { customerId: customer.id } });
-    await tx.referralAttribution.deleteMany({ where: { customerId: customer.id } });
+    const attribution = await tx.referralAttribution.findUnique({ where: { customerId: customerId } });
+    await tx.referralAttribution.deleteMany({ where: { customerId: customerId } });
     if (attribution) {
       await tx.campaignEvent.deleteMany({ where: { visitId: attribution.visitId } });
       await tx.campaignVisit.delete({ where: { id: attribution.visitId } });
     }
     // Keep opaque referral/payout accounting links, with no usable referral or promoter name.
-    await tx.referralCode.updateMany({ where: { customerId: customer.id }, data: { disabledAt: new Date() } });
-    await tx.promoter.updateMany({ where: { customerId: customer.id }, data: {
+    await tx.referralCode.updateMany({ where: { customerId: customerId }, data: { disabledAt: new Date() } });
+    await tx.promoter.updateMany({ where: { customerId: customerId }, data: {
       name: 'Deleted account', disabledAt: new Date(),
     } });
-    await tx.flupFlapCustomer.update({ where: { id: customer.id }, data: {
-      status: 'DELETED', rechargeRestricted: true, authVersion: { increment: 1 },
+    await tx.flupFlapCustomer.update({ where: { id: customerId }, data: {
+      status: 'DELETED', rechargeRestricted: true, authVersion: incrementVersion ? { increment: 1 } : undefined,
       email: null, passwordHash: null, googleSubject: null, firstName: null, lastName: null,
       phone: null, countryCode: null, emailVerifiedAt: null, phoneVerifiedAt: null,
       guestExpiresAt: null, lastLoginAt: null, failedLoginAttempts: 0, loginLockedUntil: null,
     } });
-    const audit = await tx.auditLog.create({ data: {
-      userId: staff.id, action: 'FLUPFLAP_ACCOUNT_DELETED', entity: 'FlupFlapCustomer', entityId: customer.id,
-      metadata: { requestReference: input.requestReference, verificationMethod: input.verificationMethod,
-        ...counts, retained: 'TRANSACTION_SECURITY_PROMOTION_ACCOUNTING', policyVersion: 1 },
-    } });
-    return { mode: 'EXECUTED', customerId: customer.id, auditId: audit.id, ...counts };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
 }

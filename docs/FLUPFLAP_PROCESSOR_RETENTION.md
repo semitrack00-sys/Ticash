@@ -119,11 +119,11 @@ The Prisma schema has no support-ticket or raw-verification-attachment store wit
 
 ## Storage review — 2026-10-06
 
-Read-only connector checks confirmed Gmail access to the configured support mailbox and the Render production service `ticash-api` on `main`. The mailbox's returned label inventory contained only system labels; no case-closure or hold workflow was established by that check. Message receipt time, archive status and Gmail labels do not independently establish a case-closure date or a clear hold. No messages or attachments were modified, and no customer details are included in this review.
+Read-only connector checks confirmed Gmail access to the configured support mailbox and the Render production service `ticash-api` on `main`. The initial mailbox inventory contained only system labels. Subsequently, FlupFlap support triage labels were created as described below; the confirmed Telnyx inquiry and acknowledgment were labeled Provider pending. Message receipt time, archive status and Gmail labels do not independently establish a case-closure date or a clear hold. No customer message contents or attachments were changed, and no customer details are included in this review.
 
 | Store | Confirmed evidence | Next verification / disposal gate |
 | --- | --- | --- |
-| Support mailbox | Gmail access confirmed; no case-closure workflow verified | Maintain a private per-case closure timestamp, exact message/attachment references, product scope and hold decision before calculating 30/90-day eligibility. Check forwarded copies and exports separately. |
+| Support mailbox | Gmail access confirmed; triage labels created; private case-closure workflow documented but not exercised on real customer cases | Maintain a private per-case closure timestamp, exact message/attachment references, product scope and hold decision before calculating 30/90-day eligibility. Check forwarded copies and exports separately. |
 | Resend | Production runtime check: API key, provider selections and email sender configuration absent | Disabled in the checked deployment. Record NOT_APPLICABLE for current production email delivery; this does not prove historical Resend records do not exist. Recheck after any configuration change. |
 | Telnyx | Production runtime check: all three required SMS settings present; deployed service is running | Treat Telnyx as an active processor for review. Configuration is not proof of individual message delivery. Verify provider message-history retention/removal controls and preserve unresolved delivery evidence. No configuration values were collected. |
 | Render logs / drains | Service uses workspace default; endpoint/token show None. Workspace has no default log destination; Pro plan confirmed | Native runtime log availability is documented as 14 days on Pro. No Render-managed external log stream is configured. Review downloads, past drains and application-managed exports separately; provider log unavailability is not independent proof of physical erasure. |
@@ -160,11 +160,24 @@ An OPEN case must have null closure fields and always remains blocked, regardles
 
 The mapper derives retention start from `closedAt`, never receipt or opening time. Gmail items use `EMAIL`: even expired items remain blocked for provider review. Outputs hash item references and omit case/operator references; they remain independently unverified suggestions with `executionAuthorized=false`. The registry does not contact Gmail, synchronize labels, verify attestations or erase data.
 
+### Gmail triage and private closure workflow
+
+The configured mailbox now has `FlupFlap Support/Open`, `FlupFlap Support/Closed`, `FlupFlap Support/Hold` and `FlupFlap Support/Provider pending` under `FlupFlap Support`. These labels assist manual triage; they do not synchronize with the registry or establish disposal authority. Only the two verified messages in the current Telnyx inquiry were labeled Provider pending. No bulk classification, mailbox rules, archiving or disposal was performed.
+
+| Label | Operator action and private evidence |
+| --- | --- |
+| Open | Apply to a verified FlupFlap case. Record an opaque case reference, product scope and opening time; inventory exact message/attachment IDs privately. Keep closure fields null and unresolved work blocked. |
+| Closed | Replace Open only after actual closure and independent review. Record `closedAt`, `closureRecordedBy` and `closureReviewedAt`; review ownership, inventory, holds and unresolved work separately. A closed label alone cannot start the retention clock. |
+| Hold | May coexist with Open or Closed. Privately record the hold reason, owner and review date; set `hold=ACTIVE`. Uncertain holds use `UNKNOWN` and remain blocked. Removing the label alone does not clear a hold. |
+| Provider pending | Track unresolved vendor inquiries separately from customer closure. Preserve the private provider case reference and pending questions. An acknowledgment does not resolve the provider gate. |
+
+If a case reopens, replace Closed with Open, clear current closure fields in the registry and preserve prior closure/hold history separately. Before each read-only review, update `asOf`, independently reconcile the registry with exact mailbox references and check forwarded copies, downloads and exports. Gmail records use source `EMAIL` and remain blocked for provider review even after expiry. Operational disposal rehearsal and exact-scope approval are still outstanding.
+
 ## Telnyx public control review — 2026-10-06
 
 The published DPA distinguishes message content from communications usage data (including recipient identifiers and message logs); it treats Telnyx as an independent controller for usage data. Sections 11.1–11.3 describe possible self-service features and written-request assistance using supplied identifiers. They do not guarantee that an SMS history deletion endpoint exists. Section 9 concerns agreement expiry/termination and allows legally required retention; it is not an individual customer's account-deletion clock. The AI retention controls in section 3.6 do not establish SMS retention settings.
 
-Confirm the agreement actually applicable to this merchant account and request a provider-specific written scope: SMS body, recipient identifier, message detail/delivery records, downstream copies, removable fields, retained purposes and objective expiry, supported case route, test mechanism and any charges. Exact message IDs must come from verified private case bindings. No numerical SMS retention promise or deletion endpoint was established in this public review, and no provider request was sent or fee accepted. This provider gate remains pending.
+Confirm the agreement actually applicable to this merchant account and request a provider-specific written scope: SMS body, recipient identifier, message detail/delivery records, downstream copies, removable fields, retained purposes and objective expiry, supported case route, test mechanism and any charges. Exact message IDs must come from verified private case bindings. No numerical SMS retention promise or deletion endpoint was established in this public review. The authorized request has since been sent and acknowledged, as recorded below; no fee was accepted. This provider gate remains pending.
 
 Source: https://telnyx.com/legal/data-processing-addendum (definitions, sections 2.2, 3.6, 9 and 11).
 
@@ -184,7 +197,7 @@ Sources:
 - https://developers.telnyx.com/api-reference/messages/retrieve-a-message
 - https://support.telnyx.com/en/articles/5170721-best-practices-for-contacting-support
 
-The owner explicitly authorized this request on 2026-10-06. It was sent from the configured support mailbox to the published `support@telnyx.com` address at 13:45:10 UTC (06:45:10 America/Los_Angeles), and the exact message was verified in Gmail Sent. The email contained no API keys, profile/message IDs or customer message data. The request text below is retained for review. Provider reply/ticket number remains pending; sending the request is not confirmation of redaction activation or disposal. No fees, setting changes or customer data disposal were authorized.
+The owner explicitly authorized this request on 2026-10-06. It was sent from the configured support mailbox to the published `support@telnyx.com` address at 13:45:10 UTC (06:45:10 America/Los_Angeles), and the exact message was verified in Gmail Sent. The email contained no API keys, profile/message IDs or customer message data. Telnyx acknowledged receipt at 13:45:41 UTC and assigned a ticket; its exact reference remains in the private mailbox. The request and acknowledgment are labeled Provider pending. A substantive answer remains pending; acknowledgment is not confirmation of redaction activation or disposal. No fees, setting changes or customer data disposal were authorized. The request text below is retained for review.
 
 > Subject: FlupFlap SMS redaction eligibility and retention controls
 >

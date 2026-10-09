@@ -277,7 +277,7 @@ void main() {
       );
       await t.pumpAndSettle();
       expect(
-        find.text(flupFlapStrings[language.code]!['operatorProduct']!),
+        find.text(flupFlapStrings[language.code]!['choosePlan']!),
         findsWidgets,
       );
       expect(t.takeException(), isNull);

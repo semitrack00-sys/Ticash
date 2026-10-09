@@ -89,16 +89,17 @@ export function createMobileTopUpRouter(options: {
     const recurringInterval = z.union([z.literal(7), z.literal(15), z.literal(30)]).optional();
     const paymentSchema = options.allowAndroidReturn
       ? purchaseSchema.extend({
-          returnTarget: z.literal('FLUPFLAP_ANDROID').optional(),
+          returnTarget: z.enum(['FLUPFLAP_ANDROID', 'FLUPFLAP_PWA']).optional(),
           ...(options.allowRecurring ? { recurringIntervalDays: recurringInterval } : {}),
         })
       : purchaseSchema;
     const guestSchema = options.allowAndroidReturn
-      ? guestPaymentSessionSchema.extend({ returnTarget: z.literal('FLUPFLAP_ANDROID').optional() })
+      ? guestPaymentSessionSchema.extend({ returnTarget: z.enum(['FLUPFLAP_ANDROID', 'FLUPFLAP_PWA']).optional() })
       : guestPaymentSessionSchema;
     const parsed = guest ? guestSchema.parse(req.body) : paymentSchema.parse(req.body);
     const input = { quoteId: parsed.quoteId, ...(parsed.recipientId ? { recipientId: parsed.recipientId } : {}) };
     const requestBillingCountry = 'billingCountry' in parsed ? parsed.billingCountry as string | undefined : undefined;
+    const pwaReturn = 'returnTarget' in parsed && parsed.returnTarget === 'FLUPFLAP_PWA';
     const androidReturn = 'returnTarget' in parsed && parsed.returnTarget === 'FLUPFLAP_ANDROID';
     const recurringIntervalDays = 'recurringIntervalDays' in parsed
       ? parsed.recurringIntervalDays as 7 | 15 | 30 | undefined
@@ -112,6 +113,7 @@ export function createMobileTopUpRouter(options: {
       billingCountry,
       androidReturn,
       recurringIntervalDays,
+      pwaReturn,
     ));
   }));
 

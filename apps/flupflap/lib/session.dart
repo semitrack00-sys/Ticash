@@ -20,9 +20,21 @@ class SecureSessionStorage implements SessionStorage {
   Future<void> clear() => storage.delete(key: key);
 }
 
+/// Browser credentials are memory-only, matching the existing FlupFlap website.
+/// Browser storage and service-worker caches never receive authentication tokens.
+class BrowserSessionStorage implements SessionStorage {
+  String? _refreshToken;
+  @override
+  Future<String?> read() async => _refreshToken;
+  @override
+  Future<void> write(String value) async { _refreshToken = value; }
+  @override
+  Future<void> clear() async { _refreshToken = null; }
+}
+
 /// Own client, token namespace and session. No TiCash ApiClient or auth provider.
 class FlupFlapSession extends ChangeNotifier {
-  FlupFlapSession({required this.dio, required this.storage}) {
+  FlupFlapSession({required this.dio, required this.storage, this.browserSession = false}) {
     final trustedBaseUrl = dio.options.baseUrl;
     dio.interceptors.add(
       InterceptorsWrapper(
@@ -83,6 +95,7 @@ class FlupFlapSession extends ChangeNotifier {
   }
   final Dio dio;
   final SessionStorage storage;
+  final bool browserSession;
   Map<String, dynamic>? user;
   String? _accessToken;
   Future<void>? _refreshing;
@@ -95,7 +108,7 @@ class FlupFlapSession extends ChangeNotifier {
   Future<void> initialize() async {
     final epoch = _epoch;
     try {
-      if (await storage.read() != null) await refresh();
+      if (browserSession || await storage.read() != null) await refresh();
     } catch (_) {
       if (epoch == _epoch) {
         await clear();
@@ -166,11 +179,13 @@ class FlupFlapSession extends ChangeNotifier {
   Future<void> _refresh() async {
     final epoch = _epoch;
     final value = await storage.read();
-    if (value == null || epoch != _epoch) throw StateError('Sign in required');
+    if ((value == null && !browserSession) || epoch != _epoch) {
+      throw StateError('Sign in required');
+    }
     await _accept(
       (await dio.post(
         '/flupflap/auth/refresh',
-        data: {'refreshToken': value},
+        data: value == null && browserSession ? <String, dynamic>{} : {'refreshToken': value},
       )).data,
       epoch,
     );

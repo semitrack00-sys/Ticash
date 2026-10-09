@@ -580,8 +580,9 @@ export class MobileTopUpService {
     billingCountry?: string,
     androidReturn = false,
     recurringIntervalDays?: 7 | 15 | 30,
+    pwaReturn = false,
   ) {
-    if (androidReturn && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
+    if ((androidReturn || pwaReturn) && !flupFlapCustomerId(userId)) throw new MobileTopUpError('FORBIDDEN', 'FlupFlap identity required', 403);
     this.assertEnabled();
     const stripeMode = this.config.paymentMode === 'stripe_sandbox' || this.config.paymentMode === 'stripe_live';
     const country = billingCountry?.trim().toUpperCase();
@@ -689,6 +690,7 @@ export class MobileTopUpService {
           billingCountry: country,
           resumeToken,
           ...(androidReturn ? { androidReturn: true } : {}),
+          ...(pwaReturn ? { pwaReturn: true } : {}),
           ...(recurringIntervalDays !== undefined ? { saveForRecurring: true } : {}),
         });
       } catch (error) {

@@ -1,0 +1,46 @@
+name: FlupFlap PWA
+on:
+  push:
+    paths: ['apps/flupflap/**', 'apps/mobile/**', '.github/workflows/flupflap-pwa.yml']
+  pull_request:
+    paths: ['apps/flupflap/**', 'apps/mobile/**', '.github/workflows/flupflap-pwa.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install pillow==11.3.0
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: node --test tool/pwa.test.mjs
+      - run: bash tool/build_pwa.sh
+      - name: Install fixture-only browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pwa-browser" playwright@1.52.0
+          "$RUNNER_TEMP/pwa-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify browser, offline shell and checkout return
+        run: NODE_PATH="$RUNNER_TEMP/pwa-browser/node_modules" node tool/pwa_browser_smoke.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-pwa
+          path: apps/flupflap/build/web/
+          if-no-files-found: error
+          retention-days: 14

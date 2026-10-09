@@ -1,0 +1,9 @@
+{
+  "source_commit": "0a4ce0bac9487fa759bfe2dc695a67e6a316992f",
+  "requested_artifacts": [
+    "APK",
+    "AAB"
+  ],
+  "api_base_url": "https://ticash-api.onrender.com/api",
+  "purpose": "Latest Android QA build requested by owner; app source unchanged."
+}

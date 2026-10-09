@@ -786,7 +786,7 @@ describe('Stripe sandbox flow',()=>{
       paymentIntentId: outcome === 'expired' ? undefined : 'pi_recovery_bound',
     });
     vi.spyOn(f.stripeProvider!, 'getPayment').mockResolvedValue({
-      id: 'pi_recovery_bound', amount: 599, amount_received: outcome === 'paid' ? 599 : 0,
+      id: 'pi_recovery_bound', amount: 615, amount_received: outcome === 'paid' ? 615 : 0,
       currency: 'usd', status: outcome === 'paid' ? 'succeeded' : 'requires_payment_method',
       metadata: { transactionId: session.body.transactionId }, last_payment_error: { decline_code: 'insufficient_funds' },
     });
@@ -817,10 +817,10 @@ describe('Stripe sandbox flow',()=>{
     });
     vi.spyOn(f.provider, 'getTopUpStatus').mockResolvedValue({ transactionId: 'provider-failure', status: 'FAILED' });
     vi.spyOn(f.stripeProvider!, 'getPayment').mockResolvedValue({
-      id: 'pi_recovery_bound', amount: 599, currency: 'usd',
+      id: 'pi_recovery_bound', amount: 615, currency: 'usd',
       status: paymentStatus === 'CAPTURED' ? 'succeeded' : 'requires_capture',
-      amount_received: paymentStatus === 'CAPTURED' ? 599 : 0,
-      amount_capturable: paymentStatus === 'AUTHORIZED' ? 599 : 0,
+      amount_received: paymentStatus === 'CAPTURED' ? 615 : 0,
+      amount_capturable: paymentStatus === 'AUTHORIZED' ? 615 : 0,
     });
     vi.spyOn(f.stripeProvider!, 'getRecoveryStatus').mockResolvedValue('PENDING');
     const capture = vi.spyOn(f.stripeProvider!, 'capture');
@@ -870,7 +870,7 @@ describe('Stripe sandbox flow',()=>{
     expect(payload.get('cancel_url')).toBe(success.toString());
     const token = success.searchParams.get('checkoutResumeToken')!;
     expect(session.text).not.toContain(token);
-    expect(session.body.amountMinor).toBe(599);
+    expect(session.body.amountMinor).toBe(615);
     const handoff = await request(f.app).get(success.pathname).query({ checkoutResumeToken: token }).expect(200);
     expect(handoff.headers['cache-control']).toBe('no-store');
     expect(handoff.headers['referrer-policy']).toBe('no-referrer');
@@ -902,15 +902,15 @@ describe('Stripe sandbox flow',()=>{
     const before = await f.identities.customer(guest.user.id);
     expect(before?.countryCode).toBeNull();
     const quote = await f.quote(guest.accessToken);
-    expect(quote).toMatchObject({ countryCode: 'HT', providerAmount: 5, feeUsd: 0.99, totalChargeUsd: 5.99 });
+    expect(quote).toMatchObject({ countryCode: 'HT', providerAmount: 5, feeUsd: 1.15, totalChargeUsd: 6.15 });
     const response = await f.session(guest.accessToken, { quoteId: quote.id, billingCountry }).expect(201);
-    expect(response.body).toMatchObject({ provider: 'STRIPE', environment: 'SANDBOX', testMode: true, amountMinor: 599, currency: 'USD' });
+    expect(response.body).toMatchObject({ provider: 'STRIPE', environment: 'SANDBOX', testMode: true, amountMinor: 615, currency: 'USD' });
     const payload = new URLSearchParams(transportRequest(f.transport).body);
     const resumeToken = new URL(payload.get('success_url')!).searchParams.get('checkoutResumeToken')!;
     expect(response.body).not.toHaveProperty('checkoutResumeToken');
     expect(response.text).not.toContain(resumeToken);
     expect(payload.get('metadata[billingCountry]')).toBe('US');
-    expect(payload.get('line_items[0][price_data][unit_amount]')).toBe('599');
+    expect(payload.get('line_items[0][price_data][unit_amount]')).toBe('615');
     expect(payload.get('line_items[0][price_data][currency]')).toBe('usd');
     expect(await f.identities.customer(guest.user.id)).toEqual(before);
     const profile = await request(f.app).get('/api/flupflap/auth/me').auth(guest.accessToken, { type: 'bearer' }).expect(200);
@@ -947,7 +947,7 @@ describe('Stripe sandbox flow',()=>{
     }
     expect(f.transport).not.toHaveBeenCalled();
     const response = await f.session(customer.accessToken, { quoteId: quote.id }).expect(201);
-    expect(response.body).toMatchObject({ provider: 'STRIPE', amountMinor: 599 });
+    expect(response.body).toMatchObject({ provider: 'STRIPE', amountMinor: 615 });
     expect(new URLSearchParams(transportRequest(f.transport).body).get('metadata[billingCountry]')).toBe('US');
     expect(await f.identities.customer(customer.user.id)).toEqual(before);
     expect(f.submit).not.toHaveBeenCalled();
@@ -986,7 +986,7 @@ describe('Stripe sandbox flow',()=>{
     }
     expect(f.transport).not.toHaveBeenCalled();
     expect(await f.repository.listTransactions(flupFlapOwner(guest.user.id))).toHaveLength(0);
-    expect((await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201)).body.amountMinor).toBe(599);
+    expect((await f.session(guest.accessToken, { quoteId: quote.id, billingCountry: 'US' }).expect(201)).body.amountMinor).toBe(615);
     expect(f.submit).not.toHaveBeenCalled();
   });
 

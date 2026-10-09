@@ -3,7 +3,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from PIL import Image, ImageChops, ImageStat
+from PIL import Image, ImageChops, ImageDraw
 from generate_launcher_icons import square_icon
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,13 +14,17 @@ def icons():
     # This wordmark has an opaque white background. Find visible ink, not alpha.
     rgb = Image.new('RGBA', source.size, 'white'); rgb.alpha_composite(source)
     mask = ImageChops.difference(rgb.convert('RGB'), Image.new('RGB', source.size, 'white')).convert('L').point(lambda value: 255 if value > 18 else 0)
-    box = mask.getbbox()
-    if not box: raise SystemExit('Empty official logo')
-    left, top, right, bottom = box
-    for x in range(left + (right-left)//8, left + (right-left)//2):
-        if ImageStat.Stat(mask.crop((x,top,x+4,bottom))).sum[0] == 0:
-            right = x; break
-    mark = source.crop((left,top,right,bottom))
+    # The curved mark overlaps the wordmark's horizontal bounds. Isolate the
+    # connected visible mark rather than cropping a strip containing text.
+    seed = (round(source.width*.10), round(source.height*.40))
+    if mask.getpixel(seed) != 255: raise SystemExit('Official logo mark seed changed')
+    ImageDraw.floodfill(mask, seed, 128)
+    component = mask.point(lambda value: 255 if value == 128 else 0)
+    box = component.getbbox()
+    if not box: raise SystemExit('Empty official logo mark')
+    mark = source.copy()
+    mark.putalpha(ImageChops.multiply(mark.getchannel('A'), component))
+    mark = mark.crop(box)
     for size in (192, 512):
         square_icon(mark, size).save(target / f'icon-{size}.png', optimize=True)
         masked = Image.new('RGB', (size, size), 'white')

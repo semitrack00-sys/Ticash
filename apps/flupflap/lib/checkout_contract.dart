@@ -1,6 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/services/mobile_top_up_service.dart';
@@ -330,7 +330,7 @@ class FlupFlapClient {
         '$base/payment-sessions',
         data: {
           'quoteId': quote.id,
-          'returnTarget': 'FLUPFLAP_ANDROID',
+          'returnTarget': kIsWeb ? 'FLUPFLAP_PWA' : 'FLUPFLAP_ANDROID',
           if (guest) 'billingCountry': billingCountry,
           if (recipientId != null) 'recipientId': recipientId,
           if (recurringIntervalDays != null)

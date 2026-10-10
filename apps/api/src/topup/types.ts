@@ -55,7 +55,7 @@ export interface MobileTopUpCheckoutResumeDto {
 }
 
 export interface MobileTopUpSessionProvider {
-  createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean }): Promise<HostedCheckoutSession>;
+  createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean; pwaReturn?: boolean }): Promise<HostedCheckoutSession>;
   getHostedCheckoutSession(paymentSessionId: string): Promise<HostedCheckoutSession>;
   flowContract(transactionId: string, checkoutSession: HostedCheckoutSession): HostedCheckoutSessionBaseContract;
 }

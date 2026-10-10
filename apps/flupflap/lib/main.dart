@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -19,6 +20,8 @@ import 'package:ticash/services/mobile_top_up_service.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 
 import 'session.dart';
+import 'browser_transport_stub.dart'
+    if (dart.library.js_interop) 'browser_transport.dart';
 
 const _navy = Color(0xFF082B55);
 const _blue = Color(0xFF1677FF);
@@ -58,8 +61,10 @@ void main() {
         receiveTimeout: const Duration(seconds: 30),
       ),
     ),
-    storage: SecureSessionStorage(),
+    storage: kIsWeb ? BrowserSessionStorage() : SecureSessionStorage(),
+    browserSession: kIsWeb,
   );
+  if (kIsWeb) configureBrowserTransport(session.dio);
   runApp(FlupFlapApp(session: session));
   session.initialize();
 }
@@ -156,7 +161,9 @@ class _FlupFlapAppState extends State<FlupFlapApp> with WidgetsBindingObserver {
         }
         return '/login';
       }
-      if (uri.scheme == 'flupflap' && uri.host == 'checkout-return') {
+      if ((uri.scheme == 'flupflap' && uri.host == 'checkout-return') ||
+          (kIsWeb && uri.path == '/checkout-return' &&
+              uri.queryParameters.containsKey('checkoutResumeToken'))) {
         final token = uri.queryParameters['checkoutResumeToken'];
         // A second return may resolve to the same route, so notify the
         // memory-only controller directly rather than relying on a rebuild.

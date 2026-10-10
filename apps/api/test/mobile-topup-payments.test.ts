@@ -887,6 +887,36 @@ describe('Stripe sandbox flow',()=>{
     expect(f.submit).not.toHaveBeenCalled();
   });
 
+  it('returns PWA checkout to a fixed app fragment and reconciles without fulfillment', async () => {
+    const f = flupFlapStripeFixture();
+    const guest = await f.guest();
+    const quote = await f.quote(guest.accessToken);
+    const session = await f.session(guest.accessToken,
+      { quoteId: quote.id, billingCountry: 'US', returnTarget: 'FLUPFLAP_PWA' }, 'pwa-checkout-test').expect(201);
+    const payload = new URLSearchParams(transportRequest(f.transport).body);
+    const success = new URL(payload.get('success_url')!);
+    expect(success.origin + success.pathname).toBe('https://www.flupflap.com/app/');
+    expect(success.search).toBe('');
+    expect(payload.get('cancel_url')).toBe(success.toString());
+    const fragment = new URL(success.hash.slice(1), 'https://www.flupflap.com');
+    const token = fragment.searchParams.get('checkoutResumeToken')!;
+    expect(fragment.pathname).toBe('/checkout-return');
+    expect(session.text).not.toContain(token);
+    const resumed = await request(f.app).post('/api/flupflap/mobile-topups/checkout-resume')
+      .send({ resumeToken: token }).expect(200);
+    expect(resumed.body.transaction.paymentStatus).toBe('SESSION_CREATED');
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it('rejects PWA return for TiCash identities before reserving payment', async () => {
+    const f = stripeFixture();
+    const quote = await f.service.createQuote('customer', quoteInput);
+    await expect(f.service.createPaymentSession('customer', { quoteId: quote.id },
+      'ticash-no-pwa', 'US', false, undefined, true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
   it('rejects Android handoff for TiCash identities even when calling the service directly', async () => {
     const f = stripeFixture();
     const quote = await f.service.createQuote('customer', quoteInput);

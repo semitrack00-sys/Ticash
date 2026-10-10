@@ -8,3 +8,6 @@ android/key.properties
 *.keystore
 android/.kotlin/
 android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+
+# Python build helpers
+__pycache__/

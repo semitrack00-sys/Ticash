@@ -1,0 +1,82 @@
+name: FlupFlap live Play captures
+on:
+  push:
+    branches: ['codex/flupflap-live-play-capture-20261012']
+    paths:
+      - '.github/workflows/flupflap-live-play-capture.yml'
+      - 'tools/flupflap-play-capture/**'
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Prepare test-only harness without changing app source
+        working-directory: apps/flupflap
+        run: |
+          mkdir -p integration_test test_driver
+          cp ../../tools/flupflap-play-capture/live_capture_test.dart integration_test/live_capture_test.dart
+          cp ../../tools/flupflap-play-capture/driver.dart test_driver/live_capture_driver.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pubspec.yaml')
+          content = p.read_text()
+          content = content.replace('dev_dependencies:\n', 'dev_dependencies:\n  integration_test:\n    sdk: flutter\n')
+          p.write_text(content)
+          PY
+          flutter pub get
+          dart analyze integration_test test_driver
+      - name: Enable Android emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_4
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: |
+            adb shell wm size 1080x1920
+            adb shell wm density 420
+            cd apps/flupflap && flutter drive --driver=test_driver/live_capture_driver.dart --target=integration_test/live_capture_test.dart --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - name: Verify captured dimensions and record provenance
+        working-directory: apps/flupflap
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,struct
+          from pathlib import Path
+          root=Path('build/live-play-captures')
+          names=['01-sign-in','02-home','03-recharge','04-account-privacy']
+          records=[]
+          for name in names:
+              path=root/(name+'.png')
+              b=path.read_bytes()
+              if b[:8]!=b'\x89PNG\r\n\x1a\n': raise SystemExit('Invalid PNG')
+              dimensions=struct.unpack('>II', b[16:24])
+              if dimensions!=(1080,1920): raise SystemExit(f'Unexpected capture size: {dimensions}')
+              records.append({'file':path.name,'sha256':hashlib.sha256(b).hexdigest(),'width':dimensions[0],'height':dimensions[1]})
+          (root/'provenance.json').write_text(json.dumps({'release_source':'55785f4dc6e1722487d583654034134ebb23ff6d','capture_commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],'mode':'actual Android UI and live production API, empty guest session; no paid order','captures':records},indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-live-play-captures
+          if-no-files-found: error
+          retention-days: 14
+          path: apps/flupflap/build/live-play-captures/

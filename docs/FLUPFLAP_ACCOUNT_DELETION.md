@@ -1,5 +1,7 @@
 # FlupFlap support deletion procedure
 
+Current processor inventory, proposed expiry schedule and completion gates: [FLUPFLAP_PROCESSOR_RETENTION.md](FLUPFLAP_PROCESSOR_RETENTION.md). Capture exact provider bindings privately before local erasure removes recurring schedules. The owner approved the 30/90/180-day nonfinancial periods on 2026-10-06; an exercised expiry mechanism and category-specific financial/backup review are still required.
+
 Requests arrive at contact@ticash-app.com. This is a manual staff process. The public page and app open an email request; neither submits or completes deletion automatically.
 
 ## Verify and prepare

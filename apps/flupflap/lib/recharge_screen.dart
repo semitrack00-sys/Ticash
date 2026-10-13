@@ -9,6 +9,7 @@ import 'native_actions.dart';
 import 'parity_strings.dart';
 import 'phone_country_field.dart';
 import 'recharge_journey.dart';
+import 'recharge_plan_card.dart';
 
 export 'country_flag.dart';
 
@@ -351,11 +352,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   }
 
   Widget product() {
-    final kinds = j.products.map((p) => p.kind.name.toUpperCase()).toSet();
     return card([
       Text(
-        context.ft('operatorProduct'),
-        style: Theme.of(context).textTheme.headlineSmall,
+        context.ft('choosePlan'),
+        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Color(0xFF082B55)),
       ),
       const SizedBox(height: 16),
       Wrap(
@@ -366,6 +366,16 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             ChoiceChip(
               label: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME')),
               selected: j.internet == internet,
+              selectedColor: const Color(0xFFE9F2FF),
+              backgroundColor: Colors.white,
+              checkmarkColor: const Color(0xFF1677FF),
+              labelStyle: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: j.internet == internet ? const Color(0xFF1677FF) : const Color(0xFF64748B),
+              ),
+              side: BorderSide(color: j.internet == internet ? const Color(0xFFC5DCFF) : const Color(0xFFE2E8F0)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               onSelected: j.busy || j.locked ? null : (_) {
                 j.selectService(internet);
                 amount.clear();
@@ -405,72 +415,30 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                 amount.clear();
               },
       ),
-      if (j.operator != null) ...[
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            MobileOperatorLogo(logoUrl: j.operator!.logoUrl),
-            const SizedBox(width: 10),
-            Expanded(child: Text(j.operator!.name)),
-          ],
-        ),
-      ],
       if (j.products.isEmpty && !j.busy)
         Padding(
           padding: const EdgeInsets.all(12),
           child: Text(context.ft('noProducts')),
         ),
-      for (final kind in kinds) ...[
+      if (j.products.isNotEmpty) ...[
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 8),
           child: Text(
-            context.ft(kind),
-            style: const TextStyle(fontWeight: FontWeight.w800),
+            context.ft('availablePlans'),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
           ),
         ),
-        for (final p in j.products.where(
-          (p) => p.kind.name.toUpperCase() == kind,
-        ))
+        for (final p in j.products)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                backgroundColor: j.product?.id == p.id
-                    ? const Color(0xFFE0EEFF)
-                    : null,
-              ),
-              onPressed: j.busy || j.locked
-                  ? null
-                  : () {
-                      j.selectProduct(p);
-                      amount.clear();
-                    },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(child: Text(p.name)),
-                        if (j.product?.id == p.id)
-                          const Icon(Icons.check_circle),
-                      ],
-                    ),
-                    if (p.description != null) Text(p.description!),
-                    if (p.amountType == 'FIXED')
-                      Text(money(p.price, p.priceCurrency)),
-                    if (p.amountType == 'RANGE')
-                      Text(
-                        '${context.ft('minimum')}: ${p.minimumAmount} ${p.priceCurrency} · ${context.ft('maximum')}: ${p.maximumAmount} ${p.priceCurrency}',
-                      ),
-                    for (final benefit in p.benefits)
-                      Text(productDetail(benefit)),
-                    if (p.validityLabel != null)
-                      Text(productDetail(p.validityLabel!)),
-                  ],
-                ),
-              ),
+            child: RechargePlanCard(
+              product: p,
+              selected: j.product?.id == p.id,
+              detailLabel: productDetail,
+              onSelected: j.busy || j.locked ? null : () {
+                j.selectProduct(p);
+                amount.clear();
+              },
             ),
           ),
       ],

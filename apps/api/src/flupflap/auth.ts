@@ -9,6 +9,8 @@ import { FlupFlapIdentityRepository } from './repository.js';
 import { flupFlapOwner, flupFlapCustomerId } from './owner.js';
 import type { PasswordResetEmailService } from '../password-reset-email.js';
 import { passwordResetUrl } from '../password-reset-email.js';
+import { AccountDeletionError } from './account-deletion.js';
+import type { FlupFlapSelfServiceDeletion } from './self-service-deletion.js';
 
 export type FlupFlapConfig = { enabled: boolean; accessSecret?: string; resetUrl?: string };
 export function loadFlupFlapConfig(env: NodeJS.ProcessEnv = process.env): FlupFlapConfig {
@@ -54,6 +56,7 @@ export function createFlupFlapIdentity(options: {
   guestError: () => { error: string; code: string } | undefined;
   accessAllowed: () => boolean;
   emailService: PasswordResetEmailService;
+  deletion?: FlupFlapSelfServiceDeletion;
   audit: (owner:string|undefined, action:string, entity:string, id?:string) => Promise<void>;
 }) {
   const { config, repository: repo } = options;
@@ -161,6 +164,30 @@ export function createFlupFlapIdentity(options: {
   });
   router.post('/logout', authenticate, async (req,res) => {clearWebRefreshCookie(res);await repo.revoke((req as AuthRequest).flupFlapSessionId!);await options.audit((req as AuthRequest).userId,'FLUPFLAP_LOGOUT','Security');res.status(204).end();});
   router.get('/me',authenticate,(req,res)=>{res.json({user:publicFlupFlapCustomer((req as AuthRequest).flupFlapCustomer!)});});
+  router.post('/account-deletion', limited, authenticate, async (request,res) => {
+    const input = z.object({ password, confirm: z.literal('DELETE_ACCOUNT') }).strict().parse(request.body);
+    const customer = (request as AuthRequest).flupFlapCustomer!;
+    if (customer.guestExpiresAt) { res.status(403).json({ code: 'REGISTERED_ACCOUNT_REQUIRED' }); return; }
+    if (!options.deletion) { res.status(503).json({ code: 'DELETION_UNAVAILABLE', error: 'Account deletion is temporarily unavailable. Try again later.' }); return; }
+    if (!customer.passwordHash || !await bcrypt.compare(input.password, customer.passwordHash)) {
+      res.status(403).json({ code: 'DELETION_PASSWORD_INVALID', error: 'Your account password is incorrect.' }); return;
+    }
+    try {
+      const accepted = await options.deletion.request(customer.id, customer.passwordHash, customer.authVersion);
+      clearWebRefreshCookie(res);
+      // Acceptance is durable even if the immediate attempt fails. The persistent
+      // background worker retries; never return a misleading request failure.
+      let result: { requestId: string; status: 'DELETION_PENDING' | 'LOCAL_DATA_DELETED' } = accepted;
+      try { result = await options.deletion.process(customer.id) ?? accepted; }
+      catch { /* Durable request is retried by the deletion worker. */ }
+      res.status(result.status === 'LOCAL_DATA_DELETED' ? 200 : 202).json(result);
+    } catch (error) {
+      if (error instanceof AccountDeletionError) {
+        res.status(409).json({ code: error.code, error: 'Your session changed. Sign in again before requesting deletion.' }); return;
+      }
+      throw error;
+    }
+  });
   router.patch('/me',authenticate,async(req,res)=>{
     const c=(req as AuthRequest).flupFlapCustomer!;
     if(c.guestExpiresAt){res.status(403).json({code:'GUEST_SCOPE_RESTRICTED'});return;}
@@ -189,3 +216,4 @@ export function createFlupFlapIdentity(options: {
     isGuest:async(owner:string)=>Boolean((await repo.customer(flupFlapCustomerId(owner)!))?.guestExpiresAt),
     billingCountryForUser:async(owner:string)=>(await repo.customer(flupFlapCustomerId(owner)!))?.countryCode ?? undefined};
 }
+

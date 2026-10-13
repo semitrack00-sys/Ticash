@@ -222,7 +222,7 @@ export class FlupFlapRecurringRechargeService {
     const now = this.clock();
     const staleClaim = new Date(now.getTime() - 10 * 60_000);
     const due = await this.db.flupFlapRecurringRecharge.findMany({
-      where: { status: 'ACTIVE', nextRunAt: { lte: now }, OR: [{ claimedAt: null }, { claimedAt: { lt: staleClaim } }] },
+      where: { status: 'ACTIVE', customer: { status: 'ACTIVE' }, nextRunAt: { lte: now }, OR: [{ claimedAt: null }, { claimedAt: { lt: staleClaim } }] },
       orderBy: { nextRunAt: 'asc' },
       take: Math.max(1, Math.min(100, limit)),
     });
@@ -235,6 +235,7 @@ export class FlupFlapRecurringRechargeService {
         where: {
           id: candidate.id,
           status: 'ACTIVE',
+          customer: { status: 'ACTIVE' },
           nextRunAt: candidate.nextRunAt,
           OR: [{ claimedAt: null }, { claimedAt: { lt: staleClaim } }],
         },
@@ -345,3 +346,4 @@ export class FlupFlapRecurringRechargeService {
     return { activated, scanned: due.length, completed, paused, pending };
   }
 }
+

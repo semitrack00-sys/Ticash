@@ -556,6 +556,12 @@ class _AuthScreenState extends State<AuthScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.session.deletionNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(context.ft(widget.session.deletionNotice!),
+                key: const ValueKey('account-deletion-notice')),
+            ),
           Text(
             widget.resetToken != null
                 ? context.ft('Reset FlupFlap password')
@@ -1474,7 +1480,7 @@ class _AccountScreenState extends State<AccountScreen> {
             language: widget.language,
             onLanguage: widget.onLanguage,
           ),
-          const PrivacyActions(),
+          PrivacyActions(session: widget.session),
           const SizedBox(height: 20),
           if (!widget.session.guest)
             Text(
@@ -1587,3 +1593,4 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 }
+

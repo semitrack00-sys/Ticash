@@ -39,6 +39,12 @@ class FlupFlapSession extends ChangeNotifier {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
+          if (options.extra['expectedSessionEpoch'] != null &&
+              options.extra['expectedSessionEpoch'] != _epoch) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Session changed'));
+            return;
+          }
           // Fail closed if a reused screen attempts a TiCash API or absolute URL.
           if (!options.path.startsWith('/flupflap/') ||
               options.path.contains('..') ||
@@ -103,6 +109,7 @@ class FlupFlapSession extends ChangeNotifier {
   bool _loggingOut = false;
   Future<void>? _storageWork;
   bool ready = false;
+  String? deletionNotice;
   bool get authenticated => user != null && _accessToken != null;
   bool get guest => user?['guest'] == true;
   Future<void> initialize() async {
@@ -143,6 +150,7 @@ class FlupFlapSession extends ChangeNotifier {
     });
     if (epoch != _epoch || _loggingOut) throw StateError('Session changed');
     user = customer;
+    deletionNotice = null;
     _accessToken = data['accessToken'] as String;
     notifyListeners();
   }
@@ -225,6 +233,31 @@ class FlupFlapSession extends ChangeNotifier {
     }
   }
 
+  Future<String> deleteAccount(String password) async {
+    if (!authenticated || guest) throw StateError('Registered account required');
+    final epoch = _epoch;
+    // Refresh is not password verification. The server separately verifies the
+    // supplied password and binds deletion to this authenticated customer only.
+    await refresh();
+    if (epoch != _epoch || !authenticated || guest) throw StateError('Session changed');
+    final response = await dio.post('/flupflap/auth/account-deletion', data: {
+      'password': password,
+      'confirm': 'DELETE_ACCOUNT',
+    }, options: Options(extra: {'expectedSessionEpoch': epoch}));
+    final data = Map<String, dynamic>.from(response.data as Map);
+    final status = data['status'];
+    if (data['requestId'] is! String ||
+        !const {'DELETION_PENDING', 'LOCAL_DATA_DELETED'}.contains(status)) {
+      throw const FormatException('Invalid account deletion response');
+    }
+    if (epoch != _epoch) return status as String;
+    deletionNotice = status == 'LOCAL_DATA_DELETED'
+        ? 'Your account and eligible personal data have been deleted. Required transaction and security records may be retained.'
+        : 'Your deletion request has been accepted. Account access and future automatic recharges are stopped. Personal data deletion will finish after pending payment work is resolved.';
+    await clear();
+    return status as String;
+  }
+
   Future<void> clear() async {
     _epoch++;
     _accessToken = null;
@@ -233,3 +266,4 @@ class FlupFlapSession extends ChangeNotifier {
     await _queueStorage(storage.clear);
   }
 }
+

@@ -3,6 +3,7 @@ import { FlupFlapMarketing, marketingEnabled } from './flupflap/marketing.js';
 import { createMarketingRouter, createMarketingAdminRouter } from './flupflap/marketing-router.js';
 import { createFlupFlapIdentity, loadFlupFlapConfig, type FlupFlapConfig } from './flupflap/auth.js';
 import { FlupFlapIdentityRepository } from './flupflap/repository.js';
+import { FlupFlapSelfServiceDeletion } from './flupflap/self-service-deletion.js';
 import { flupFlapCustomerId } from './flupflap/owner.js';
 import { FlupFlapRecurringRechargeService, recurringRechargeEnabled } from './flupflap/recurring-recharge.js';
 import { createFlupFlapRecurringRechargeRouter } from './flupflap/recurring-recharge-router.js';
@@ -1290,6 +1291,7 @@ export function createApp(options: CreateAppOptions = {}) {
     mobileTopUpConfig.approvedForLiveUse === true && mobileTopUpConfig.liveRechargeEnabled === true &&
     securityConfig.approvedForLiveUse === true && securityConfig.liveMoneyEnabled === true;
   const flupFlap = createFlupFlapIdentity({
+    deletion: databaseEnabled ? new FlupFlapSelfServiceDeletion(prisma) : undefined,
     config: options.flupFlapConfig ?? loadFlupFlapConfig(), repository: flupFlapRepository,
     // FlupFlap may admit approved production guests without changing TiCash guest policy.
     guestError: () => flupFlapProductionAllowed() && guestProxyConfigured && mobileTopUpConfig.enabled === true &&
@@ -1308,6 +1310,21 @@ export function createApp(options: CreateAppOptions = {}) {
     }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
+  if (databaseEnabled && process.env.NODE_ENV !== 'test') {
+    const deletion = new FlupFlapSelfServiceDeletion(prisma);
+    let running = false;
+    const runDeletion = async () => {
+      if (running) return;
+      running = true;
+      try { await deletion.runBatch(25); }
+      catch { console.warn('FlupFlap deletion worker will retry', { code: 'DELETION_WORKER_ERROR' }); }
+      finally { running = false; }
+    };
+    const initial = setTimeout(() => { void runDeletion(); }, 10_000);
+    initial.unref();
+    const timer = setInterval(() => { void runDeletion(); }, 60_000);
+    timer.unref();
+  }
   const marketing = options.flupFlapMarketing ?? (databaseEnabled && marketingEnabled() ? new FlupFlapMarketing(prisma) : undefined);
   app.use('/api/flupflap/marketing', createMarketingRouter({ service: marketing,
     authenticate: flupFlap.authenticate, requireRechargeAllowed: flupFlap.requireRechargeAllowed }));
@@ -2835,3 +2852,4 @@ export function createApp(options: CreateAppOptions = {}) {
   });
   return app;
 }
+

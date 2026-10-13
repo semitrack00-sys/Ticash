@@ -812,6 +812,7 @@ model IdempotencyKey {
 
 // SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
 model FlupFlapCustomer {
+  deletionRequest FlupFlapDeletionRequest?
   referralCode ReferralCode?
   marketingAttribution ReferralAttribution?
   promoter Promoter?
@@ -842,6 +843,18 @@ model FlupFlapCustomer {
   transactions MobileTopUpTransaction[]
   recurringRecharges FlupFlapRecurringRecharge[]
   auditLogs AuditLog[]
+}
+
+model FlupFlapDeletionRequest {
+  id String @id @default(uuid())
+  customerId String @unique
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  lastAttemptAt DateTime?
+  completedAt DateTime?
+  waitReason String?
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  @@index([status, createdAt])
 }
 
 model FlupFlapRecurringRecharge {
@@ -1091,3 +1104,4 @@ model MobileTopUpCountryCatalogCache {
 
   @@index([expiresAt])
 }
+

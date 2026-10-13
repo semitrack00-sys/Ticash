@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { pglitePrisma } from './helpers/pglite-prisma.js';
 import { deleteFlupFlapAccount } from '../src/flupflap/account-deletion.js';
+import { FlupFlapSelfServiceDeletion } from '../src/flupflap/self-service-deletion.js';
+import bcrypt from 'bcryptjs';
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
@@ -69,6 +71,83 @@ async function fixture() {
     maintenanceConfirmed: true };
   return { staff, customer, session, recipient, quote, unused, transaction, schedule, input };
 }
+
+describe('self-service FlupFlap deletion in migrated PostgreSQL', () => {
+  it('accepts a verified request, revokes access, cancels recurrence and erases data automatically', async () => {
+    const f = await fixture(); const control = await fixture();
+    const service = new FlupFlapSelfServiceDeletion(prisma);
+    const accepted = await service.request(f.customer.id, f.customer.passwordHash!, 0);
+    expect(accepted.status).toBe('DELETION_PENDING');
+    expect(await prisma.flupFlapSession.count({ where: { customerId: f.customer.id } })).toBe(0);
+    expect(await prisma.flupFlapPasswordResetToken.count({ where: { customerId: f.customer.id } })).toBe(0);
+    expect(await prisma.flupFlapRecurringRecharge.findUnique({ where: { id: f.schedule.id } })).toMatchObject({ status: 'CANCELLED' });
+    expect(await service.process(f.customer.id)).toMatchObject({ status: 'LOCAL_DATA_DELETED', requestId: accepted.requestId });
+    expect(await prisma.flupFlapCustomer.findUnique({ where: { id: f.customer.id } })).toMatchObject({
+      status: 'DELETED', email: null, phone: null, passwordHash: null, firstName: null, lastName: null,
+    });
+    expect(await prisma.mobileTopUpRecipient.count({ where: { flupFlapCustomerId: f.customer.id } })).toBe(0);
+    expect(await prisma.flupFlapRecurringRecharge.count({ where: { customerId: f.customer.id } })).toBe(0);
+    expect(await prisma.mobileTopUpTransaction.findUnique({ where: { id: f.transaction.id } })).toMatchObject({
+      paymentStatus: 'CAPTURED', status: 'DELIVERED', totalChargeUsd: f.transaction.totalChargeUsd,
+    });
+    expect(await prisma.flupFlapCustomer.findUnique({ where: { id: control.customer.id } })).toEqual(control.customer);
+    expect(await service.process(f.customer.id)).toBeUndefined();
+    expect(await prisma.auditLog.count({ where: { action: 'FLUPFLAP_ACCOUNT_DELETED', entityId: f.customer.id } })).toBe(1);
+  });
+
+  it('persists pending requests across worker restarts and blocks new work until existing payments settle', async () => {
+    const f = await fixture();
+    await prisma.mobileTopUpTransaction.update({ where: { id: f.transaction.id }, data: { status: 'PROCESSING' } });
+    const service = new FlupFlapSelfServiceDeletion(prisma);
+    await service.request(f.customer.id, f.customer.passwordHash!, 0);
+    await service.process(f.customer.id);
+    expect(await prisma.flupFlapDeletionRequest.findUnique({ where: { customerId: f.customer.id } })).toMatchObject({ status: 'PENDING', waitReason: 'PENDING_PAYMENTS' });
+    await expect(prisma.flupFlapSession.create({ data: { customerId: f.customer.id, refreshHash: randomUUID(), expiresAt: new Date() } })).rejects.toThrow();
+    await expect(prisma.mobileTopUpQuote.create({ data: { ...f.unused, id: randomUUID() } })).rejects.toThrow();
+    await expect(prisma.flupFlapCustomer.update({ where: { id: f.customer.id }, data: { status: 'ACTIVE' } })).rejects.toThrow();
+    await expect(prisma.flupFlapRecurringRecharge.update({ where: { id: f.schedule.id }, data: { claimedAt: new Date() } })).rejects.toThrow();
+    await prisma.mobileTopUpTransaction.update({ where: { id: f.transaction.id }, data: { status: 'DELIVERED' } });
+    await new FlupFlapSelfServiceDeletion(prisma).runBatch(100);
+    expect(await prisma.flupFlapCustomer.findUnique({ where: { id: f.customer.id } })).toMatchObject({ status: 'DELETED' });
+  });
+
+  it('does not hide an in-flight recurring charge claim or erase before it drains', async () => {
+    const f = await fixture();
+    await prisma.flupFlapRecurringRecharge.update({ where: { id: f.schedule.id }, data: { claimedAt: new Date() } });
+    const service = new FlupFlapSelfServiceDeletion(prisma);
+    await service.request(f.customer.id, f.customer.passwordHash!, 0);
+    expect(await service.process(f.customer.id)).toMatchObject({ status: 'DELETION_PENDING' });
+    expect(await prisma.flupFlapRecurringRecharge.findUnique({ where: { id: f.schedule.id } })).toMatchObject({ status: 'CANCELLED', claimedAt: expect.any(Date) });
+    await prisma.flupFlapRecurringRecharge.update({ where: { id: f.schedule.id }, data: { claimedAt: null } });
+    expect(await service.process(f.customer.id)).toMatchObject({ status: 'LOCAL_DATA_DELETED' });
+  });
+
+  it('requires the authenticated account password and confirmation; never accepts a target identity in the body', async () => {
+    const f = await fixture();
+    const passwordHash = await bcrypt.hash('Disposable-test-password-123', 4);
+    await prisma.flupFlapCustomer.update({ where: { id: f.customer.id }, data: { passwordHash } });
+    const secret = 'test-only-flupflap-secret-at-least-32-characters';
+    const identity = createFlupFlapIdentity({
+      config: { enabled: true, accessSecret: secret }, repository: new FlupFlapIdentityRepository(prisma),
+      deletion: new FlupFlapSelfServiceDeletion(prisma), accessAllowed: () => true,
+      guestError: () => undefined, audit: async () => {}, emailService: { sendPasswordReset: async () => {} },
+    });
+    const app = express(); app.use(express.json()); app.use('/auth', identity.router);
+    app.use((_error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => { void next; res.status(400).json({ code: 'VALIDATION_ERROR' }); });
+    const token = jwt.sign({ sub: f.customer.id, type: 'access', domain: 'FLUPFLAP', sid: f.session.id, v: 0 }, secret,
+      { algorithm: 'HS256', issuer: 'flupflap-api', audience: 'flupflap-customer', expiresIn: 900 });
+    const body = { password: 'Disposable-test-password-123', confirm: 'DELETE_ACCOUNT' };
+    await request(app).post('/auth/account-deletion').send(body).expect(401);
+    await request(app).post('/auth/account-deletion').set('Authorization', `Bearer ${token}`).send({ ...body, customerId: randomUUID() }).expect(400);
+    await request(app).post('/auth/account-deletion').set('Authorization', `Bearer ${token}`).send({ ...body, password: 'Incorrect-password' }).expect(403);
+    expect(await prisma.flupFlapDeletionRequest.count({ where: { customerId: f.customer.id } })).toBe(0);
+    const response = await request(app).post('/auth/account-deletion').set('Authorization', `Bearer ${token}`).send(body).expect(200);
+    expect(response.body.status).toBe('LOCAL_DATA_DELETED');
+    expect(JSON.stringify(response.body)).not.toContain(f.customer.email);
+    await request(app).get('/auth/me').set('Authorization', `Bearer ${token}`).expect(401);
+    await request(app).post('/auth/login').send({ email: f.customer.email, password: body.password }).expect(401);
+  });
+});
 
 describe('controlled FlupFlap account erasure in migrated PostgreSQL', () => {
   it('preview does not mutate identities, sessions or schedules', async () => {
@@ -292,3 +371,4 @@ describe('controlled FlupFlap account erasure in migrated PostgreSQL', () => {
     } finally { await restored.$disconnect(); await restoredDb.close(); }
   }, 60000);
 });
+

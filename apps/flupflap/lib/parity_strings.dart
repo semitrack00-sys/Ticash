@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'privacy_strings.dart';
+import 'self_deletion_strings.dart';
 import 'package:ticash/localization/app_localizations.dart';
 
 extension FlupFlapTranslations on BuildContext {
   String ft(String key, [Map<String, String> values = const {}]) {
     var text =
+        selfDeletionStrings[appLanguage.code]?[key] ??
         privacyStrings[appLanguage.code]?[key] ??
         flupFlapStrings[appLanguage.code]?[key] ??
         flupFlapStrings['en']?[key] ??

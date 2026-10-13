@@ -40,7 +40,7 @@ Future<(FlupFlapSession, DeletionAdapter, MemoryStorage)> fixture() async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('signed-in deletion requires password and explicit confirmation without opening email', (tester) async {
-    final (session, adapter, storage) = await fixture();
+    final (session, adapter, storage) = (await tester.runAsync(fixture))!;
     await tester.pumpWidget(privacyShell(Scaffold(body: PrivacyActions(session: session))));
     await tester.tap(find.text('Delete my account'));
     await tester.pumpAndSettle();
@@ -51,7 +51,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('deletion-confirmation')));
     await tester.pump();
     await tester.ensureVisible(button);
-    await tester.tap(button);
+    await tester.runAsync(() async {
+      await tester.tap(button);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
     await tester.pumpAndSettle();
     final sent = adapter.requests.where((r) => r.path.endsWith('/account-deletion')).single;
     expect(sent.data, {'password': 'Disposable-password', 'confirm': 'DELETE_ACCOUNT'});

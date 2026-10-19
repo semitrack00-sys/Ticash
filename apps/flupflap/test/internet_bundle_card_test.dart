@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'parity_widget_test.dart' show shell;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/internet_bundle_card.dart';
@@ -17,6 +19,14 @@ MobileTopUpProduct plan(int days, {bool structured = true}) => MobileTopUpProduc
 );
 
 void main() {
+  setUpAll(() async {
+    final root = Platform.environment['FLUTTER_ROOT'];
+    if (Platform.environment['CAPTURE_BUNDLE_SCREENSHOTS'] == '1' && root != null) {
+      final font = File('$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf');
+      await (FontLoader('Roboto')..addFont(Future.value(
+          ByteData.sublistView(await font.readAsBytes())))).load();
+    }
+  });
   for (final width in [360.0, 412.0, 1024.0]) {
     for (final scale in [1.0, 2.0]) {
       testWidgets('catalog cards at $width with text scale $scale', (tester) async {
@@ -26,7 +36,7 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
         String? selected;
         final boundary = GlobalKey();
-        await tester.pumpWidget(MaterialApp(home: MediaQuery(
+        await tester.pumpWidget(shell(MediaQuery(
           data: MediaQueryData(size: Size(width, 1600),
               textScaler: TextScaler.linear(scale)),
           child: Scaffold(backgroundColor: Colors.white,
@@ -51,21 +61,21 @@ void main() {
         expect(find.text(plan(7).description!), findsOneWidget);
         expect(tester.takeException(), isNull);
         if (Platform.environment['CAPTURE_BUNDLE_SCREENSHOTS'] == '1') {
+          await tester.runAsync(() async {
           final image = await (boundary.currentContext!.findRenderObject()
               as RenderRepaintBoundary).toImage();
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await tester.runAsync(() async {
             final file = File('build/bundle-screenshots/cards-$width-$scale.png');
             await file.parent.create(recursive: true);
             await file.writeAsBytes(bytes!.buffer.asUint8List());
-          });
           image.dispose();
+          });
         }
       });
     }
   }
   testWidgets('unstructured description does not invent data or validity', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: InternetBundleCard(
+    await tester.pumpWidget(shell(Scaffold(body: InternetBundleCard(
       product: plan(7, structured: false), selected: false,
       onSelected: null, detailLabel: (value) => value,
     ))));

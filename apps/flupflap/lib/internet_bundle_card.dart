@@ -124,20 +124,20 @@ class InternetBundleCard extends StatelessWidget {
               blurRadius: 8, offset: Offset(0, 2))],
         ),
         child: LayoutBuilder(builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 560 &&
+          final wide = constraints.maxWidth >= 280 &&
               MediaQuery.textScalerOf(context).scale(14) <= 20;
           if (wide) {
             return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              SizedBox(width: 120, child: summary()),
-              const SizedBox(width: 16),
+              SizedBox(width: constraints.maxWidth >= 560 ? 120 : 70, child: summary()),
+              const SizedBox(width: 8),
               Expanded(child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: const BoxDecoration(border: Border(
                     left: BorderSide(color: Color(0xFFE7EBF0)))),
                 child: benefits(),
               )),
-              const SizedBox(width: 16),
-              SizedBox(width: 112, child: purchase()),
+              const SizedBox(width: 8),
+              SizedBox(width: constraints.maxWidth >= 560 ? 112 : 88, child: purchase()),
             ]);
           }
           // At phone widths retain allowance/price hierarchy without squeezing
@@ -148,7 +148,7 @@ class InternetBundleCard extends StatelessWidget {
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Expanded(child: summary()),
                 const SizedBox(width: 14),
-                SizedBox(width: 112, child: purchase()),
+                SizedBox(width: constraints.maxWidth >= 560 ? 112 : 88, child: purchase()),
               ])
             else ...[summary(), const SizedBox(height: 12), purchase()],
             const Padding(padding: EdgeInsets.symmetric(vertical: 8),

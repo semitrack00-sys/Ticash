@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/widgets/mobile_operator_logo.dart';
 import 'billing_countries.dart';
+import 'internet_bundle_card.dart';
 import 'checkout_contract.dart';
 import 'country_flag.dart';
 import 'native_actions.dart';
@@ -278,6 +279,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     }
     return code;
   }
+
   // Translate our shared model's labels, not the provider's product description.
   String productDetail(String value) => value.replaceAllMapped(
     RegExp(
@@ -352,27 +354,87 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
 
   Widget product() {
     final kinds = j.products.map((p) => p.kind.name.toUpperCase()).toSet();
-    return card([
-      Text(
-        context.ft('operatorProduct'),
-        style: Theme.of(context).textTheme.headlineSmall,
-      ),
+    final children = <Widget>[
+      if (!j.internet)
+        Text(
+          context.ft('operatorProduct'),
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
       const SizedBox(height: 16),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final internet in [false, true])
-            ChoiceChip(
-              label: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME')),
-              selected: j.internet == internet,
-              onSelected: j.busy || j.locked ? null : (_) {
-                j.selectService(internet);
-                amount.clear();
-              },
-            ),
-        ],
-      ),
+      if (j.internet)
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: InternetBundleCard.line),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              for (final internet in [false, true])
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => ChoiceChip(
+                      showCheckmark: false,
+                      labelPadding: EdgeInsets.zero,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      label: SizedBox(
+                        width: (constraints.maxWidth - 32)
+                            .clamp(0.0, double.infinity)
+                            .toDouble(),
+                        child: Text(
+                          context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                          softWrap: true,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      labelStyle: const TextStyle(
+                        fontSize: 13,
+                        color: InternetBundleCard.navy,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      selectedColor: const Color(0xFFF2F6FA),
+                      backgroundColor: Colors.white,
+                      side: BorderSide.none,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      selected: j.internet == internet,
+                      onSelected: j.busy || j.locked
+                          ? null
+                          : (_) {
+                              j.selectService(internet);
+                              amount.clear();
+                            },
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        )
+      else
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final internet in [false, true])
+              ChoiceChip(
+                label: Text(
+                  context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                ),
+                selected: j.internet == internet,
+                onSelected: j.busy || j.locked
+                    ? null
+                    : (_) {
+                        j.selectService(internet);
+                        amount.clear();
+                      },
+              ),
+          ],
+        ),
       const SizedBox(height: 12),
       if (j.serviceOperators.isEmpty && !j.busy)
         Text(context.ft(j.internet ? 'noInternetOperators' : 'noProducts')),
@@ -405,7 +467,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                 amount.clear();
               },
       ),
-      if (j.operator != null) ...[
+      if (j.operator != null && !j.internet) ...[
         const SizedBox(height: 12),
         Row(
           children: [
@@ -420,60 +482,92 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           padding: const EdgeInsets.all(12),
           child: Text(context.ft('noProducts')),
         ),
-      for (final kind in kinds) ...[
-        Padding(
-          padding: const EdgeInsets.only(top: 16, bottom: 8),
-          child: Text(
-            context.ft(kind),
-            style: const TextStyle(fontWeight: FontWeight.w800),
+      if (j.internet) ...[
+        const SizedBox(height: 22),
+        Text(
+          context.ft('bundleHeading'),
+          style: const TextStyle(
+            fontSize: 25,
+            fontWeight: FontWeight.w800,
+            color: InternetBundleCard.navy,
           ),
         ),
-        for (final p in j.products.where(
-          (p) => p.kind.name.toUpperCase() == kind,
-        ))
+        const SizedBox(height: 5),
+        Text(
+          context.ft('chooseBundle'),
+          style: const TextStyle(fontSize: 15, color: Color(0xFF596B80)),
+        ),
+        const SizedBox(height: 18),
+        for (final p in j.products)
+          InternetBundleCard(
+            product: p,
+            selected: j.product?.id == p.id,
+            onSelected: j.busy || j.locked
+                ? null
+                : () async {
+                    j.selectProduct(p);
+                    amount.clear();
+                    if (p.amountType == 'FIXED' && j.canReview) {
+                      await j.review();
+                    }
+                  },
+          ),
+      ],
+      if (!j.internet)
+        for (final kind in kinds) ...[
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                backgroundColor: j.product?.id == p.id
-                    ? const Color(0xFFE0EEFF)
-                    : null,
-              ),
-              onPressed: j.busy || j.locked
-                  ? null
-                  : () {
-                      j.selectProduct(p);
-                      amount.clear();
-                    },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(child: Text(p.name)),
-                        if (j.product?.id == p.id)
-                          const Icon(Icons.check_circle),
-                      ],
-                    ),
-                    if (p.description != null) Text(p.description!),
-                    if (p.amountType == 'FIXED')
-                      Text(money(p.price, p.priceCurrency)),
-                    if (p.amountType == 'RANGE')
-                      Text(
-                        '${context.ft('minimum')}: ${p.minimumAmount} ${p.priceCurrency} · ${context.ft('maximum')}: ${p.maximumAmount} ${p.priceCurrency}',
+            padding: const EdgeInsets.only(top: 16, bottom: 8),
+            child: Text(
+              context.ft(kind),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          for (final p in j.products.where(
+            (p) => p.kind.name.toUpperCase() == kind,
+          ))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: j.product?.id == p.id
+                      ? const Color(0xFFE0EEFF)
+                      : null,
+                ),
+                onPressed: j.busy || j.locked
+                    ? null
+                    : () {
+                        j.selectProduct(p);
+                        amount.clear();
+                      },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: Text(p.name)),
+                          if (j.product?.id == p.id)
+                            const Icon(Icons.check_circle),
+                        ],
                       ),
-                    for (final benefit in p.benefits)
-                      Text(productDetail(benefit)),
-                    if (p.validityLabel != null)
-                      Text(productDetail(p.validityLabel!)),
-                  ],
+                      if (p.description != null) Text(p.description!),
+                      if (p.amountType == 'FIXED')
+                        Text(money(p.price, p.priceCurrency)),
+                      if (p.amountType == 'RANGE')
+                        Text(
+                          '${context.ft('minimum')}: ${p.minimumAmount} ${p.priceCurrency} · ${context.ft('maximum')}: ${p.maximumAmount} ${p.priceCurrency}',
+                        ),
+                      for (final benefit in p.benefits)
+                        Text(productDetail(benefit)),
+                      if (p.validityLabel != null)
+                        Text(productDetail(p.validityLabel!)),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
       if (j.product?.amountType == 'RANGE')
         TextField(
           key: const ValueKey('range-amount'),
@@ -544,7 +638,13 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         ),
       ),
       button('continue', j.canReview ? j.review : null),
-    ]);
+    ];
+    return j.internet
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: children,
+          )
+        : card(children);
   }
 
   Widget review() {
@@ -677,9 +777,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         const SizedBox(height: 18),
         Text(
           context.ft('recurringTitle'),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
         Text(context.ft('recurringReviewHelp')),
@@ -866,9 +966,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         const Divider(),
         Text(
           context.ft('recurringTitle'),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
         if (recurring == null)
@@ -876,7 +976,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         else ...[
           row(
             'recurringFrequency',
-            context.ft('everyDays', {'days': recurring.intervalDays.toString()}),
+            context.ft('everyDays', {
+              'days': recurring.intervalDays.toString(),
+            }),
           ),
           row('recurringNext', recurring.nextRunAt.toLocal().toString()),
           Text(context.ft('recurringStatus${recurring.status}')),
@@ -918,29 +1020,35 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           key: ValueKey('receipt-delete-${r.id}'),
           icon: const Icon(Icons.delete_outline),
           label: Text(context.ft('Delete receipt')),
-          onPressed: j.busy ? null : () async {
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (dialogContext) => AlertDialog(
-                title: Text(context.ft('Delete receipt')),
-                content: Text(context.ft('This removes the receipt from your history.')),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: Text(context.ft('Cancel')),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    child: Text(context.ft('Delete')),
-                  ),
-                ],
-              ),
-            );
-            if (confirmed == true && r.id != null) {
-              await j.client.removeReceipt(r.id!);
-              await j.loadHistory();
-            }
-          },
+          onPressed: j.busy
+              ? null
+              : () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: Text(context.ft('Delete receipt')),
+                      content: Text(
+                        context.ft(
+                          'This removes the receipt from your history.',
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: Text(context.ft('Cancel')),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: Text(context.ft('Delete')),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true && r.id != null) {
+                    await j.client.removeReceipt(r.id!);
+                    await j.loadHistory();
+                  }
+                },
         ),
       if (historical && r.terminal)
         button(
@@ -973,6 +1081,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         if (!didPop) goBack();
       },
       child: Scaffold(
+        backgroundColor: j.internet && j.step == RechargeStep.product
+            ? Colors.white
+            : null,
         appBar: AppBar(
           title: Text(context.ft(widget.history ? 'history' : 'recharge')),
           automaticallyImplyLeading: widget.history,
@@ -999,7 +1110,20 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                     }
                   },
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              padding: EdgeInsets.fromLTRB(
+                j.internet &&
+                        j.step == RechargeStep.product &&
+                        MediaQuery.sizeOf(context).width >= 760
+                    ? 32
+                    : 16,
+                8,
+                j.internet &&
+                        j.step == RechargeStep.product &&
+                        MediaQuery.sizeOf(context).width >= 760
+                    ? 32
+                    : 16,
+                28,
+              ),
               children: [
                 if (j.payments?.mode == CheckoutMode.mock ||
                     j.payments?.mode == CheckoutMode.stripeSandbox)

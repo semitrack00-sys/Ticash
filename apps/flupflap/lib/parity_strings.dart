@@ -20,6 +20,11 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "internetPlan": "Internet Bundle",
+    "bundleHeading": "Internet & Bundles",
+    "chooseBundle": "Choose a plan that fits your needs",
+    "buyNow": "Buy Now",
+    "providerDescription": "Plan details",
     "internetBundles": "Internet & bundles",
     "internetBundlesHelp": "Choose a destination and operator to see available plans.",
     "noInternetOperators": "Internet bundles are not available for this destination.",
@@ -315,6 +320,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Email",
   },
   "ht": {
+    "internetPlan": "Pake entènèt",
+    "bundleHeading": "Entènèt ak pake",
+    "chooseBundle": "Chwazi yon plan ki adapte ak bezwen ou",
+    "buyNow": "Achte kounye a",
+    "providerDescription": "Detay plan an",
     "internetBundles": "Entènèt ak pake",
     "internetBundlesHelp": "Chwazi yon destinasyon ak operatè pou wè pake ki disponib yo.",
     "noInternetOperators": "Pa gen pake entènèt disponib pou destinasyon sa a.",
@@ -603,6 +613,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Imèl",
   },
   "fr": {
+    "internetPlan": "Forfait Internet",
+    "bundleHeading": "Internet et forfaits",
+    "chooseBundle": "Choisissez un forfait adapté à vos besoins",
+    "buyNow": "Acheter",
+    "providerDescription": "Détails du forfait",
     "internetBundles": "Internet et forfaits",
     "internetBundlesHelp": "Choisissez une destination et un opérateur pour voir les forfaits disponibles.",
     "noInternetOperators": "Aucun forfait internet disponible pour cette destination.",
@@ -897,6 +912,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "E-mail",
   },
   "es": {
+    "internetPlan": "Paquete de Internet",
+    "bundleHeading": "Internet y paquetes",
+    "chooseBundle": "Elige un plan que se adapte a tus necesidades",
+    "buyNow": "Comprar",
+    "providerDescription": "Detalles del plan",
     "internetBundles": "Internet y paquetes",
     "internetBundlesHelp": "Elige un destino y operador para ver los planes disponibles.",
     "noInternetOperators": "No hay paquetes de internet para este destino.",
@@ -1184,6 +1204,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Correo electrónico",
   },
   "pt": {
+    "internetPlan": "Pacote de Internet",
+    "bundleHeading": "Internet e pacotes",
+    "chooseBundle": "Escolha um plano que atenda às suas necessidades",
+    "buyNow": "Comprar",
+    "providerDescription": "Detalhes do plano",
     "internetBundles": "Internet e pacotes",
     "internetBundlesHelp": "Escolha um destino e uma operadora para ver os planos disponíveis.",
     "noInternetOperators": "Não há pacotes de internet para este destino.",

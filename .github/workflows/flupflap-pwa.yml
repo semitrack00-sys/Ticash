@@ -28,8 +28,48 @@ jobs:
           python-version: '3.12'
       - run: python3 -m pip install pillow==11.3.0
       - run: flutter pub get
+      - name: Format bundle presentation sources
+        run: dart format lib/internet_bundle_card.dart lib/recharge_screen.dart test/internet_bundle_card_test.dart test/bundle_screenshots_test.dart test/visual_test_fonts.dart
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-bundle-formatted-sources
+          path: |
+            apps/flupflap/lib/internet_bundle_card.dart
+            apps/flupflap/lib/recharge_screen.dart
+            apps/flupflap/test/internet_bundle_card_test.dart
+            apps/flupflap/test/bundle_screenshots_test.dart
+            apps/flupflap/test/visual_test_fonts.dart
+          retention-days: 14
       - run: flutter analyze
-      - run: flutter test
+      - name: Prepare visual test fonts
+        run: |
+          mkdir -p /tmp/flupflap-test-fonts
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf /tmp/flupflap-test-fonts/Roboto-Regular.ttf
+          cp "$FLUTTER_ROOT/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf" /tmp/flupflap-test-fonts/materialicons-regular.otf
+      - name: Capture original bundle screen for comparison
+        env:
+          FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/apps/flupflap/build/bundle-screenshots
+          FLUPFLAP_TEST_FONT: /tmp/flupflap-test-fonts/Roboto-Regular.ttf
+          BUNDLE_SCREENSHOT_PREFIX: before
+        run: |
+          cp lib/recharge_screen.dart /tmp/recharge-screen-current.dart
+          trap 'cp /tmp/recharge-screen-current.dart lib/recharge_screen.dart' EXIT
+          git fetch origin 50b06f3027b2143e664d66679acdfd511ee6ca34 --depth=1
+          git show 50b06f3027b2143e664d66679acdfd511ee6ca34:apps/flupflap/lib/recharge_screen.dart > lib/recharge_screen.dart
+          flutter test test/bundle_screenshots_test.dart
+      - name: Run tests and capture redesigned bundle screen
+        env:
+          VERIFY_BUNDLE_GOLDENS: '1'
+          FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/apps/flupflap/build/bundle-screenshots
+          FLUPFLAP_TEST_FONT: /tmp/flupflap-test-fonts/Roboto-Regular.ttf
+        run: flutter test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-bundle-screenshots
+          path: apps/flupflap/build/bundle-screenshots/
+          if-no-files-found: warn
+          retention-days: 14
       - run: node --test tool/pwa.test.mjs
       - run: bash tool/build_pwa.sh
       - name: Install fixture-only browser tooling

@@ -29,7 +29,29 @@ jobs:
       - run: python3 -m pip install pillow==11.3.0
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test
+      - name: Capture original bundle screen for comparison
+        env:
+          FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/apps/flupflap/build/bundle-screenshots
+          FLUPFLAP_TEST_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          BUNDLE_SCREENSHOT_PREFIX: before
+        run: |
+          cp lib/recharge_screen.dart /tmp/recharge-screen-current.dart
+          trap 'cp /tmp/recharge-screen-current.dart lib/recharge_screen.dart' EXIT
+          git fetch origin 50b06f3027b2143e664d66679acdfd511ee6ca34 --depth=1
+          git show 50b06f3027b2143e664d66679acdfd511ee6ca34:apps/flupflap/lib/recharge_screen.dart > lib/recharge_screen.dart
+          flutter test test/bundle_screenshots_test.dart
+      - name: Run tests and capture redesigned bundle screen
+        env:
+          FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/apps/flupflap/build/bundle-screenshots
+          FLUPFLAP_TEST_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+        run: flutter test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-bundle-screenshots
+          path: apps/flupflap/build/bundle-screenshots/
+          if-no-files-found: warn
+          retention-days: 14
       - run: node --test tool/pwa.test.mjs
       - run: bash tool/build_pwa.sh
       - name: Install fixture-only browser tooling

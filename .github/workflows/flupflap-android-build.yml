@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/flupflap-android-artifacts
+      - codex/flupflap-minimal-bundles-132
     paths:
       - 'apps/flupflap/**'
       - 'apps/mobile/**'

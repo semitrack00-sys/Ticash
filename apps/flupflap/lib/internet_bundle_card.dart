@@ -123,6 +123,7 @@ class InternetBundleCard extends StatelessWidget {
           boxShadow: const [BoxShadow(color: Color(0x080F2549),
               blurRadius: 8, offset: Offset(0, 2))],
         ),
+        child: Material(type: MaterialType.transparency,
         child: LayoutBuilder(builder: (context, constraints) {
           final wide = constraints.maxWidth >= 280 &&
               MediaQuery.textScalerOf(context).scale(14) <= 20;
@@ -155,7 +156,7 @@ class InternetBundleCard extends StatelessWidget {
                 child: Divider(color: Color(0xFFE7EBF0), height: 1)),
             benefits(),
           ]);
-        }),
+        })),
       ),
     );
   }

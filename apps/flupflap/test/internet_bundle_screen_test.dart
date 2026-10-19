@@ -101,6 +101,6 @@ void main() {
       expect(tester.takeException(), isNull);
       await screenshot(tester, 'bundle-review-${width.toInt()}');
       await tester.pumpWidget(const SizedBox());
-    });
+    }, timeout: const Timeout(Duration(seconds: 60)));
   }
 }

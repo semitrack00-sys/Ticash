@@ -40,6 +40,16 @@ void main() {
       expect(details.description, description);
     }
   });
+  test('Reloadly denomination name is the original provider description', () {
+    final text = '7GB data - 2GB Bonus Data - Unlimited WhatsApp - 7 Days';
+    final details = BundlePresentation(MobileTopUpProduct.fromJson({...offer(),
+      'name': text, 'description': null, 'benefits': [], 'validity': null}));
+    expect(details.allowance, '7GB');
+    expect(details.bonus, '2GB Bonus Data');
+    expect(details.validity, '7 Days');
+    expect(details.description, text);
+    expect(details.benefits, text.split(' - '));
+  });
   test('complete provider clauses can be extracted without adding allowances', () {
     final details = BundlePresentation(MobileTopUpProduct.fromJson({...offer(),
       'benefits': [], 'validity': null,

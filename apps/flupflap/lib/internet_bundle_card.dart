@@ -8,8 +8,8 @@ import 'parity_strings.dart';
 class BundlePresentation {
   BundlePresentation(MobileTopUpProduct product)
       : title = product.name,
-        description = product.description?.trim(),
-        benefits = product.benefits,
+        description = (product.description ?? product.name).trim(),
+        benefits = [...product.benefits],
         validity = product.validityLabel {
     final explicitData = product.benefits.where((b) => RegExp(
       r'^(?:\d+(?:\.\d+)?\s*(?:GB|MB|TB)|Unlimited)\s+data$',
@@ -21,6 +21,11 @@ class BundlePresentation {
       );
     }
     final clauses = (description ?? '').split(RegExp(r'\s+-\s+|[\n;]'));
+    // Reloadly currently puts denomination descriptions in `name`. Preserve
+    // every clause verbatim when separators are explicit; no summarization.
+    if (benefits.isEmpty && clauses.length > 1) {
+      benefits.addAll(clauses.map((s) => s.trim()).where((s) => s.isNotEmpty));
+    }
     final dataClauses = clauses.where((s) => RegExp(
       r'^\s*\d+(?:\.\d+)?\s*(?:GB|MB|TB)\s+(?:any use\s+)?data\s*$',
       caseSensitive: false,
@@ -67,7 +72,7 @@ class InternetBundleCard extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(color: const Color(0xFFF2F6FA),
         borderRadius: BorderRadius.circular(10)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(details.allowance ?? context.ft('BUNDLE'),
           style: TextStyle(fontSize: details.allowance == null ? 16 : 26,
             height: 1.15, fontWeight: FontWeight.w800, color: navy)),
@@ -86,8 +91,9 @@ class InternetBundleCard extends StatelessWidget {
         ],
       ]),
     );
-    final center = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(details.title, style: const TextStyle(fontSize: 15,
+    final center = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(details.title == details.description && details.benefits.isNotEmpty
+        ? context.ft('BUNDLE') : details.title, style: const TextStyle(fontSize: 15,
         height: 1.25, fontWeight: FontWeight.w700, color: navy)),
       if (details.benefits.isNotEmpty) const SizedBox(height: 7),
       for (final benefit in details.benefits)
@@ -101,7 +107,7 @@ class InternetBundleCard extends StatelessWidget {
           ])),
       if (details.description?.isNotEmpty == true)
         Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
+          child: Material(color: Colors.transparent, child: ExpansionTile(
             key: ValueKey('bundle-description-${product.id}'),
             tilePadding: EdgeInsets.zero, childrenPadding: EdgeInsets.zero,
             dense: true, visualDensity: VisualDensity.compact,
@@ -111,9 +117,9 @@ class InternetBundleCard extends StatelessWidget {
             children: [Align(alignment: Alignment.centerLeft,
               child: Text(details.description!, style: const TextStyle(
                 fontSize: 13, height: 1.4, color: navy)))],
-          )),
+          ))),
     ]);
-    final right = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    final right = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Text(product.amountType == 'FIXED'
         ? '${product.priceCurrency == 'USD' ? '\$' : ''}${product.price.toStringAsFixed(2)}'
         : '${product.minimumAmount}–${product.maximumAmount}',
@@ -142,10 +148,10 @@ class InternetBundleCard extends StatelessWidget {
           boxShadow: const [BoxShadow(color: Color(0x080B2447),
             blurRadius: 8, offset: Offset(0, 2))]),
         child: LayoutBuilder(builder: (context, constraints) {
-          // Three columns on wide layouts. On phones keep allowance/price
-          // together and let the complete benefits use the width below.
+          // Keep the reference's three sections at normal text sizes; stack
+          // benefits below allowance/price for very narrow or large-text views.
           if (constraints.maxWidth < 280 || scale > 1.4) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Expanded(child: left),
                 const SizedBox(width: 12),
@@ -156,13 +162,17 @@ class InternetBundleCard extends StatelessWidget {
               center,
             ]);
           }
-          return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch,
+          return Row(crossAxisAlignment: CrossAxisAlignment.start,
             children: [SizedBox(width: constraints.maxWidth < 560 ? 80 : 145, child: left),
-              const VerticalDivider(width: 16, thickness: 1, color: line),
-              Expanded(child: center),
-              const VerticalDivider(width: 16, thickness: 1, color: line),
-              SizedBox(width: constraints.maxWidth < 560 ? 86 : 120, child: Center(child: right)),
-            ]));
+              const SizedBox(width: 8),
+              Expanded(child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: const BoxDecoration(border: Border(
+                  left: BorderSide(color: line), right: BorderSide(color: line))),
+                child: center)),
+              const SizedBox(width: 8),
+              SizedBox(width: constraints.maxWidth < 560 ? 86 : 120, child: right),
+            ]);
         }),
       ));
   }

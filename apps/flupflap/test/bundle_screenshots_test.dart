@@ -13,8 +13,11 @@ void main() {
   setUpAll(() async {
     final font = Platform.environment['FLUPFLAP_TEST_FONT'];
     if (font != null) {
-      await (FontLoader('Roboto')..addFont(Future.value(
-        ByteData.sublistView(File(font).readAsBytesSync())))).load();
+      for (final entry in [('Roboto', font),
+        ('MaterialIcons', '${File(font).parent.path}/materialicons-regular.otf')]) {
+        await (FontLoader(entry.$1)..addFont(Future.value(
+          ByteData.sublistView(File(entry.$2).readAsBytesSync())))).load();
+      }
     }
   });
   for (final size in [const Size(360, 900), const Size(412, 915), const Size(1024, 1536)]) {

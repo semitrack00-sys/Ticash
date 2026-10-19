@@ -359,6 +359,35 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 16),
+      if (j.internet)
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(color: Colors.white,
+            border: Border.all(color: InternetBundleCard.line),
+            borderRadius: BorderRadius.circular(12)),
+          child: Row(children: [
+            for (final internet in [false, true])
+              Expanded(child: ChoiceChip(
+                showCheckmark: false,
+                avatar: Icon(internet ? Icons.language : Icons.call_outlined,
+                  size: 18, color: InternetBundleCard.navy),
+                label: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                  textAlign: TextAlign.center),
+                labelStyle: const TextStyle(color: InternetBundleCard.navy,
+                  fontWeight: FontWeight.w700),
+                selectedColor: const Color(0xFFF2F6FA),
+                backgroundColor: Colors.white,
+                side: BorderSide.none,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                selected: j.internet == internet,
+                onSelected: j.busy || j.locked ? null : (_) {
+                  j.selectService(internet);
+                  amount.clear();
+                },
+              )),
+          ]),
+        )
+      else
       Wrap(
         spacing: 8,
         runSpacing: 8,

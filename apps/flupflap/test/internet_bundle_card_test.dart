@@ -7,6 +7,7 @@ import 'package:ticash/models/mobile_top_up.dart';
 import 'parity_widget_test.dart' show shell, press, capture;
 import 'checkout_parity_test.dart' show fixture;
 import 'airtime_selection_test.dart' show loadProducts;
+import 'visual_test_fonts.dart';
 
 Map<String, dynamic> offer({int days = 7}) => {
   'id': 'bundle-$days',
@@ -26,7 +27,6 @@ Map<String, dynamic> offer({int days = 7}) => {
   'validity': {'quantity': days, 'unit': 'DAY'},
 };
 
-import 'visual_test_fonts.dart';
 
 void main() {
   setUpAll(loadVisualTestFonts);

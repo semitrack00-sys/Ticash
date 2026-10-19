@@ -20,6 +20,11 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "internetBundlesTitle": "Internet & Bundles",
+    "chooseBundlePlan": "Choose a plan that fits your needs",
+    "bundlePlan": "Bundle",
+    "providerDescription": "Provider description",
+    "buyNow": "Buy Now",
     "internetBundles": "Internet & bundles",
     "internetBundlesHelp": "Choose a destination and operator to see available plans.",
     "noInternetOperators": "Internet bundles are not available for this destination.",

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/widgets/mobile_operator_logo.dart';
 import 'billing_countries.dart';
+import 'internet_bundle_card.dart';
 import 'checkout_contract.dart';
 import 'country_flag.dart';
 import 'native_actions.dart';
@@ -352,8 +353,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
 
   Widget product() {
     final kinds = j.products.map((p) => p.kind.name.toUpperCase()).toSet();
-    return card([
-      Text(
+    final children = <Widget>[
+      if (!j.internet) Text(
         context.ft('operatorProduct'),
         style: Theme.of(context).textTheme.headlineSmall,
       ),
@@ -405,7 +406,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                 amount.clear();
               },
       ),
-      if (j.operator != null) ...[
+      if (j.operator != null && !j.internet) ...[
         const SizedBox(height: 12),
         Row(
           children: [
@@ -420,7 +421,26 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           padding: const EdgeInsets.all(12),
           child: Text(context.ft('noProducts')),
         ),
-      for (final kind in kinds) ...[
+      if (j.internet) ...[
+        const SizedBox(height: 20),
+        Text(context.ft('internetBundlesTitle'), style: const TextStyle(
+            color: InternetBundleCard.navy, fontSize: 24, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        Text(context.ft('chooseBundlePlan'), style: const TextStyle(
+            color: InternetBundleCard.navy, fontSize: 14)),
+        const SizedBox(height: 16),
+        for (final p in j.products)
+          InternetBundleCard(
+            product: p,
+            selected: j.product?.id == p.id,
+            detailLabel: productDetail,
+            onSelected: j.busy || j.locked ? null : () {
+              j.selectProduct(p);
+              amount.clear();
+            },
+          ),
+      ],
+      if (!j.internet) for (final kind in kinds) ...[
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 8),
           child: Text(
@@ -544,7 +564,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         ),
       ),
       button('continue', j.canReview ? j.review : null),
-    ]);
+    ];
+    return j.internet
+        ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)
+        : card(children);
   }
 
   Widget review() {
@@ -973,6 +996,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         if (!didPop) goBack();
       },
       child: Scaffold(
+        backgroundColor: j.internet && j.step == RechargeStep.product
+            ? Colors.white : null,
         appBar: AppBar(
           title: Text(context.ft(widget.history ? 'history' : 'recharge')),
           automaticallyImplyLeading: widget.history,
@@ -1058,3 +1083,4 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     ),
   );
 }
+

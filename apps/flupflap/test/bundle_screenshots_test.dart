@@ -1,7 +1,7 @@
 // Visual QA with provider-shaped fixtures only; no live purchase or recharge.
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/recharge_screen.dart';
 import 'package:ticash/models/mobile_top_up.dart';
@@ -9,26 +9,10 @@ import 'checkout_parity_test.dart' show fixture;
 import 'airtime_selection_test.dart' show loadProducts;
 import 'parity_widget_test.dart' show shell, capture;
 
+import 'visual_test_fonts.dart';
+
 void main() {
-  setUpAll(() async {
-    final font = Platform.environment['FLUPFLAP_TEST_FONT'];
-    if (font != null) {
-      for (final entry in [
-        ('Roboto', font),
-        (
-          'MaterialIcons',
-          '${File(font).parent.path}/materialicons-regular.otf',
-        ),
-      ]) {
-        await (FontLoader(entry.$1)..addFont(
-              Future.value(
-                ByteData.sublistView(File(entry.$2).readAsBytesSync()),
-              ),
-            ))
-            .load();
-      }
-    }
-  });
+  setUpAll(loadVisualTestFonts);
   for (final size in [
     const Size(360, 900),
     const Size(412, 915),
@@ -53,24 +37,24 @@ void main() {
             {
               'id': 'fixture-${item.$3}',
               'operatorId': 9,
-              'name': '${item.$1}GB data - ${item.$1}GB Bonus Data - Unlimited WhatsApp - ${item.$2} Days',
+              'name':
+                  '${item.$1}GB data - ${item.$1}GB Bonus Data - Unlimited WhatsApp - ${item.$2} Days',
               'kind': 'BUNDLE',
               'price': item.$3,
               'priceCurrency': 'USD',
               'deliveredCurrency': 'HTG',
               'amountType': 'FIXED',
-
             },
           {
             'id': 'fixture-mega',
             'operatorId': 9,
-            'name': "Unlimited on-net calls - 30 mins Natcom/US/CAN - 70GB any use Data - 50GB D'Music - 50GB PlayGO - 50GB BiP - 30 DAY",
+            'name':
+                "Unlimited on-net calls - 30 mins Natcom/US/CAN - 70GB any use Data - 50GB D'Music - 50GB PlayGO - 50GB BiP - 30 DAY",
             'kind': 'BUNDLE',
             'price': 36,
             'priceCurrency': 'USD',
             'deliveredCurrency': 'HTG',
             'amountType': 'FIXED',
-
           },
         ]);
       await t.runAsync(() => loadProducts(j));
@@ -121,6 +105,20 @@ void main() {
       final prefix =
           Platform.environment['BUNDLE_SCREENSHOT_PREFIX'] ?? 'after';
       await capture(t, '$prefix-bundles-${size.width.toInt()}');
+      if (prefix == 'after' && Platform.environment['VERIFY_BUNDLE_GOLDENS'] == '1') {
+        final boundary = t.allRenderObjects.whereType<RenderRepaintBoundary>()
+            .firstWhere((r) => r.size == t.view.physicalSize);
+        await t.runAsync(() async {
+          final image = await boundary.toImage();
+          try {
+            await expectLater(image, matchesGoldenFile(
+              'goldens/bundles-${size.width.toInt()}.png'));
+          } finally {
+            image.dispose();
+          }
+        });
+      }
+
       await t.drag(find.byType(ListView).first, const Offset(0, -550));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);

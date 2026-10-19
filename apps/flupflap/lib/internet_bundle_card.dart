@@ -68,8 +68,11 @@ class BundlePresentation {
     }
     // A fully displayed, explicitly separated Reloadly label needs no duplicate
     // details row. Keep ambiguous or separately supplied descriptions expandable.
-    if (product.description == null && product.benefits.isEmpty &&
-        clauses.length > 1 && allowance != null && validity != null) {
+    if (product.description == null &&
+        product.benefits.isEmpty && product.validityLabel == null &&
+        clauses.length > 1 &&
+        allowance != null &&
+        validity != null) {
       showDescription = false;
       benefits.removeWhere((benefit) => benefit == validity);
     }
@@ -98,6 +101,7 @@ class InternetBundleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final details = BundlePresentation(product);
+    final wide = MediaQuery.sizeOf(context).width >= 760;
     final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final left = Container(
       constraints: const BoxConstraints(minHeight: 116),
@@ -111,9 +115,10 @@ class InternetBundleCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            details.allowance?.replaceAll(RegExp(r'\s+'), '') ?? context.ft('BUNDLE'),
+            details.allowance?.replaceAll(RegExp(r'\s+'), '') ??
+                context.ft('BUNDLE'),
             style: TextStyle(
-              fontSize: details.allowance == null ? 16 : 26,
+              fontSize: details.allowance == null ? 16 : (wide ? 32 : 26),
               height: 1.15,
               fontWeight: FontWeight.w800,
               color: navy,
@@ -123,8 +128,8 @@ class InternetBundleCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               details.bonus!,
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: wide ? 13 : 12,
                 fontWeight: FontWeight.w600,
                 color: navy,
               ),
@@ -154,10 +159,10 @@ class InternetBundleCard extends StatelessWidget {
         Text(
           details.title == details.description &&
                   (details.benefits.isNotEmpty || details.title.length > 60)
-              ? context.ft('BUNDLE')
+              ? context.ft('internetPlan')
               : details.title,
-          style: const TextStyle(
-            fontSize: 15,
+          style: TextStyle(
+            fontSize: wide ? 17 : 15,
             height: 1.25,
             fontWeight: FontWeight.w700,
             color: navy,
@@ -178,8 +183,8 @@ class InternetBundleCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     benefit,
-                    style: const TextStyle(
-                      fontSize: 13,
+                    style: TextStyle(
+                      fontSize: wide ? 14 : 13,
                       height: 1.3,
                       color: navy,
                     ),
@@ -232,8 +237,8 @@ class InternetBundleCard extends StatelessWidget {
               ? '${product.priceCurrency == 'USD' ? '\$' : ''}${product.price.toStringAsFixed(2)}'
               : '${product.minimumAmount}–${product.maximumAmount}',
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 23,
+          style: TextStyle(
+            fontSize: wide ? 26 : 23,
             height: 1.2,
             fontWeight: FontWeight.w800,
             color: navy,
@@ -257,8 +262,11 @@ class InternetBundleCard extends StatelessWidget {
             ),
           ),
           onPressed: onSelected,
-          child: Text(context.ft('buyNow'), textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          child: Text(
+            context.ft('buyNow'),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: wide ? 14 : 13, fontWeight: FontWeight.w700),
+          ),
         ),
       ],
     );
@@ -310,12 +318,13 @@ class InternetBundleCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  width: constraints.maxWidth < 560 ? 80 : 145,
+                  width: constraints.maxWidth < 560 ? 80 : 182,
                   child: left,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Container(
+                    constraints: const BoxConstraints(minHeight: 116),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     decoration: const BoxDecoration(
                       border: Border(
@@ -328,7 +337,7 @@ class InternetBundleCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  width: constraints.maxWidth < 560 ? 86 : 120,
+                  width: constraints.maxWidth < 560 ? 86 : 132,
                   child: right,
                 ),
               ],

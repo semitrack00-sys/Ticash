@@ -372,25 +372,46 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           child: Row(
             children: [
               for (final internet in [false, true])
-                Expanded(child: LayoutBuilder(builder: (context, constraints) => ChoiceChip(
-                  showCheckmark: false,
-                  labelPadding: EdgeInsets.zero,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  label: SizedBox(width: (constraints.maxWidth - 32).clamp(0.0, double.infinity).toDouble(),
-                    child: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME'),
-                      softWrap: true, textAlign: TextAlign.center)),
-                  labelStyle: const TextStyle(fontSize: 13, color: InternetBundleCard.navy,
-                    fontWeight: FontWeight.w700),
-                  selectedColor: const Color(0xFFF2F6FA),
-                  backgroundColor: Colors.white,
-                  side: BorderSide.none,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  selected: j.internet == internet,
-                  onSelected: j.busy || j.locked ? null : (_) {
-                    j.selectService(internet);
-                    amount.clear();
-                  },
-                ))),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => ChoiceChip(
+                      showCheckmark: false,
+                      labelPadding: EdgeInsets.zero,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      label: SizedBox(
+                        width: (constraints.maxWidth - 32)
+                            .clamp(0.0, double.infinity)
+                            .toDouble(),
+                        child: Text(
+                          context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                          softWrap: true,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      labelStyle: const TextStyle(
+                        fontSize: 13,
+                        color: InternetBundleCard.navy,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      selectedColor: const Color(0xFFF2F6FA),
+                      backgroundColor: Colors.white,
+                      side: BorderSide.none,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      selected: j.internet == internet,
+                      onSelected: j.busy || j.locked
+                          ? null
+                          : (_) {
+                              j.selectService(internet);
+                              amount.clear();
+                            },
+                    ),
+                  ),
+                ),
             ],
           ),
         )
@@ -1089,7 +1110,11 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                     }
                   },
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              padding: EdgeInsets.fromLTRB(
+                j.internet && j.step == RechargeStep.product && MediaQuery.sizeOf(context).width >= 760 ? 32 : 16,
+                8,
+                j.internet && j.step == RechargeStep.product && MediaQuery.sizeOf(context).width >= 760 ? 32 : 16,
+                28),
               children: [
                 if (j.payments?.mode == CheckoutMode.mock ||
                     j.payments?.mode == CheckoutMode.stripeSandbox)

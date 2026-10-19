@@ -20,6 +20,7 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "internetPlan": "Internet Bundle",
     "bundleHeading": "Internet & Bundles",
     "chooseBundle": "Choose a plan that fits your needs",
     "buyNow": "Buy Now",
@@ -319,6 +320,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Email",
   },
   "ht": {
+    "internetPlan": "Pake entènèt",
     "bundleHeading": "Entènèt ak pake",
     "chooseBundle": "Chwazi yon plan ki adapte ak bezwen ou",
     "buyNow": "Achte kounye a",
@@ -611,6 +613,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Imèl",
   },
   "fr": {
+    "internetPlan": "Forfait Internet",
     "bundleHeading": "Internet et forfaits",
     "chooseBundle": "Choisissez un forfait adapté à vos besoins",
     "buyNow": "Acheter",
@@ -909,6 +912,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "E-mail",
   },
   "es": {
+    "internetPlan": "Paquete de Internet",
     "bundleHeading": "Internet y paquetes",
     "chooseBundle": "Elige un plan que se adapte a tus necesidades",
     "buyNow": "Comprar",
@@ -1200,6 +1204,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Correo electrónico",
   },
   "pt": {
+    "internetPlan": "Pacote de Internet",
     "bundleHeading": "Internet e pacotes",
     "chooseBundle": "Escolha um plano que atenda às suas necessidades",
     "buyNow": "Comprar",

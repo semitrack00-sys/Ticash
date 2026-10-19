@@ -26,7 +26,10 @@ Map<String, dynamic> offer({int days = 7}) => {
   'validity': {'quantity': days, 'unit': 'DAY'},
 };
 
+import 'visual_test_fonts.dart';
+
 void main() {
+  setUpAll(loadVisualTestFonts);
   test('structured provider data and 7/15/30 day validity remain exact', () {
     for (final days in [7, 15, 30]) {
       final details = BundlePresentation(
@@ -136,7 +139,10 @@ void main() {
         await t.pumpAndSettle();
         await press(t, find.text('Plan details'));
         expect(find.text(p.description!), findsOneWidget);
-        await capture(t, 'bundle-details-${width.toInt()}-text-${scale.toInt()}');
+        await capture(
+          t,
+          'bundle-details-${width.toInt()}-text-${scale.toInt()}',
+        );
         await press(t, find.text('Buy Now'));
         expect(selected, isTrue);
         expect(find.text(r'$5.35'), findsOneWidget);
@@ -147,10 +153,19 @@ void main() {
   for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
     testWidgets('bundle action works with $platform theme', (t) async {
       var selected = false;
-      await t.pumpWidget(shell(Theme(data: ThemeData(platform: platform),
-        child: Scaffold(body: InternetBundleCard(
-          product: MobileTopUpProduct.fromJson(offer()),
-          onSelected: () => selected = true)))));
+      await t.pumpWidget(
+        shell(
+          Theme(
+            data: ThemeData(platform: platform),
+            child: Scaffold(
+              body: InternetBundleCard(
+                product: MobileTopUpProduct.fromJson(offer()),
+                onSelected: () => selected = true,
+              ),
+            ),
+          ),
+        ),
+      );
       await t.pumpAndSettle();
       await press(t, find.text('Buy Now'));
       expect(selected, isTrue);

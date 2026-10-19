@@ -53,31 +53,24 @@ void main() {
             {
               'id': 'fixture-${item.$3}',
               'operatorId': 9,
-              'name': 'Talk + Data Bundle',
+              'name': '${item.$1}GB data - ${item.$1}GB Bonus Data - Unlimited WhatsApp - ${item.$2} Days',
               'kind': 'BUNDLE',
               'price': item.$3,
               'priceCurrency': 'USD',
               'deliveredCurrency': 'HTG',
               'amountType': 'FIXED',
-              'description':
-                  '${item.$1}GB data - ${item.$1}GB Bonus Data - Unlimited WhatsApp - ${item.$2} Days',
-              'benefits': [
-                {'type': 'DATA', 'amount': item.$1, 'unit': 'GB'},
-                {'type': 'MINUTES', 'amount': -1, 'unit': 'MINUTES'},
-              ],
-              'validity': {'quantity': item.$2, 'unit': 'DAY'},
+
             },
           {
             'id': 'fixture-mega',
             'operatorId': 9,
-            'name': 'Mega Bundle',
+            'name': "Unlimited on-net calls - 30 mins Natcom/US/CAN - 70GB any use Data - 50GB D'Music - 50GB PlayGO - 50GB BiP - 30 DAY",
             'kind': 'BUNDLE',
             'price': 36,
             'priceCurrency': 'USD',
             'deliveredCurrency': 'HTG',
             'amountType': 'FIXED',
-            'description':
-                "Unlimited on-net calls - 30 mins Natcom/US/CAN - 70GB any use Data - 50GB D'Music - 50GB PlayGO - 50GB BiP - 30 DAY",
+
           },
         ]);
       await t.runAsync(() => loadProducts(j));

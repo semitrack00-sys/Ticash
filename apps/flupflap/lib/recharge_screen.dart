@@ -372,37 +372,25 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           child: Row(
             children: [
               for (final internet in [false, true])
-                Expanded(
-                  child: ChoiceChip(
-                    showCheckmark: false,
-                    avatar: Icon(
-                      internet ? Icons.language : Icons.call_outlined,
-                      size: 18,
-                      color: InternetBundleCard.navy,
-                    ),
-                    label: Text(
-                      context.ft(internet ? 'internetBundles' : 'AIRTIME'),
-                      textAlign: TextAlign.center,
-                    ),
-                    labelStyle: const TextStyle(
-                      color: InternetBundleCard.navy,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    selectedColor: const Color(0xFFF2F6FA),
-                    backgroundColor: Colors.white,
-                    side: BorderSide.none,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    selected: j.internet == internet,
-                    onSelected: j.busy || j.locked
-                        ? null
-                        : (_) {
-                            j.selectService(internet);
-                            amount.clear();
-                          },
-                  ),
-                ),
+                Expanded(child: LayoutBuilder(builder: (context, constraints) => ChoiceChip(
+                  showCheckmark: false,
+                  labelPadding: EdgeInsets.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  label: SizedBox(width: (constraints.maxWidth - 32).clamp(0.0, double.infinity).toDouble(),
+                    child: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                      softWrap: true, textAlign: TextAlign.center)),
+                  labelStyle: const TextStyle(fontSize: 13, color: InternetBundleCard.navy,
+                    fontWeight: FontWeight.w700),
+                  selectedColor: const Color(0xFFF2F6FA),
+                  backgroundColor: Colors.white,
+                  side: BorderSide.none,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  selected: j.internet == internet,
+                  onSelected: j.busy || j.locked ? null : (_) {
+                    j.selectService(internet);
+                    amount.clear();
+                  },
+                ))),
             ],
           ),
         )

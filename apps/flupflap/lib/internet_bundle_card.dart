@@ -103,7 +103,7 @@ class InternetBundleCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            details.allowance ?? context.ft('BUNDLE'),
+            details.allowance?.replaceAll(RegExp(r'\s+'), '') ?? context.ft('BUNDLE'),
             style: TextStyle(
               fontSize: details.allowance == null ? 16 : 26,
               height: 1.15,
@@ -249,7 +249,8 @@ class InternetBundleCard extends StatelessWidget {
             ),
           ),
           onPressed: onSelected,
-          child: Text(context.ft('buyNow'), textAlign: TextAlign.center),
+          child: Text(context.ft('buyNow'), textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
         ),
       ],
     );

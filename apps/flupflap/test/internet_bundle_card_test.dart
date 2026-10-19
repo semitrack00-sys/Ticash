@@ -4,7 +4,7 @@ import 'package:flupflap/internet_bundle_card.dart';
 import 'package:flupflap/recharge_screen.dart';
 import 'package:flupflap/recharge_journey.dart';
 import 'package:ticash/models/mobile_top_up.dart';
-import 'parity_widget_test.dart' show shell, press;
+import 'parity_widget_test.dart' show shell, press, capture;
 import 'checkout_parity_test.dart' show fixture;
 import 'airtime_selection_test.dart' show loadProducts;
 
@@ -134,12 +134,26 @@ void main() {
         await t.pumpAndSettle();
         await press(t, find.text('Plan details'));
         expect(find.text(p.description!), findsOneWidget);
+        await capture(t, 'bundle-details-${width.toInt()}-text-${scale.toInt()}');
         await press(t, find.text('Buy Now'));
         expect(selected, isTrue);
         expect(find.text(r'$5.35'), findsOneWidget);
         expect(t.takeException(), isNull);
       });
     }
+  }
+  for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+    testWidgets('bundle action works with $platform theme', (t) async {
+      var selected = false;
+      await t.pumpWidget(shell(Theme(data: ThemeData(platform: platform),
+        child: Scaffold(body: InternetBundleCard(
+          product: MobileTopUpProduct.fromJson(offer()),
+          onSelected: () => selected = true)))));
+      await t.pumpAndSettle();
+      await press(t, find.text('Buy Now'));
+      expect(selected, isTrue);
+      expect(t.takeException(), isNull);
+    });
   }
   testWidgets(
     'Buy Now selects catalog ID and reviews actual price, fee and checkout',
@@ -172,6 +186,8 @@ void main() {
         isEmpty,
       );
       expect(t.takeException(), isNull);
+      j.selectProduct(j.product!);
+      await t.pumpWidget(const SizedBox());
     },
   );
 }

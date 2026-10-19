@@ -66,7 +66,15 @@ class BundlePresentation {
     if (validity == null && durations.length == 1) {
       validity = durations.single.trim();
     }
+    // A fully displayed, explicitly separated Reloadly label needs no duplicate
+    // details row. Keep ambiguous or separately supplied descriptions expandable.
+    if (product.description == null && product.benefits.isEmpty &&
+        clauses.length > 1 && allowance != null && validity != null) {
+      showDescription = false;
+      benefits.removeWhere((benefit) => benefit == validity);
+    }
   }
+  bool showDescription = true;
   final String title;
   final String? description;
   final List<String> benefits;
@@ -180,7 +188,7 @@ class InternetBundleCard extends StatelessWidget {
               ],
             ),
           ),
-        if (details.description?.isNotEmpty == true)
+        if (details.showDescription && details.description?.isNotEmpty == true)
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: Material(

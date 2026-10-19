@@ -57,6 +57,7 @@ void main() {
         expect(details.allowance, isNull, reason: description);
         expect(details.validity, isNull);
         expect(details.description, description);
+        expect(details.showDescription, isTrue);
       }
     },
   );
@@ -75,7 +76,8 @@ void main() {
     expect(details.bonus, '2GB Bonus Data');
     expect(details.validity, '7 Days');
     expect(details.description, text);
-    expect(details.benefits, text.split(' - '));
+    expect(details.benefits, text.split(' - ').take(3));
+    expect(details.showDescription, isFalse);
   });
   test(
     'complete provider clauses can be extracted without adding allowances',

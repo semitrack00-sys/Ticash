@@ -41,7 +41,7 @@ void main() {
     }
   });
   test('Reloadly denomination name is the original provider description', () {
-    final text = '7GB data - 2GB Bonus Data - Unlimited WhatsApp - 7 Days';
+    const text = '7GB data - 2GB Bonus Data - Unlimited WhatsApp - 7 Days';
     final details = BundlePresentation(MobileTopUpProduct.fromJson({...offer(),
       'name': text, 'description': null, 'benefits': [], 'validity': null}));
     expect(details.allowance, '7GB');

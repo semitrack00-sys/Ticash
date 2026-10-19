@@ -69,6 +69,7 @@ class InternetBundleCard extends StatelessWidget {
     final details = BundlePresentation(product);
     final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final left = Container(
+      constraints: const BoxConstraints(minHeight: 116),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(color: const Color(0xFFF2F6FA),
         borderRadius: BorderRadius.circular(10)),
@@ -92,7 +93,8 @@ class InternetBundleCard extends StatelessWidget {
       ]),
     );
     final center = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(details.title == details.description && details.benefits.isNotEmpty
+      Text(details.title == details.description &&
+        (details.benefits.isNotEmpty || details.title.length > 60)
         ? context.ft('BUNDLE') : details.title, style: const TextStyle(fontSize: 15,
         height: 1.25, fontWeight: FontWeight.w700, color: navy)),
       if (details.benefits.isNotEmpty) const SizedBox(height: 7),

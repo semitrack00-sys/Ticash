@@ -1,3 +1,4 @@
+import { createAppDownloadsRouter } from './flupflap/app-downloads-router.js';
 import { createFlupFlapAdmin } from './flupflap/admin.js';
 import { FlupFlapMarketing, marketingEnabled } from './flupflap/marketing.js';
 import { createMarketingRouter, createMarketingAdminRouter } from './flupflap/marketing-router.js';
@@ -2157,6 +2158,8 @@ export function createApp(options: CreateAppOptions = {}) {
       }
     });
   }
+
+  app.use('/api/admin/flupflap/downloads', createAppDownloadsRouter({ db: prisma, enabled: databaseEnabled, authenticate, permission }));
 
   app.get('/api/admin/overview', authenticate, permission('admin.view'), async (_req, res) => {
     if (databaseEnabled) {

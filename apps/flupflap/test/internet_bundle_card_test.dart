@@ -25,6 +25,10 @@ void main() {
       final font = File('$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf');
       await (FontLoader('Roboto')..addFont(Future.value(
           ByteData.sublistView(await font.readAsBytes())))).load();
+      final icons = File('$root/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf');
+      final iconFile = await icons.exists() ? icons : File('$root/bin/cache/artifacts/material_fonts/materialicons-regular.otf');
+      await (FontLoader('MaterialIcons')..addFont(Future.value(
+          ByteData.sublistView(await iconFile.readAsBytes())))).load();
     }
   });
   for (final width in [360.0, 412.0, 1024.0]) {
@@ -40,7 +44,7 @@ void main() {
           data: MediaQueryData(size: Size(width, 1600),
               textScaler: TextScaler.linear(scale)),
           child: Scaffold(backgroundColor: Colors.white,
-            body: RepaintBoundary(key: boundary, child: ListView(
+            body: RepaintBoundary(key: boundary, child: ColoredBox(color: Colors.white, child: ListView(
               padding: const EdgeInsets.all(16), children: [
                 for (final days in [7, 15, 30]) InternetBundleCard(
                   product: plan(days), selected: false,
@@ -48,7 +52,7 @@ void main() {
                   detailLabel: (value) => value,
                 ),
               ],
-            )),
+            ))),
           ),
         )));
         await tester.pumpAndSettle();

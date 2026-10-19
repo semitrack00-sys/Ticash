@@ -29,6 +29,11 @@ jobs:
         run: flutter test test/internet_bundle_card_test.dart
         env:
           CAPTURE_BUNDLE_SCREENSHOTS: '1'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-ui-screenshots
+          path: apps/flupflap/build/bundle-screenshots/
+          if-no-files-found: error
       - name: Build review APK
         run: flutter build apk --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
       - name: Build web review bundle

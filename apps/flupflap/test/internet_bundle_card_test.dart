@@ -27,7 +27,6 @@ Map<String, dynamic> offer({int days = 7}) => {
   'validity': {'quantity': days, 'unit': 'DAY'},
 };
 
-
 void main() {
   setUpAll(loadVisualTestFonts);
   test('structured provider data and 7/15/30 day validity remain exact', () {

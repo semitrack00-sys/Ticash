@@ -59,6 +59,7 @@ jobs:
           flutter test test/bundle_screenshots_test.dart
       - name: Run tests and capture redesigned bundle screen
         env:
+          VERIFY_BUNDLE_GOLDENS: '1'
           FLUPFLAP_SCREENSHOT_DIR: ${{ github.workspace }}/apps/flupflap/build/bundle-screenshots
           FLUPFLAP_TEST_FONT: /tmp/flupflap-test-fonts/Roboto-Regular.ttf
         run: flutter test

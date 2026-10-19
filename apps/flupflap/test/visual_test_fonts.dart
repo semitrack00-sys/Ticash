@@ -8,8 +8,9 @@ Future<void> loadVisualTestFonts() async {
     ('Roboto', font),
     ('MaterialIcons', '${File(font).parent.path}/materialicons-regular.otf'),
   ]) {
-    await (FontLoader(entry.$1)..addFont(Future.value(
-      ByteData.sublistView(File(entry.$2).readAsBytesSync()),
-    ))).load();
+    await (FontLoader(entry.$1)..addFont(
+          Future.value(ByteData.sublistView(File(entry.$2).readAsBytesSync())),
+        ))
+        .load();
   }
 }

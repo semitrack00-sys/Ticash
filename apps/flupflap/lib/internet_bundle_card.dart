@@ -69,7 +69,8 @@ class BundlePresentation {
     // A fully displayed, explicitly separated Reloadly label needs no duplicate
     // details row. Keep ambiguous or separately supplied descriptions expandable.
     if (product.description == null &&
-        product.benefits.isEmpty && product.validityLabel == null &&
+        product.benefits.isEmpty &&
+        product.validityLabel == null &&
         clauses.length > 1 &&
         allowance != null &&
         validity != null) {
@@ -265,7 +266,10 @@ class InternetBundleCard extends StatelessWidget {
           child: Text(
             context.ft('buyNow'),
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: wide ? 14 : 13, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: wide ? 14 : 13,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ],

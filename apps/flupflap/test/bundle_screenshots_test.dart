@@ -105,14 +105,18 @@ void main() {
       final prefix =
           Platform.environment['BUNDLE_SCREENSHOT_PREFIX'] ?? 'after';
       await capture(t, '$prefix-bundles-${size.width.toInt()}');
-      if (prefix == 'after' && Platform.environment['VERIFY_BUNDLE_GOLDENS'] == '1') {
-        final boundary = t.allRenderObjects.whereType<RenderRepaintBoundary>()
+      if (prefix == 'after' && size.width <= 412 &&
+          Platform.environment['VERIFY_BUNDLE_GOLDENS'] == '1') {
+        final boundary = t.allRenderObjects
+            .whereType<RenderRepaintBoundary>()
             .firstWhere((r) => r.size == t.view.physicalSize);
         await t.runAsync(() async {
           final image = await boundary.toImage();
           try {
-            await expectLater(image, matchesGoldenFile(
-              'goldens/bundles-${size.width.toInt()}.png'));
+            await expectLater(
+              image,
+              matchesGoldenFile('goldens/bundles-${size.width.toInt()}.png'),
+            );
           } finally {
             image.dispose();
           }

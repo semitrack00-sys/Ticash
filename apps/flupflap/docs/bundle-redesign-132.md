@@ -38,11 +38,21 @@ at 320/360/412/1024 pixels with normal and 2× text. CI uploads both the origina
 and redesigned screens. The shared card also has Android and iOS theme tests.
 These are actual Flutter-rendered screens, not HTML recreations or generated mockups.
 
+Phone screenshots are checked against committed golden images in the PWA workflow.
+The full-size comparison and expanded text evidence are also available in the
+[workflow screenshot artifact](https://github.com/semitrack00-sys/Ticash/actions/runs/39212826572).
+The reference remains in the requester's review bundle rather than the public repository.
+
+| 360-pixel layout | 412-pixel layout |
+| --- | --- |
+| ![Bundle cards at 360 pixels](../test/goldens/bundles-360.png) | ![Bundle cards at 412 pixels](../test/goldens/bundles-412.png) |
+
 ## Reproduction
 
 Run `flutter analyze` and `flutter test` from `apps/flupflap`.
 The FlupFlap PWA workflow prepares deterministic visual-test fonts, captures the
-before/after screens, builds the release web bundle and runs the existing browser,
+before/after screens, verifies the 360/412 pixel goldens with
+`VERIFY_BUNDLE_GOLDENS=1`, builds the release web bundle and runs the existing browser,
 offline-shell and checkout-return smoke tests. The Android workflow builds APK/AAB
 QA artifacts and runs the existing manifest and release-build validation.
 

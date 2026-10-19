@@ -1111,10 +1111,19 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                   },
             child: ListView(
               padding: EdgeInsets.fromLTRB(
-                j.internet && j.step == RechargeStep.product && MediaQuery.sizeOf(context).width >= 760 ? 32 : 16,
+                j.internet &&
+                        j.step == RechargeStep.product &&
+                        MediaQuery.sizeOf(context).width >= 760
+                    ? 32
+                    : 16,
                 8,
-                j.internet && j.step == RechargeStep.product && MediaQuery.sizeOf(context).width >= 760 ? 32 : 16,
-                28),
+                j.internet &&
+                        j.step == RechargeStep.product &&
+                        MediaQuery.sizeOf(context).width >= 760
+                    ? 32
+                    : 16,
+                28,
+              ),
               children: [
                 if (j.payments?.mode == CheckoutMode.mock ||
                     j.payments?.mode == CheckoutMode.stripeSandbox)

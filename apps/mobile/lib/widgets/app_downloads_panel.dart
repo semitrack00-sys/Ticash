@@ -57,10 +57,10 @@ class _AppDownloadsPanelState extends State<AppDownloadsPanel> {
       const SizedBox(height: 12),
       FutureBuilder<Map<String, dynamic>>(future: result, builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (snapshot.hasError) { return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('Download reports unavailable. No estimated counts are shown.'),
           TextButton(onPressed: () => setState(load), child: const Text('Retry downloads')),
-        ]);
+        ]); }
         final data = snapshot.data!;
         final platforms = (data['platforms'] as List).cast<Map>();
         final series = (data['series'] as List).cast<Map>();
@@ -122,9 +122,9 @@ class _DownloadImportDialogState extends State<_DownloadImportDialog> {
       if (mounted) Navigator.pop(context, true);
     } on DioException catch (e) {
       final code = e.response?.data is Map ? e.response?.data['code'] : null;
-      if (mounted) setState(() { saving = false; error = code == 'STORE_APP_NOT_CONFIGURED'
+      if (mounted) { setState(() { saving = false; error = code == 'STORE_APP_NOT_CONFIGURED'
         ? 'The iOS App Store app ID must be configured on the server first.'
-        : 'Import failed (${code ?? 'network error'}). Check the report format and try again.'; });
+        : 'Import failed (${code ?? 'network error'}). Check the report format and try again.'; }); }
     } catch (_) {
       if (mounted) setState(() { saving = false; error = 'Import failed. Try again.'; });
     }

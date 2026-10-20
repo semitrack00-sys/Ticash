@@ -359,6 +359,56 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 16),
+      if (j.internet)
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE7EBF0)),
+          ),
+          child: Row(children: [
+            for (final internet in [false, true])
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(
+                      color: j.internet == internet
+                          ? InternetBundleCard.blue : Colors.transparent,
+                      width: 3,
+                    )),
+                  ),
+                  child: ChoiceChip(
+                    showCheckmark: false,
+                    label: SizedBox(
+                      width: double.infinity,
+                      child: Text(
+                        context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    labelStyle: TextStyle(
+                      color: j.internet == internet
+                          ? InternetBundleCard.blue : InternetBundleCard.navy,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    selectedColor: const Color(0xFFF1F5FA),
+                    backgroundColor: Colors.white,
+                    side: BorderSide.none,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    selected: j.internet == internet,
+                    onSelected: j.busy || j.locked ? null : (_) {
+                      j.selectService(internet);
+                      amount.clear();
+                    },
+                  ),
+                ),
+              ),
+          ]),
+        )
+      else
       Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -512,9 +562,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         key: const ValueKey('promo-panel'),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFFE9F2FF),
+          color: j.internet ? Colors.white : const Color(0xFFE9F2FF),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFC5DCFF)),
+          border: Border.all(color: j.internet
+              ? const Color(0xFFE7EBF0) : const Color(0xFFC5DCFF)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -999,6 +1050,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         backgroundColor: j.internet && j.step == RechargeStep.product
             ? Colors.white : null,
         appBar: AppBar(
+          backgroundColor: j.internet && j.step == RechargeStep.product
+              ? Colors.white : null,
+          surfaceTintColor: j.internet && j.step == RechargeStep.product
+              ? Colors.transparent : null,
           title: Text(context.ft(widget.history ? 'history' : 'recharge')),
           automaticallyImplyLeading: widget.history,
           leading: !widget.history && j.step != RechargeStep.destination

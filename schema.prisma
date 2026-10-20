@@ -1105,3 +1105,15 @@ model MobileTopUpCountryCatalogCache {
   @@index([expiresAt])
 }
 
+
+// Aggregate store counts only; no customer/device tracking.
+model FlupFlapAppDownloadDaily {
+  platform   String
+  appId      String
+  reportDate DateTime @db.Date
+  downloads  Int
+  reportHash String
+  importedAt DateTime @default(now())
+
+  @@id([platform, appId, reportDate])
+}

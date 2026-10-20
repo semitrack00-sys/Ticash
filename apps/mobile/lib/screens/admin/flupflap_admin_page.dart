@@ -5,6 +5,7 @@ import '../../services/api_client.dart';
 import '../../services/admin_service.dart';
 import '../../services/admin_analytics_service.dart';
 import '../../widgets/admin_analytics_panel.dart';
+import '../../widgets/app_downloads_panel.dart';
 import '../../widgets/flupflap_promotions_panel.dart';
 
 /// A section of the existing Operations workspace, authenticated as TiCash staff.
@@ -336,6 +337,8 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (section == 'dashboard' && widget.session.can('recharge.reports')) ...[
+                    AppDownloadsPanel(dio: widget.dio, canImport: widget.session.can('recharge.configuration.manage')),
+                    const SizedBox(height: 18),
                     AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio),
                     const SizedBox(height: 18),
                   ],

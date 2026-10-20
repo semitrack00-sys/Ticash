@@ -1,0 +1,72 @@
+name: Bundle UI review
+on:
+  pull_request:
+    paths:
+      - 'apps/flupflap/**'
+      - '.github/workflows/bundle-ui-review.yml'
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - name: Capture actual Flutter card renders
+        run: flutter test test/internet_bundle_card_test.dart test/internet_bundle_screen_test.dart
+        env:
+          CAPTURE_BUNDLE_SCREENSHOTS: '1'
+          FLUPFLAP_SCREENSHOT_DIR: build/bundle-screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-ui-screenshots
+          path: apps/flupflap/build/bundle-screenshots/
+          if-no-files-found: error
+      - name: Build review APK
+        run: flutter build apk --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - name: Build web review bundle
+        run: flutter build web --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundle-ui-review
+          path: |
+            apps/flupflap/build/bundle-screenshots/
+            apps/flupflap/build/app/outputs/flutter-apk/app-debug.apk
+            apps/flupflap/build/web/
+          if-no-files-found: warn
+  ios-review:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          cache: true
+      - name: Generate temporary iOS runner for compatibility verification
+        run: flutter create --platforms=ios --project-name=flupflap .
+      - run: flutter pub get
+      - name: Build iOS simulator app without signing or deployment
+        run: flutter build ios --simulator --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-ui-ios-simulator
+          path: apps/flupflap/build/ios/iphonesimulator/
+          if-no-files-found: error

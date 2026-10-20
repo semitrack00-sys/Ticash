@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/widgets/mobile_operator_logo.dart';
 import 'billing_countries.dart';
+import 'internet_bundle_card.dart';
 import 'checkout_contract.dart';
 import 'country_flag.dart';
 import 'native_actions.dart';
@@ -352,12 +353,62 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
 
   Widget product() {
     final kinds = j.products.map((p) => p.kind.name.toUpperCase()).toSet();
-    return card([
-      Text(
+    final children = <Widget>[
+      if (!j.internet) Text(
         context.ft('operatorProduct'),
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 16),
+      if (j.internet)
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE7EBF0)),
+          ),
+          child: Row(children: [
+            for (final internet in [false, true])
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(
+                      color: j.internet == internet
+                          ? InternetBundleCard.blue : Colors.transparent,
+                      width: 3,
+                    )),
+                  ),
+                  child: ChoiceChip(
+                    showCheckmark: false,
+                    label: SizedBox(
+                      width: double.infinity,
+                      child: Text(
+                        context.ft(internet ? 'internetBundles' : 'AIRTIME'),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    labelStyle: TextStyle(
+                      color: j.internet == internet
+                          ? InternetBundleCard.blue : InternetBundleCard.navy,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    selectedColor: const Color(0xFFF1F5FA),
+                    backgroundColor: Colors.white,
+                    side: BorderSide.none,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    selected: j.internet == internet,
+                    onSelected: j.busy || j.locked ? null : (_) {
+                      j.selectService(internet);
+                      amount.clear();
+                    },
+                  ),
+                ),
+              ),
+          ]),
+        )
+      else
       Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -405,7 +456,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                 amount.clear();
               },
       ),
-      if (j.operator != null) ...[
+      if (j.operator != null && !j.internet) ...[
         const SizedBox(height: 12),
         Row(
           children: [
@@ -420,7 +471,26 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           padding: const EdgeInsets.all(12),
           child: Text(context.ft('noProducts')),
         ),
-      for (final kind in kinds) ...[
+      if (j.internet) ...[
+        const SizedBox(height: 20),
+        Text(context.ft('internetBundlesTitle'), style: const TextStyle(
+            color: InternetBundleCard.navy, fontSize: 24, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        Text(context.ft('chooseBundlePlan'), style: const TextStyle(
+            color: InternetBundleCard.navy, fontSize: 14)),
+        const SizedBox(height: 16),
+        for (final p in j.products)
+          InternetBundleCard(
+            product: p,
+            selected: j.product?.id == p.id,
+            detailLabel: productDetail,
+            onSelected: j.busy || j.locked ? null : () {
+              j.selectProduct(p);
+              amount.clear();
+            },
+          ),
+      ],
+      if (!j.internet) for (final kind in kinds) ...[
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 8),
           child: Text(
@@ -492,9 +562,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         key: const ValueKey('promo-panel'),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFFE9F2FF),
+          color: j.internet ? Colors.white : const Color(0xFFE9F2FF),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFC5DCFF)),
+          border: Border.all(color: j.internet
+              ? const Color(0xFFE7EBF0) : const Color(0xFFC5DCFF)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -544,7 +615,10 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         ),
       ),
       button('continue', j.canReview ? j.review : null),
-    ]);
+    ];
+    return j.internet
+        ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)
+        : card(children);
   }
 
   Widget review() {
@@ -973,7 +1047,13 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         if (!didPop) goBack();
       },
       child: Scaffold(
+        backgroundColor: j.internet && j.step == RechargeStep.product
+            ? Colors.white : null,
         appBar: AppBar(
+          backgroundColor: j.internet && j.step == RechargeStep.product
+              ? Colors.white : null,
+          surfaceTintColor: j.internet && j.step == RechargeStep.product
+              ? Colors.transparent : null,
           title: Text(context.ft(widget.history ? 'history' : 'recharge')),
           automaticallyImplyLeading: widget.history,
           leading: !widget.history && j.step != RechargeStep.destination
@@ -1058,3 +1138,4 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     ),
   );
 }
+

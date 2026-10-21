@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { approvedRechargeAmountsUsd, approvedRechargePrice, flupFlapAirtimePrice, isApprovedRechargeAmountMinorUnits, lookupRechargeFeeMinorUnits, normalizeRechargeAmountMinorUnits } from '../src/topup/recharge-fee-grid.js';
 
-describe('final FlupFlap airtime fee schedule', () => {
+describe('FlupFlap 15 percent recharge fee', () => {
   it.each([
-    [9.99,115], [10,173], [19.99,173], [20,234], [29.99,234],
-    [30,284], [39.99,284], [40,334], [49.99,334], [50,384], [74.99,384], [75,484], [100,484],
-    [5,115], [15,173], [25,234], [35,284], [45,334], [60,384], [90,484],
+    [5,75], [5.03,75], [5.04,76], [5.10,77], [9.99,150], [10,150],
+    [19.99,300], [20,300], [29.99,450], [30,450], [39.99,600], [40,600],
+    [49.99,750], [50,750], [74.99,1125], [75,1125], [100,1500],
+    [15,225], [25,375], [35,525], [45,675], [60,900], [90,1350],
   ])('$%s has exactly %s cents fee', (amount, fee) => {
     const principal = Math.round(amount * 100);
     expect(flupFlapAirtimePrice(amount)).toEqual({ amountMinorUnits: principal, feeMinorUnits: fee, totalMinorUnits: principal + fee });
   });
   it('covers every cent from $5 to $100 without gaps, overlaps or floating-point totals', () => {
     for (let cents = 500; cents <= 10000; cents++) {
-      const fee = cents < 1000 ? 115 : cents < 2000 ? 173 : cents < 3000 ? 234 : cents < 4000 ? 284 : cents < 5000 ? 334 : cents < 7500 ? 384 : 484;
+      const fee = Number((BigInt(cents) * 15n + 50n) / 100n);
       expect(flupFlapAirtimePrice(cents / 100)).toEqual({ amountMinorUnits: cents, feeMinorUnits: fee, totalMinorUnits: cents + fee });
     }
   });

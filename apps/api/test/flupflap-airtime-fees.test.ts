@@ -10,8 +10,12 @@ import { StripeHostedCheckoutProvider } from '../src/topup/stripe-provider.js';
 import type { StripeConfig } from '../src/topup/stripe-config.js';
 import { MockMobileTopUpPaymentProvider, type MobileTopUpConfig, type MobileTopUpOperator, type MobileTopUpProvider } from '../src/topup/types.js';
 
-const cases = [[9.99,115],[10,173],[19.99,173],[20,234],[29.99,234],[30,284],[39.99,284],
-  [40,334],[49.99,334],[50,384],[74.99,384],[75,484],[100,484],[5,115],[15,173],[25,234],[35,284],[45,334],[60,384],[90,484]];
+const cases = [
+    [5,75], [5.03,75], [5.04,76], [5.10,77], [9.99,150], [10,150],
+    [19.99,300], [20,300], [29.99,450], [30,450], [39.99,600], [40,600],
+    [49.99,750], [50,750], [74.99,1125], [75,1125], [100,1500],
+    [15,225], [25,375], [35,525], [45,675], [60,900], [90,1350],
+];
 const config: MobileTopUpConfig = { enabled:true, environment:'sandbox', paymentMode:'stripe_sandbox',
   productionEnabled:false, approvedForLiveUse:false, billingCurrency:'USD', quoteTtlSeconds:300,
   authUrl:'https://auth.reloadly.com/oauth/token', airtimeBaseUrl:'https://topups-sandbox.reloadly.com' };
@@ -87,7 +91,7 @@ describe('new FlupFlap airtime quotes',()=>{
   });
   it('uses the same FlupFlap schedule in sandbox without changing TiCash prices',async()=>{
     const f=fixture();
-    expect(await f.service.createQuote(owner,input(5))).toMatchObject({feeUsd:1.15,totalChargeUsd:6.15});
+    expect(await f.service.createQuote(owner,input(5))).toMatchObject({feeUsd:0.75,totalChargeUsd:5.75});
     expect(await f.service.createQuote('ticash-customer',input(5))).toMatchObject({feeUsd:0.99,totalChargeUsd:5.99});
     await expect(f.service.createQuote('ticash-customer',input(1))).rejects.toMatchObject({code:'TOPUP_PRODUCT_UNAVAILABLE'});
   });
@@ -96,7 +100,7 @@ describe('new FlupFlap airtime quotes',()=>{
     f.provider.listProducts=async()=>[{id:'reloadly:JM:77:plan',provider:'RELOADLY',operatorId:77,countryCode:'JM',classification,kind:'DATA',
       name:'Provider plan',price:12,priceCurrency:'USD',amountType:'FIXED',deliveredCurrency:'JMD',deliveredValue:100}];
     const product=(await f.service.products('JM',77,undefined,owner)).products[0];
-    expect(await f.service.createQuote(owner,{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.73,totalChargeUsd:13.73});
+    expect(await f.service.createQuote(owner,{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.80,totalChargeUsd:13.80});
     expect(await f.service.createQuote('ticash-customer',{...input(12),productId:product.id,catalogVersion:product.catalogVersion})).toMatchObject({feeUsd:1.25,totalChargeUsd:13.25});
   });
   it.each((['DATA','BUNDLE'] as const).flatMap(classification =>
@@ -140,15 +144,15 @@ describe('new FlupFlap airtime quotes',()=>{
       name:'Provider range',price:5,priceCurrency:'USD',amountType:'RANGE',minimumAmount:5,maximumAmount:20,amountIncrement:0.25,deliveredCurrency:'JMD'}];
     f.provider.quoteReceiverValue=async(p,amount)=>({amount:amount*130,currency:'JMD',senderAmount:amount,senderCurrency:p.priceCurrency,source:'RELOADLY_FX',quotedAt:new Date().toISOString()});
     const range={...input(1),productId:'reloadly:JM:77:airtime:range'};
-    expect(await f.service.createQuote(owner,{...range,amount:5})).toMatchObject({providerAmount:5,feeUsd:1.15,totalChargeUsd:6.15});
-    expect(await f.service.createQuote(owner,{...range,amount:15.25})).toMatchObject({providerAmount:15.25,feeUsd:1.73,totalChargeUsd:16.98});
+    expect(await f.service.createQuote(owner,{...range,amount:5})).toMatchObject({providerAmount:5,feeUsd:0.75,totalChargeUsd:5.75});
+    expect(await f.service.createQuote(owner,{...range,amount:15.25})).toMatchObject({providerAmount:15.25,feeUsd:2.29,totalChargeUsd:17.54});
     for(const amount of [0.99,1,4.99,20.25,100.01,5.01,5.001]) await expect(f.service.createQuote(owner,{...range,amount})).rejects.toMatchObject({code:'INVALID_TOPUP_AMOUNT'});
     const q=await f.service.createQuote(owner,{...range,amount:5});
     const prior=f.provider.listProducts;
     f.provider.listProducts=async(c,id)=>(await prior(c,id))!.map(p=>({...p,amountIncrement:0.5}));
     await expect(f.service.createPaymentSession(owner,{quoteId:q.id},'changed-snapshot','US')).rejects.toMatchObject({code:'TOPUP_QUOTE_CHANGED'});
   });
-  it.each([99,139])('preserves an old %s-cent fee quote, Stripe replay, completed receipt and history without repricing',async(oldFee)=>{
+  it.each([99,115,139])('preserves an old %s-cent fee quote, Stripe replay, completed receipt and history without repricing',async(oldFee)=>{
     const f=fixture();const fresh=await f.service.createQuote(owner,input(5));
     const old=await f.repository.createQuote({...fresh,feeUsd:oldFee/100,totalChargeUsd:(500+oldFee)/100});
     expect(await f.service.createPaymentSession(owner,{quoteId:old.id},'historical-session','US')).toMatchObject({amountMinor:500+oldFee});
@@ -170,12 +174,12 @@ describe('new FlupFlap airtime quotes',()=>{
       await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send({...input(1),[field]:0}).expect(400);
     }
     const q=(await request(app).post(root+'/quotes').auth(token,{type:'bearer'}).send(input(5)).expect(201)).body.quote;
-    expect(q).toMatchObject({providerAmount:5,feeUsd:1.15,totalChargeUsd:6.15});
+    expect(q).toMatchObject({providerAmount:5,feeUsd:0.75,totalChargeUsd:5.75});
     for(const field of ['fee','feeUsd','totalChargeUsd','amountMinor']) await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'})
       .set('Idempotency-Key','api-fee-session').send({quoteId:q.id,billingCountry:'US',[field]:0}).expect(400);
     await request(app).patch('/api/flupflap/auth/me').auth(token,{type:'bearer'}).send({countryCode:'US'}).expect(403);
     expect((await request(app).post(root+'/payment-sessions').auth(token,{type:'bearer'}).set('Idempotency-Key','api-fee-session')
-      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(615);
+      .send({quoteId:q.id,billingCountry:'US'}).expect(201)).body.amountMinor).toBe(575);
     expect(f.submit).not.toHaveBeenCalled();
   });
 });

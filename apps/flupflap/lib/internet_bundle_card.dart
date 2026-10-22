@@ -36,7 +36,9 @@ class InternetBundleCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          allowance == null ? context.ft('bundlePlan') : detailLabel(allowance),
+          product.kind == MobileTopUpKind.airtime
+              ? context.ft('AIRTIME')
+              : allowance == null ? context.ft('bundlePlan') : detailLabel(allowance),
           style: TextStyle(color: navy, fontSize: allowance == null ? 18 : 28,
               fontWeight: FontWeight.w800, height: 1.15),
         ),
@@ -58,6 +60,11 @@ class InternetBundleCard extends StatelessWidget {
       children: [
         Text(product.name, style: const TextStyle(color: navy,
             fontSize: 15, fontWeight: FontWeight.w700)),
+        if (product.amountType == 'RANGE') ...[
+          const SizedBox(height: 5),
+          Text('${context.ft('minimum')}: ${product.minimumAmount} ${product.priceCurrency} · ${context.ft('maximum')}: ${product.maximumAmount} ${product.priceCurrency}',
+              style: const TextStyle(color: navy, fontSize: 13, height: 1.35)),
+        ],
         for (final benefit in product.benefits) ...[
           const SizedBox(height: 5),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -124,7 +131,10 @@ class InternetBundleCard extends StatelessWidget {
               blurRadius: 8, offset: Offset(0, 2))],
         ),
         child: Material(type: MaterialType.transparency,
-        child: LayoutBuilder(builder: (context, constraints) {
+        child: InkWell(
+          onTap: onSelected,
+          borderRadius: BorderRadius.circular(12),
+          child: LayoutBuilder(builder: (context, constraints) {
           final wide = constraints.maxWidth >= 280 &&
               MediaQuery.textScalerOf(context).scale(14) <= 20;
           if (wide) {
@@ -156,7 +166,7 @@ class InternetBundleCard extends StatelessWidget {
                 child: Divider(color: Color(0xFFE7EBF0), height: 1)),
             benefits(),
           ]);
-        })),
+        }))),
       ),
     );
   }

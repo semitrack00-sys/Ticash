@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/session.dart';
 import 'package:flupflap/store_seller_screen.dart';
 import 'flupflap_test.dart' show FixtureAdapter, MemoryStorage;
+import 'parity_widget_test.dart' show shell;
 
 class StoreAdapter extends FixtureAdapter {
   Map<String, dynamic>? store;
@@ -60,6 +61,9 @@ class StoreAdapter extends FixtureAdapter {
             'id': 'reloadly:HT:99:10',
             'name': 'Natcom airtime',
             'price': 10,
+            'priceCurrency': 'USD',
+            'deliveredCurrency': 'HTG',
+            'kind': 'AIRTIME',
             'amountType': 'FIXED',
           },
         ],
@@ -125,7 +129,7 @@ void main() {
     (tester) async {
       final (session, adapter) = (await tester.runAsync(() => fixture()))!;
       await tester.pumpWidget(
-        MaterialApp(home: StoreSellerScreen(session: session)),
+        shell(StoreSellerScreen(session: session)),
       );
       await tester.pumpAndSettle();
       expect(find.text('Sell FlupFlap Recharge in your store'), findsOneWidget);
@@ -164,7 +168,7 @@ void main() {
       () => fixture(state: 'SUSPENDED'),
     ))!;
     await tester.pumpWidget(
-      MaterialApp(home: StoreSellerScreen(session: session)),
+      shell(StoreSellerScreen(session: session)),
     );
     await tester.pumpAndSettle();
     expect(find.text('Status: SUSPENDED'), findsOneWidget);
@@ -181,7 +185,7 @@ void main() {
       ))!;
       adapter.failFirstPurchase = true;
       await tester.pumpWidget(
-        MaterialApp(home: StoreSellerScreen(session: session)),
+        shell(StoreSellerScreen(session: session)),
       );
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
@@ -194,15 +198,7 @@ void main() {
         '+50937050210',
       );
       await tapText(tester, 'Find airtime and internet plans');
-      await tester.scrollUntilVisible(
-        find.byType(DropdownButtonFormField<String>),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Natcom airtime').last);
-      await tester.pumpAndSettle();
+      await tapText(tester, 'Buy Now');
       await tapText(tester, 'Review customer price');
       await tester.scrollUntilVisible(
         find.text('Customer total: \$11.50 USD'),

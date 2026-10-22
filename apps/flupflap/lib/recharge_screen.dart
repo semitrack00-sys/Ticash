@@ -4,6 +4,7 @@ import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/widgets/mobile_operator_logo.dart';
 import 'billing_countries.dart';
 import 'internet_bundle_card.dart';
+import 'flupflap_page_title.dart';
 import 'checkout_contract.dart';
 import 'country_flag.dart';
 import 'native_actions.dart';
@@ -501,47 +502,14 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         for (final p in j.products.where(
           (p) => p.kind.name.toUpperCase() == kind,
         ))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                backgroundColor: j.product?.id == p.id
-                    ? const Color(0xFFE0EEFF)
-                    : null,
-              ),
-              onPressed: j.busy || j.locked
-                  ? null
-                  : () {
-                      j.selectProduct(p);
-                      amount.clear();
-                    },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(child: Text(p.name)),
-                        if (j.product?.id == p.id)
-                          const Icon(Icons.check_circle),
-                      ],
-                    ),
-                    if (p.description != null) Text(p.description!),
-                    if (p.amountType == 'FIXED')
-                      Text(money(p.price, p.priceCurrency)),
-                    if (p.amountType == 'RANGE')
-                      Text(
-                        '${context.ft('minimum')}: ${p.minimumAmount} ${p.priceCurrency} · ${context.ft('maximum')}: ${p.maximumAmount} ${p.priceCurrency}',
-                      ),
-                    for (final benefit in p.benefits)
-                      Text(productDetail(benefit)),
-                    if (p.validityLabel != null)
-                      Text(productDetail(p.validityLabel!)),
-                  ],
-                ),
-              ),
-            ),
+          InternetBundleCard(
+            product: p,
+            selected: j.product?.id == p.id,
+            detailLabel: productDetail,
+            onSelected: j.busy || j.locked ? null : () {
+              j.selectProduct(p);
+              amount.clear();
+            },
           ),
       ],
       if (j.product?.amountType == 'RANGE')
@@ -616,9 +584,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       ),
       button('continue', j.canReview ? j.review : null),
     ];
-    return j.internet
-        ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)
-        : card(children);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
   }
 
   Widget review() {
@@ -1047,14 +1013,14 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         if (!didPop) goBack();
       },
       child: Scaffold(
-        backgroundColor: j.internet && j.step == RechargeStep.product
+        backgroundColor: j.step == RechargeStep.product
             ? Colors.white : null,
         appBar: AppBar(
-          backgroundColor: j.internet && j.step == RechargeStep.product
+          backgroundColor: j.step == RechargeStep.product
               ? Colors.white : null,
-          surfaceTintColor: j.internet && j.step == RechargeStep.product
+          surfaceTintColor: j.step == RechargeStep.product
               ? Colors.transparent : null,
-          title: Text(context.ft(widget.history ? 'history' : 'recharge')),
+          title: FlupFlapPageTitle(context.ft(widget.history ? 'history' : 'recharge')),
           automaticallyImplyLeading: widget.history,
           leading: !widget.history && j.step != RechargeStep.destination
               ? IconButton(

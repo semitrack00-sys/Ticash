@@ -3,6 +3,9 @@ import 'package:country_picker/country_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'session.dart';
+import 'flupflap_page_title.dart';
+import 'internet_bundle_card.dart';
+import 'package:ticash/models/mobile_top_up.dart';
 
 class StoreSellerScreen extends StatefulWidget {
   const StoreSellerScreen({super.key, required this.session});
@@ -291,7 +294,7 @@ class _StoreSellerScreenState extends State<StoreSellerScreen> {
     final store = data?['store'] as Map?;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Store seller'),
+        title: const FlupFlapPageTitle('Store seller'),
         actions: [
           IconButton(
             onPressed: busy ? null : refresh,
@@ -422,31 +425,14 @@ class _StoreSellerScreenState extends State<StoreSellerScreen> {
                       onPressed: busy ? null : findProducts,
                       child: const Text('Find airtime and internet plans'),
                     ),
-                    if (products.isNotEmpty)
-                      DropdownButtonFormField<String>(
-                        initialValue: product?['id'] as String?,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Recharge or internet plan',
-                        ),
-                        items: products
-                            .map(
-                              (p) => DropdownMenuItem(
-                                value: p['id'] as String,
-                                child: Text(
-                                  '${p['name']}',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: busy
-                            ? null
-                            : (id) => setState(() {
-                                product = products.firstWhere(
-                                  (p) => p['id'] == id,
-                                );
-                              }),
+                    for (final plan in products)
+                      InternetBundleCard(
+                        product: MobileTopUpProduct.fromJson(plan),
+                        selected: product?['id'] == plan['id'],
+                        detailLabel: (value) => value,
+                        onSelected: busy ? null : () => setState(() {
+                          product = plan;
+                        }),
                       ),
                     if (product?['amountType'] == 'RANGE')
                       input(5, 'Recharge amount in USD', number: true),

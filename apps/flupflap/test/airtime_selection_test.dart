@@ -161,18 +161,13 @@ void main() {
       await press(t, find.widgetWithText(FilledButton, 'Continue'));
       expect(j.step, RechargeStep.product);
       expect(j.product?.id, range['id']);
-      final offer = find.widgetWithText(OutlinedButton, 'Digicel Haiti');
-      expect(
-        find.descendant(of: offer, matching: find.byIcon(Icons.check_circle)),
-        findsOneWidget,
-      );
-      expect(
-        t.widget<OutlinedButton>(offer).style!.backgroundColor!.resolve({}),
-        const Color(0xFFE0EEFF),
-      );
+      final offer = find.byKey(ValueKey('bundle-card-${range['id']}'));
+      expect(offer, findsOneWidget);
+      final decoration = t.widget<Container>(offer).decoration! as BoxDecoration;
+      expect((decoration.border! as Border).top.color, const Color(0xFF102650));
       final input = find.byKey(const ValueKey('range-amount'));
       expect(input, findsOneWidget);
-      expect(t.getRect(input).top, greaterThan(t.getRect(offer).bottom));
+      expect(t.getRect(input).top, greaterThanOrEqualTo(t.getRect(offer).bottom));
       expect(t.getRect(input).bottom, lessThan(t.view.physicalSize.height));
       expect(t.widget<TextField>(input).controller!.text, isEmpty);
       expect(find.textContaining('Minimum: 1.0 USD'), findsOneWidget);
@@ -284,7 +279,7 @@ void main() {
               .onPressed,
           isNull,
         );
-        await press(t, find.widgetWithText(OutlinedButton, 'Digicel Haiti'));
+        await press(t, find.byKey(ValueKey('bundle-buy-${range['id']}')));
         expect(j.product?.id, range['id']);
         expect(find.byKey(const ValueKey('range-amount')), findsOneWidget);
         expect(j.canReview, isFalse);

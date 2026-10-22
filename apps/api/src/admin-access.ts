@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 export const adminPermissions = [
+  'recharge.stores.view', 'recharge.stores.manage', 'recharge.stores.funding',
   'recharge.view', 'recharge.transactions.view', 'recharge.customers.view',
   'recharge.providers.view', 'recharge.providers.manage', 'recharge.operations',
   'recharge.refunds', 'recharge.reconciliation', 'recharge.reports',
@@ -38,6 +39,7 @@ const permissionsByRole: Record<StaffRole, AdminPermission[]> = {
     'configuration.view', 'ledger.view', 'reconciliation.view', 'audit.view',
   ],
   OPERATIONS: [
+    'recharge.stores.view',
     'recharge.view','recharge.transactions.view','recharge.customers.view','recharge.providers.view','recharge.operations','recharge.reconciliation','recharge.reports','recharge.configuration.view',
     'admin.view', 'customers.view', 'transfers.view', 'transfers.operate',
     'providers.view', 'providers.manage', 'configuration.view', 'ledger.view',
@@ -45,6 +47,7 @@ const permissionsByRole: Record<StaffRole, AdminPermission[]> = {
   ],
   SUPPORT: ['recharge.view','recharge.customers.view','recharge.transactions.view','admin.view', 'customers.view', 'transfers.view'],
   READ_ONLY: [
+    'recharge.stores.view',
     'recharge.view','recharge.transactions.view','recharge.customers.view','recharge.providers.view','recharge.reports','recharge.configuration.view',
     'admin.view', 'customers.view', 'transfers.view', 'providers.view',
     'configuration.view', 'ledger.view', 'reconciliation.view', 'audit.view',

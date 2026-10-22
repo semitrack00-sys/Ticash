@@ -1,3 +1,4 @@
+import 'store_seller_screen.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -162,7 +163,8 @@ class _FlupFlapAppState extends State<FlupFlapApp> with WidgetsBindingObserver {
         return '/login';
       }
       if ((uri.scheme == 'flupflap' && uri.host == 'checkout-return') ||
-          (kIsWeb && uri.path == '/checkout-return' &&
+          (kIsWeb &&
+              uri.path == '/checkout-return' &&
               uri.queryParameters.containsKey('checkoutResumeToken'))) {
         final token = uri.queryParameters['checkoutResumeToken'];
         // A second return may resolve to the same route, so notify the
@@ -236,7 +238,9 @@ class _FlupFlapAppState extends State<FlupFlapApp> with WidgetsBindingObserver {
               elevation: 0,
               backgroundColor: Colors.white,
               indicatorColor: const Color(0xFFE4EEFF),
-              selectedIndex: paths.indexOf(state.matchedLocation).clamp(0, 4),
+              selectedIndex: state.matchedLocation == '/store'
+                  ? 4
+                  : paths.indexOf(state.matchedLocation).clamp(0, 4),
               onDestinationSelected: (i) => context.go(paths[i]),
               destinations: [
                 NavigationDestination(
@@ -271,10 +275,15 @@ class _FlupFlapAppState extends State<FlupFlapApp> with WidgetsBindingObserver {
         routes: [
           GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
           GoRoute(
+            path: '/store',
+            builder: (_, __) => StoreSellerScreen(session: widget.session),
+          ),
+          GoRoute(
             path: '/recharge',
             builder: (_, state) => RechargeJourneyScreen(
               key: ValueKey(state.uri.queryParameters['service']),
-              initialInternet: state.uri.queryParameters['service'] == 'internet',
+              initialInternet:
+                  state.uri.queryParameters['service'] == 'internet',
               journey: journey,
               initialRecipient: state.extra is MobileTopUpRecipient
                   ? state.extra as MobileTopUpRecipient
@@ -559,8 +568,10 @@ class _AuthScreenState extends State<AuthScreen> {
           if (widget.session.deletionNotice != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
-              child: Text(context.ft(widget.session.deletionNotice!),
-                key: const ValueKey('account-deletion-notice')),
+              child: Text(
+                context.ft(widget.session.deletionNotice!),
+                key: const ValueKey('account-deletion-notice'),
+              ),
             ),
           Text(
             widget.resetToken != null
@@ -689,8 +700,13 @@ class _AuthScreenState extends State<AuthScreen> {
           if (widget.resetToken == null) ...[
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: busy ? null : () => run(() => widget.session.enterGuest()),
-              child: Text(context.ft('Continue as guest'), textAlign: TextAlign.center),
+              onPressed: busy
+                  ? null
+                  : () => run(() => widget.session.enterGuest()),
+              child: Text(
+                context.ft('Continue as guest'),
+                textAlign: TextAlign.center,
+              ),
             ),
             Wrap(
               alignment: WrapAlignment.center,
@@ -1474,6 +1490,18 @@ class _AccountScreenState extends State<AccountScreen> {
             ),
           ),
           const SizedBox(height: 20),
+          if (!widget.session.guest)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.storefront_outlined),
+                title: const Text('Store seller account'),
+                subtitle: const Text(
+                  'Sell recharge to customers using a prepaid store balance',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.go('/store'),
+              ),
+            ),
           AccountParity(
             session: widget.session,
             client: widget.client,
@@ -1593,4 +1621,3 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 }
-

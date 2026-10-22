@@ -103,7 +103,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   listRecipients(userId: string): Promise<SavedTopUpRecipientRecord[]>;
   saveRecipient(input: Omit<SavedTopUpRecipientRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<SavedTopUpRecipientRecord>;
   updateRecipientLastUsed(userId: string, id: string, productId: string, productName: string): Promise<void>;
-  createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>): Promise<MobileTopUpQuoteRecord>;
+  createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>, applyPromotions?: boolean): Promise<MobileTopUpQuoteRecord>;
   getQuote(userId: string, id: string): Promise<MobileTopUpQuoteRecord | undefined>;
   markQuoteConsumed(userId: string, id: string, when: string): Promise<void>;
   reserveTransaction(input: MobileTopUpTransactionRecord): Promise<{ record: MobileTopUpTransactionRecord; created: boolean }>;
@@ -207,7 +207,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     }
     if (operation === 'fulfillment') {
       const mockAllowed = record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
-      const stripeAllowed = record.paymentProvider === 'STRIPE' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
+      const stripeAllowed = ['STRIPE', 'STORE_BALANCE'].includes(record.paymentProvider ?? '') && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
       if (record.providerTransactionId || record.status !== 'PENDING' || !paid(record) || (!mockAllowed && !stripeAllowed)) return false;
     }
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
@@ -533,6 +533,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
         testMode: environment === 'SANDBOX',
         OR: [
           { status: 'PROCESSING', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
+          { paymentProvider: 'STORE_BALANCE', paymentStatus: 'PENDING', status: 'PENDING', quote: { expiresAt: { lt: new Date() } } },
+          { paymentProvider: 'STORE_BALANCE', paymentStatus: 'CAPTURED', OR: [{ status: 'PENDING' }, { status: 'FAILED' }, { status: 'REFUNDED' }, { storeOrder: { status: 'HELD' }, status: 'DELIVERED' }] },
           { paymentProvider: 'STRIPE', status: 'PENDING', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } },
           { paymentStatus: { in: ['REFUND_PENDING', 'VOID_PENDING'] } },
         ],
@@ -556,6 +558,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       providerTransactionId: null, status: 'PENDING', OR: [
         { paymentProvider: 'MOCK', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
         { paymentProvider: 'STRIPE', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
+        { paymentProvider: 'STORE_BALANCE', paymentStatus: 'CAPTURED' },
       ],
     });
     if (operation === 'recovery') where.paymentStatus = { in: ['AUTHORIZED', 'CAPTURED'] };
@@ -631,7 +634,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     await this.prisma.mobileTopUpRecipient.updateMany({ where: { id, ...ownerWhere(userId) }, data: { lastProductId: productId, lastProductName: productName } });
   }
 
-  async createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>) {
+  async createQuote(input: Omit<MobileTopUpQuoteRecord, 'id' | 'createdAt'>, applyPromotions = true) {
     const create = async (tx: Prisma.TransactionClient) => {
     const record = await tx.mobileTopUpQuote.create({ data: {
       ...input,
@@ -643,9 +646,9 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       expiresAt: new Date(input.expiresAt),
       consumedAt: input.consumedAt ? new Date(input.consumedAt) : null,
     } });
-    return quoteFromDb(marketingEnabled() ? await reserveQuotePromotion(tx, record, sandboxBenefitsEnabled()) : record);
+    return quoteFromDb(applyPromotions && marketingEnabled() ? await reserveQuotePromotion(tx, record, sandboxBenefitsEnabled()) : record);
     };
-    return marketingEnabled() ? this.prisma.$transaction(create) : create(this.prisma);
+    return applyPromotions && marketingEnabled() ? this.prisma.$transaction(create) : create(this.prisma);
   }
 
   async getQuote(userId: string, id: string) {
@@ -827,7 +830,7 @@ function operationField(operation: 'payment' | 'fulfillment' | 'recovery') {
   return ({ payment: 'paymentStartedAt', fulfillment: 'fulfillmentStartedAt', recovery: 'recoveryStartedAt' } as const)[operation];
 }
 function paid(record: MobileTopUpTransactionRecord) {
-  return record.paymentProvider === 'STRIPE'
+  return ['STRIPE', 'STORE_BALANCE'].includes(record.paymentProvider ?? '')
     ? ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)
     : record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
 }

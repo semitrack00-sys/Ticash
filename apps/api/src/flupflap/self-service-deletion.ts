@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { AccountDeletionError, eraseFlupFlapAccountData } from './account-deletion.js';
+import { AccountDeletionError, eraseFlupFlapAccountData, storeDeletionPending } from './account-deletion.js';
 
 // The caller must authenticate and verify the customer's password first. Never
 // accept a customer UUID from the HTTP body. A deletion request is irreversible.
@@ -15,6 +15,7 @@ export class FlupFlapSelfServiceDeletion {
           customer.passwordHash !== passwordHash || customer.authVersion !== authVersion) {
         throw new AccountDeletionError('DELETION_IDENTITY_CHANGED');
       }
+      await tx.flupFlapStore.updateMany({ where: { customerId }, data: { status: 'SUSPENDED' } });
       const request = await tx.flupFlapDeletionRequest.create({ data: { customerId } });
       await tx.flupFlapCustomer.update({ where: { id: customerId }, data: {
         status: 'DELETION_PENDING', rechargeRestricted: true, authVersion: { increment: 1 },
@@ -50,9 +51,10 @@ export class FlupFlapSelfServiceDeletion {
       ] } });
       const claims = await tx.flupFlapRecurringRecharge.count({ where: { customerId, claimedAt: { not: null } } });
       const notifications = await tx.rechargeNotification.count({ where: { transaction: owner, claimedAt: { not: null } } });
-      if (unsettled || claims || notifications) {
+      const pendingStore = await storeDeletionPending(tx, customerId);
+      if (unsettled || claims || notifications || pendingStore) {
         await tx.flupFlapDeletionRequest.update({ where: { id: request.id }, data: {
-          lastAttemptAt: new Date(), waitReason: unsettled ? 'PENDING_PAYMENTS' : 'IN_FLIGHT_WORK',
+          lastAttemptAt: new Date(), waitReason: pendingStore ? 'STORE_BALANCE_REVIEW' : unsettled ? 'PENDING_PAYMENTS' : 'IN_FLIGHT_WORK',
         } });
         return { requestId: request.id, status: 'DELETION_PENDING' as const };
       }

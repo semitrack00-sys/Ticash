@@ -142,6 +142,7 @@ describe('payment foundation persistence', () => {
     expect(await repository.claimOperation('transaction','fulfillment',timestamp.toISOString())).toBe(false);
     expect(updateMany.mock.calls[0][0]).toMatchObject({where:{id:'transaction',fulfillmentStartedAt:null,providerTransactionId:null,status:'PENDING',OR:[
       {paymentProvider:'MOCK',paymentStatus:{in:['AUTHORIZED','CAPTURED']}},{paymentProvider:'STRIPE',paymentStatus:{in:['AUTHORIZED','CAPTURED']}},
+      {paymentProvider:'STORE_BALANCE',paymentStatus:'CAPTURED'},
     ]},data:{fulfillmentStartedAt:timestamp}});
   });
   it('never creates a transaction when atomic quote consumption fails', async () => {

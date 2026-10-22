@@ -43,7 +43,7 @@ export async function deleteFlupFlapAccount(db: PrismaClient, raw: unknown, exec
     const notificationClaims = await tx.rechargeNotification.count({ where: {
       transaction: owner, claimedAt: { not: null },
     } });
-    if (unsettled || claims || notificationClaims) throw new AccountDeletionError('PAYMENT_OR_WORKER_UNRESOLVED');
+    if (unsettled || claims || notificationClaims || await storeDeletionPending(tx, customer.id)) throw new AccountDeletionError('PAYMENT_OR_WORKER_UNRESOLVED');
     const counts = {
       recipients: await tx.mobileTopUpRecipient.count({ where: owner }),
       sessions: await tx.flupFlapSession.count({ where: { customerId: customer.id } }),
@@ -64,8 +64,18 @@ export async function deleteFlupFlapAccount(db: PrismaClient, raw: unknown, exec
 
 // Internal maintenance primitive shared by verified deletion and authenticated restore suppression.
 // Call only inside a drained serializable transaction after the caller's authorization checks.
+export async function storeDeletionPending(tx: Prisma.TransactionClient, customerId: string) {
+  return await tx.flupFlapStore.count({ where: { customerId, OR: [
+    { balanceCents: { not: 0 } }, { orders: { some: { status: 'HELD' } } },
+  ] } }) > 0;
+}
+
 export async function eraseFlupFlapAccountData(tx: Prisma.TransactionClient, customerId: string, incrementVersion = true) {
     const owner = { flupFlapCustomerId: customerId };
+    if (await storeDeletionPending(tx, customerId)) throw new AccountDeletionError('PAYMENT_OR_WORKER_UNRESOLVED');
+    await tx.flupFlapStoreFunding.updateMany({ where: { store: { customerId }, status: 'PENDING' }, data: { status: 'REJECTED', reviewedAt: new Date() } });
+    await tx.flupFlapStore.updateMany({ where: { customerId }, data: { name: 'Deleted store', contactName: 'Deleted account',
+      phone: 'DELETED', address: 'DELETED', status: 'SUSPENDED' } });
     await tx.flupFlapSession.deleteMany({ where: { customerId: customerId } });
     await tx.flupFlapPasswordResetToken.deleteMany({ where: { customerId: customerId } });
     // Deleting schedules removes saved Stripe bindings and prevents future recurring charges.

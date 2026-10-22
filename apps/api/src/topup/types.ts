@@ -7,7 +7,7 @@ export type MobileTopUpKind = 'AIRTIME' | 'DATA';
 export type MobileTopUpStatus = 'PENDING' | 'PROCESSING' | 'DELIVERED' | 'FAILED' | 'REFUNDED';
 export type MobileTopUpPaymentStatus = 'PENDING' | 'SESSION_CREATED' | 'AUTHORIZED' | 'CAPTURED' | 'FAILED' | 'VOID_PENDING' | 'VOIDED' | 'REFUND_PENDING' | 'REFUNDED';
 export type MobileTopUpPaymentMethod = 'CARD' | 'APPLE_PAY' | 'GOOGLE_PAY' | 'BANK_ACCOUNT';
-export type MobileTopUpPaymentProviderName = 'MOCK' | 'STRIPE' | 'DWOLLA';
+export type MobileTopUpPaymentProviderName = 'MOCK' | 'STRIPE' | 'DWOLLA' | 'STORE_BALANCE';
 
 export interface PaymentSessionInput {
   transactionId: string;

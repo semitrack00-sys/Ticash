@@ -1,3 +1,5 @@
+import { FlupFlapStores } from './flupflap/stores.js';
+import { createStoresRouter, createStoresAdminRouter } from './flupflap/stores-router.js';
 import { createAppDownloadsRouter } from './flupflap/app-downloads-router.js';
 import { createFlupFlapAdmin } from './flupflap/admin.js';
 import { FlupFlapMarketing, marketingEnabled } from './flupflap/marketing.js';
@@ -1008,6 +1010,10 @@ export function createApp(options: CreateAppOptions = {}) {
     Boolean(mobileTopUpStripeProvider) &&
     ['stripe_sandbox', 'stripe_live'].includes(mobileTopUpConfig.paymentMode);
 
+  // Settlement remains available when new store applications/purchases are disabled.
+  const storeBalance = databaseEnabled
+    ? new FlupFlapStores(prisma, undefined, mobileTopUpConfig.environment === 'sandbox') : undefined;
+  const flupFlapStores = process.env.FLUPFLAP_STORES_ENABLED === 'true' ? storeBalance : undefined;
   const mobileTopUpService = new MobileTopUpService(
     mobileTopUpConfig,
     mobileTopUpProvider,
@@ -1027,6 +1033,7 @@ export function createApp(options: CreateAppOptions = {}) {
       return true;
     },
     recurringRechargeActive,
+    storeBalance,
   );
 
   const recurringRechargeService = recurringRechargeActive
@@ -1311,6 +1318,9 @@ export function createApp(options: CreateAppOptions = {}) {
     }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
+  app.use('/api/flupflap/stores', createStoresRouter({ stores: flupFlapStores, authenticate: flupFlap.authenticate,
+    requireRechargeAllowed: flupFlap.requireRechargeAllowed, isGuest: flupFlap.isGuest, recharge: mobileTopUpService }));
+  app.use('/api/admin/flupflap/stores', createStoresAdminRouter({ stores: flupFlapStores, authenticate, permission }));
   if (databaseEnabled && process.env.NODE_ENV !== 'test') {
     const deletion = new FlupFlapSelfServiceDeletion(prisma);
     let running = false;

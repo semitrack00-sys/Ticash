@@ -169,6 +169,7 @@ enum MobileTopUpPaymentMethod {
 }
 
 enum MobileTopUpPaymentProviderName {
+  STORE_BALANCE
   MOCK
   STRIPE
   DWOLLA
@@ -597,6 +598,7 @@ model MobileTopUpQuote {
 }
 
 model MobileTopUpTransaction {
+  storeOrder FlupFlapStoreOrder?
   promotionRewards PromoterReward[]
   receiverQuote Json?
   receiverValueConfirmed Boolean @default(false)
@@ -812,6 +814,7 @@ model IdempotencyKey {
 
 // SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
 model FlupFlapCustomer {
+  stores FlupFlapStore[]
   deletionRequest FlupFlapDeletionRequest?
   referralCode ReferralCode?
   marketingAttribution ReferralAttribution?
@@ -1116,4 +1119,65 @@ model FlupFlapAppDownloadDaily {
   importedAt DateTime @default(now())
 
   @@id([platform, appId, reportDate])
+}
+
+
+// USD-only prepaid reseller subledger, independent from TiCash customer wallets.
+model FlupFlapStore {
+  id String @id @default(uuid())
+  customerId String
+  testMode Boolean @default(true)
+  name String
+  contactName String
+  phone String
+  address String
+  country String
+  status String @default("PENDING")
+  commissionBps Int @default(2000)
+  balanceCents Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  funding FlupFlapStoreFunding[]
+  orders FlupFlapStoreOrder[]
+  entries FlupFlapStoreEntry[]
+  @@index([status, createdAt])
+  @@unique([customerId, testMode])
+}
+model FlupFlapStoreFunding {
+  id String @id @default(uuid())
+  storeId String
+  amountCents Int
+  reference String @unique
+  status String @default("PENDING")
+  reviewedBy String?
+  createdAt DateTime @default(now())
+  reviewedAt DateTime?
+  store FlupFlapStore @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  @@index([storeId, createdAt])
+}
+model FlupFlapStoreOrder {
+  transactionId String @id
+  storeId String
+  totalCents Int
+  feeCents Int
+  commissionBps Int
+  commissionCents Int
+  status String @default("HELD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  transaction MobileTopUpTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  store FlupFlapStore @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  @@index([storeId, createdAt])
+}
+model FlupFlapStoreEntry {
+  id String @id @default(uuid())
+  storeId String
+  reference String @unique
+  kind String
+  amountCents Int
+  balanceAfterCents Int
+  createdAt DateTime @default(now())
+  store FlupFlapStore @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  @@index([storeId, createdAt])
 }

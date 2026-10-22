@@ -7,6 +7,7 @@ import '../../services/admin_analytics_service.dart';
 import '../../widgets/admin_analytics_panel.dart';
 import '../../widgets/app_downloads_panel.dart';
 import '../../widgets/flupflap_promotions_panel.dart';
+import '../../widgets/flupflap_stores_panel.dart';
 
 /// A section of the existing Operations workspace, authenticated as TiCash staff.
 class FlupFlapAdminPage extends StatefulWidget {
@@ -22,6 +23,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     ('Dashboard', 'dashboard', 'recharge.view'),
     ('Transactions', 'transactions', 'recharge.transactions.view'),
     ('FlupFlap Customers', 'customers', 'recharge.customers.view'),
+    ('Store Sellers', 'stores', 'recharge.stores.view'),
     ('Countries', 'countries', 'recharge.providers.view'),
     ('Operators', 'operators', 'recharge.providers.view'),
     ('Internet Plans', 'products', 'recharge.providers.view'),
@@ -55,7 +57,9 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 
   void load() {
-    if (!widget.session.can('recharge.view') || section == 'promotions') return;
+    if (!widget.session.can('recharge.view') || ['promotions', 'stores'].contains(section)) {
+      return;
+    }
     final query = <String, dynamic>{'offset': offset};
     if (['operators', 'products'].contains(section)) {
       query['country'] = country.text.trim().toUpperCase();
@@ -283,7 +287,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
         ],
         const SizedBox(height: 16),
-        if (!['dashboard', 'promotions', 'settings'].contains(section)) ...[
+        if (!['dashboard', 'promotions', 'stores', 'settings'].contains(section)) ...[
           TextField(
             controller: search,
             onChanged: (_) => setState(() {}),
@@ -304,12 +308,18 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
           const SizedBox(height: 16),
         ],
+        if (section == 'stores')
+          FlupFlapStoresPanel(
+            dio: client,
+            canManage: widget.session.can('recharge.stores.manage'),
+            canFund: widget.session.can('recharge.stores.funding'),
+          ),
         if (section == 'promotions')
           FlupFlapPromotionsPanel(
             dio: client,
             canManage: widget.session.can('recharge.configuration.manage'),
           ),
-        if (result != null && section != 'promotions')
+        if (result != null && !['promotions', 'stores'].contains(section))
           FutureBuilder<Map<String, dynamic>>(
             future: result,
             builder: (context, snapshot) {

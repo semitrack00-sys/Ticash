@@ -1,3 +1,4 @@
+import type { StoreBalancePayment } from '../flupflap/stores.js';
 import { productReceiverQuote, validateReceiverQuote, validReceiverValue } from './receiver-value.js';
 import { receiverLanguage, receiverLanguages, ReceiverNotificationService, type ReceiverSmsProvider } from './receiver-notification.js';
 import { decodeOperatorId } from './provider-identity.js';
@@ -81,6 +82,7 @@ export class MobileTopUpService {
     receiverSmsProvider?: ReceiverSmsProvider,
     senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>,
     recurringRechargeEnabled = false,
+    private readonly storeBalance?: StoreBalancePayment,
   ) {
     this.config = config;
     this.provider = provider;
@@ -376,7 +378,7 @@ export class MobileTopUpService {
     productId?: string;
     amount?: number;
     catalogVersion?: string;
-  }): Promise<MobileTopUpQuoteRecord> {
+  }, storeSale = false): Promise<MobileTopUpQuoteRecord> {
     this.assertEnabled();
     const countryCode = normalizeTopUpCountryCode(input.countryCode);
     const phone = normalizeTopUpPhone(input.phone, countryCode);
@@ -428,7 +430,7 @@ export class MobileTopUpService {
       totalChargeUsd: pricing.totalMinorUnits / 100,
       testMode: this.isTestMode(),
       expiresAt: new Date(createdAt.getTime() + this.config.quoteTtlSeconds * 1000).toISOString(),
-    });
+    }, !storeSale);
     await this.audit(userId, 'MOBILE_TOPUP_QUOTE_CREATED', 'MobileTopUpQuote', quote.id, {
       countryCode: quote.countryCode,
       operatorId: operator.id,
@@ -468,14 +470,14 @@ export class MobileTopUpService {
     return randomBytes(32).toString('base64url');
   }
 
-  private async reservePayment(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
+  private async reservePayment(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string, storeBalance = false) {
     this.assertEnabled();
     if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
       throw new MobileTopUpError('INVALID_IDEMPOTENCY_KEY', 'A valid Idempotency-Key header is required', 400);
     }
     const replay = await this.repository.getTransactionByIdempotency(userId, idempotencyKey);
     if (replay) {
-      if (replay.quoteId !== input.quoteId || replay.recipientId !== input.recipientId) {
+      if ((replay.paymentProvider === 'STORE_BALANCE') !== storeBalance || replay.quoteId !== input.quoteId || replay.recipientId !== input.recipientId) {
         throw new MobileTopUpError('IDEMPOTENCY_CONFLICT', 'Idempotency key was already used for a different recharge', 409);
       }
       return replay;
@@ -522,8 +524,8 @@ export class MobileTopUpService {
       status: 'PENDING',
       paymentStatus: 'PENDING',
       paymentMethod: 'CARD',
-      paymentProvider: this.config.paymentMode === 'mock' ? 'MOCK' : 'STRIPE',
-      paymentSessionId: this.config.paymentMode === 'mock'
+      paymentProvider: storeBalance ? 'STORE_BALANCE' : this.config.paymentMode === 'mock' ? 'MOCK' : 'STRIPE',
+      paymentSessionId: !storeBalance && this.config.paymentMode === 'mock'
         ? 'mock-session:' + transactionId
         : undefined,
       testMode: this.isTestMode(),
@@ -534,7 +536,7 @@ export class MobileTopUpService {
     };
     const reservation = await this.repository.reserveTransaction(transaction);
     if (!reservation.created) {
-      if (reservation.record.requestHash !== transaction.requestHash) {
+      if (reservation.record.paymentProvider !== transaction.paymentProvider || reservation.record.requestHash !== transaction.requestHash) {
         throw new MobileTopUpError('IDEMPOTENCY_CONFLICT', 'Idempotency key was already used for a different recharge', 409);
       }
       return reservation.record;
@@ -876,6 +878,27 @@ export class MobileTopUpService {
     };
   }
 
+  async purchaseFromStore(userId: string, input: { quoteId: string }, key: string) {
+    if (!this.storeBalance || !flupFlapCustomerId(userId)) throw new MobileTopUpError('STORE_UNAVAILABLE', 'Store recharge is unavailable', 503);
+    const transaction = await this.reservePayment(userId, input, key, true);
+    this.assertTransactionEnvironment(transaction);
+    if (transaction.paymentStatus === 'FAILED') return transaction;
+    try {
+      if (transaction.paymentStatus === 'PENDING') await this.revalidateQuoteProduct(transaction);
+      await this.storeBalance.authorize(transaction);
+    } catch (error) {
+      if (error instanceof MobileTopUpError && ['TOPUP_QUOTE_EXPIRED', 'TOPUP_QUOTE_CHANGED'].includes(error.code)) {
+        await this.cancelTransaction(userId, transaction.id, true);
+      }
+      throw error;
+    }
+    const current = (await this.repository.getTransactionById(transaction.id))!;
+    if (current.status === 'DELIVERED') await this.storeBalance.delivered(current);
+    if (['FAILED', 'REFUNDED'].includes(current.status) && current.paymentStatus === 'CAPTURED') return this.recoverPayment(current.id);
+    if (current.paymentStatus !== 'CAPTURED' || current.status !== 'PENDING') return current;
+    return this.fulfillPaidRecharge(transaction.id);
+  }
+
   async purchase(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string) {
     const transaction = await this.reservePayment(userId, input, idempotencyKey);
     this.assertTransactionEnvironment(transaction);
@@ -941,6 +964,11 @@ export class MobileTopUpService {
     if (!initialRecord) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     this.assertTransactionEnvironment(initialRecord);
 
+    if (initialRecord.paymentProvider === 'STORE_BALANCE') {
+      if (!this.storeBalance) throw new MobileTopUpError('STORE_UNAVAILABLE', 'Store recovery is unavailable', 503);
+      await this.storeBalance.refund(initialRecord);
+      return (await this.repository.getTransactionById(id))!;
+    }
     if (!await this.repository.claimOperation(id, 'recovery', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
     let record;
     let refund;
@@ -1114,7 +1142,10 @@ export class MobileTopUpService {
       ...(status === 'REFUNDED' ? { refundedAt: timestamp } : {}),
     });
     if (status === 'DELIVERED') {
-      await this.repository.postDeliveredLedger(updated);
+      if (updated.paymentProvider === 'STORE_BALANCE') {
+        if (!this.storeBalance) throw new MobileTopUpError('STORE_UNAVAILABLE', 'Store settlement is unavailable', 503);
+        await this.storeBalance.delivered(updated);
+      } else await this.repository.postDeliveredLedger(updated);
       if (original.status !== 'DELIVERED' && this.senderReceiptEmail) {
         try {
           if (await this.senderReceiptEmail(updated)) {
@@ -1126,7 +1157,7 @@ export class MobileTopUpService {
         }
       }
     }
-    if (status === 'REFUNDED') await this.repository.postRefundLedger(updated);
+    if (status === 'REFUNDED' && updated.paymentProvider !== 'STORE_BALANCE') await this.repository.postRefundLedger(updated);
     if (status === 'FAILED' || status === 'REFUNDED') return this.recoverPayment(id, status === 'REFUNDED', allowExternalActions);
     return updated;
   }
@@ -1364,6 +1395,15 @@ export class MobileTopUpService {
   }
 
   private async refreshTransaction(record: MobileTopUpTransactionRecord, allowExternalActions = true) {
+    if (record.paymentProvider === 'STORE_BALANCE') {
+      if (record.status === 'PENDING' && record.paymentStatus === 'PENDING') {
+        const quote = await this.repository.getQuote(record.userId, record.quoteId);
+        if (quote && new Date(quote.expiresAt) <= this.clock()) return this.cancelTransaction(record.userId, record.id, true);
+      }
+      if (['FAILED', 'REFUNDED'].includes(record.status) && record.paymentStatus === 'CAPTURED') return this.recoverPayment(record.id);
+      if (record.status === 'DELIVERED') await this.storeBalance?.delivered(record);
+      if (allowExternalActions && record.status === 'PENDING' && record.paymentStatus === 'CAPTURED') return this.fulfillPaidRecharge(record.id);
+    }
     if (record.paymentProvider === 'STRIPE' && ['PENDING', 'SESSION_CREATED', 'FAILED'].includes(record.paymentStatus)) {
       const reconciled = await this.reconcileHostedStripePending(record, allowExternalActions);
       if (reconciled !== record || reconciled.paymentStatus !== record.paymentStatus || reconciled.status !== record.status) return reconciled;
@@ -1478,7 +1518,7 @@ export class MobileTopUpService {
       } catch {
         throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment cancellation could not be confirmed', 409);
       }
-    } else if (!await this.repository.claimOperation(record.id, 'payment', this.clock().toISOString())) {
+    } else if (record.paymentProvider !== 'STORE_BALANCE' && !await this.repository.claimOperation(record.id, 'payment', this.clock().toISOString())) {
       // Atomic competition with session creation: only one operation may win.
       throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Payment creation may still be in progress', 409);
     }

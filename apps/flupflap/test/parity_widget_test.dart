@@ -13,6 +13,7 @@ import 'package:flupflap/parity_strings.dart';
 import 'package:flupflap/native_actions.dart';
 import 'package:flupflap/main.dart' show flupFlapTheme;
 import 'package:ticash/localization/app_localizations.dart';
+
 import 'checkout_parity_test.dart' show fixture;
 
 Future<void> capture(WidgetTester t, String name) async {
@@ -194,7 +195,7 @@ void main() {
           await t.enterText(find.byKey(const ValueKey('range-amount')), '6.50');
           t.view.viewInsets = const FakeViewPadding(bottom: 300);
           await t.pumpAndSettle();
-          await press(t, find.text('Continue'));
+          await press(t, find.byKey(const ValueKey('continue-to-payment')));
           expect(j.step, RechargeStep.review);
           expect(t.takeException(), isNull);
           t.view.viewInsets = const FakeViewPadding();
@@ -213,7 +214,7 @@ void main() {
           await t.pumpAndSettle();
           expect(j.step, RechargeStep.product);
           expect(j.product?.id, 'range');
-          await press(t, find.text('Continue'));
+          await press(t, find.byKey(const ValueKey('continue-to-payment')));
           await press(t, find.byType(CheckboxListTile));
           final calls = <MethodCall>[];
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -268,6 +269,7 @@ void main() {
     await t.runAsync(j.continueDestination);
     await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
     await t.pumpAndSettle();
+    await press(t, find.text('Have a promo code?'));
     await t.enterText(find.byKey(const ValueKey('promotion-code')), 'welcome');
     await press(t, find.text('Apply'));
     expect(j.notice, 'promotionApplied');

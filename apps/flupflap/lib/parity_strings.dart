@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+
 import 'privacy_strings.dart';
 import 'self_deletion_strings.dart';
+
 import 'package:ticash/localization/app_localizations.dart';
 
 extension FlupFlapTranslations on BuildContext {
@@ -20,14 +22,21 @@ extension FlupFlapTranslations on BuildContext {
 
 const Map<String, Map<String, String>> flupFlapStrings = {
   "en": {
+    "continueToPayment": "Continue to Payment",
+    "transactionFee": "Transaction fee",
+    "totalToPay": "Total to pay",
+    "selectAmountForTotal":
+        "Select a product and enter a valid amount to see your total.",
     "internetBundlesTitle": "Internet & Bundles",
     "chooseBundlePlan": "Choose a plan that fits your needs",
     "bundlePlan": "Bundle",
     "providerDescription": "Provider description",
     "buyNow": "Buy Now",
     "internetBundles": "Internet & bundles",
-    "internetBundlesHelp": "Choose a destination and operator to see available plans.",
-    "noInternetOperators": "Internet bundles are not available for this destination.",
+    "internetBundlesHelp":
+        "Choose a destination and operator to see available plans.",
+    "noInternetOperators":
+        "Internet bundles are not available for this destination.",
     "nationalPhoneHelp":
         "Enter your local number. We add the country code automatically.",
     "invalidNationalPhone":
@@ -43,12 +52,10 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "guestReferral": "Create an account to get your referral code",
     "shareHelp": "Invite someone using your personal code, link, or QR code.",
     "pendingPayment": "Pending payment",
-    "pendingRecoveryHelp":
-        "This payment is not resolved yet. Check its status or cancel it before starting another recharge.",
+    "pendingRecoveryHelp": "This payment is not resolved yet. Check its status or cancel it before starting another recharge.",
     "cancelPending": "Cancel pending payment & start new recharge",
     "cancelledStartNew": "Payment cancelled. You can start a new recharge.",
-    "cancellationUnresolved":
-        "This payment cannot be safely cancelled yet. Check its status before starting another recharge.",
+    "cancellationUnresolved": "This payment cannot be safely cancelled yet. Check its status before starting another recharge.",
     "unconfirmedValue": "Provider has not confirmed the delivered value.",
     "quotedReceiver": "Quoted receiver value",
     "receiverMismatch":
@@ -90,15 +97,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
         "The payer/card country can differ from the recipient’s country.",
     "accountCountry": "Manage your stored billing country in Account.",
     "recurringTitle": "Automatic recharge",
-    "recurringHelp":
-        "Choose every 7, 15, or 30 days. FlupFlap charges your saved card automatically and pauses if the price increases or payment needs your attention.",
-    "recurringReviewHelp":
-        "Optional: choose how often FlupFlap should automatically recharge this same number after this payment succeeds.",
+    "recurringHelp": "Choose every 7, 15, or 30 days. FlupFlap charges your saved card automatically and pauses if the price increases or payment needs your attention.",
+    "recurringReviewHelp": "Optional: choose how often FlupFlap should automatically recharge this same number after this payment succeeds.",
     "recurringOff": "One-time recharge",
-    "recurringSetupPending":
-        "Automatic recharge was requested with this payment. Setup is being finalized securely.",
-    "recurringConsent":
-        "Automatically recharge this same number every {days} days using your saved card. The current total is the maximum allowed; if the price increases, automatic recharge pauses for your approval.",
+    "recurringSetupPending": "Automatic recharge was requested with this payment. Setup is being finalized securely.",
+    "recurringConsent": "Automatically recharge this same number every {days} days using your saved card. The current total is the maximum allowed; if the price increases, automatic recharge pauses for your approval.",
     "recurringConfirm": "Enable automatic recharge",
     "everyDays": "Every {days} days",
     "recurringFrequency": "Frequency",
@@ -113,12 +116,10 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "recurringPaused": "Automatic recharge paused.",
     "recurringResumed": "Automatic recharge resumed.",
     "recurringCancelled": "Automatic recharge cancelled.",
-    "recurringPaymentUnavailable":
-        "This card was not saved for automatic recharge. Complete a new card payment first, then enable automatic recharge.",
+    "recurringPaymentUnavailable": "This card was not saved for automatic recharge. Complete a new card payment first, then enable automatic recharge.",
     "promo": "Promotion code",
     "apply": "Apply",
-    "promotionApplied":
-        "Promotion recorded. Request a new quote to review eligibility and benefits.",
+    "promotionApplied": "Promotion recorded. Request a new quote to review eligibility and benefits.",
     "promotion": "Promotion",
     "originalFee": "Original fee",
     "benefit": "Promotion benefit",
@@ -157,8 +158,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "accountRequired": "Sign in or create an account for this feature.",
     "insufficientFunds": "Payment declined: insufficient funds.",
     "paymentDeclined": "Payment declined. Check your payment details.",
-    "resumeUnavailable":
-        "Return link unavailable. Sign in and check history before another payment.",
+    "resumeUnavailable": "Return link unavailable. Sign in and check history before another payment.",
     "share": "Share FlupFlap",
     "copy": "Copy link",
     "copied": "Link copied",
@@ -274,14 +274,12 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Pull down to try again.": "Pull down to try again.",
     "Quick access": "Quick access",
     "Recent activity": "Recent activity",
-    "Recharge family and friends with supported mobile operators around the world.":
-        "Recharge family and friends with supported mobile operators around the world.",
+    "Recharge family and friends with supported mobile operators around the world.": "Recharge family and friends with supported mobile operators around the world.",
     "Recharge phones worldwide in a few taps.":
         "Recharge phones worldwide in a few taps.",
     "Recipient name": "Recipient name",
     "Recipients unavailable": "Recipients unavailable",
-    "Recipients you save during checkout will appear here for quick access.":
-        "Recipients you save during checkout will appear here for quick access.",
+    "Recipients you save during checkout will appear here for quick access.": "Recipients you save during checkout will appear here for quick access.",
     "Reset FlupFlap password": "Reset FlupFlap password",
     "Retry loading countries": "Retry loading countries",
     "Save people you recharge often": "Save people you recharge often",
@@ -320,13 +318,19 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Email",
   },
   "ht": {
+    "continueToPayment": "Kontinye pou peye",
+    "transactionFee": "Frè tranzaksyon",
+    "totalToPay": "Total pou peye",
+    "selectAmountForTotal":
+        "Chwazi yon pwodwi epi antre yon montan valab pou wè total la.",
     "internetBundlesTitle": "Entènèt ak pakè",
     "chooseBundlePlan": "Chwazi yon pakè ki adapte ak bezwen ou",
     "bundlePlan": "Pakè",
     "providerDescription": "Deskripsyon founisè a",
     "buyNow": "Achte kounye a",
     "internetBundles": "Entènèt ak pake",
-    "internetBundlesHelp": "Chwazi yon destinasyon ak operatè pou wè pake ki disponib yo.",
+    "internetBundlesHelp":
+        "Chwazi yon destinasyon ak operatè pou wè pake ki disponib yo.",
     "noInternetOperators": "Pa gen pake entènèt disponib pou destinasyon sa a.",
     "nationalPhoneHelp":
         "Antre nimewo lokal ou. Nou ajoute kòd peyi a otomatikman.",
@@ -343,12 +347,10 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "guestReferral": "Kreye yon kont pou jwenn kòd referans ou",
     "shareHelp": "Envite yon moun ak kòd pèsonèl ou, lyen ou oswa kòd QR ou.",
     "pendingPayment": "Peman annatant",
-    "pendingRecoveryHelp":
-        "Peman sa a poko rezoud. Verifye estati li oswa anile li anvan ou kòmanse yon lòt rechaj.",
+    "pendingRecoveryHelp": "Peman sa a poko rezoud. Verifye estati li oswa anile li anvan ou kòmanse yon lòt rechaj.",
     "cancelPending": "Anile peman annatant lan epi kòmanse yon nouvo rechaj",
     "cancelledStartNew": "Peman an anile. Ou ka kòmanse yon nouvo rechaj.",
-    "cancellationUnresolved":
-        "Peman sa a poko ka anile san danje. Verifye estati li anvan ou kòmanse yon lòt rechaj.",
+    "cancellationUnresolved": "Peman sa a poko ka anile san danje. Verifye estati li anvan ou kòmanse yon lòt rechaj.",
     "unconfirmedValue": "Founisè a poko konfime valè ki delivre a.",
     "quotedReceiver": "Valè reseptè ki nan devis la",
     "receiverMismatch": "Valè ki delivre a diferan de devis la. Kontakte sipò.",
@@ -450,8 +452,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "accountRequired": "Konekte oswa kreye yon kont pou fonksyon sa a.",
     "insufficientFunds": "Peman refize: pa gen ase lajan.",
     "paymentDeclined": "Peman refize. Verifye enfòmasyon peman ou.",
-    "resumeUnavailable":
-        "Lyen retou a pa disponib. Konekte epi verifye istwa anvan yon lòt peman.",
+    "resumeUnavailable": "Lyen retou a pa disponib. Konekte epi verifye istwa anvan yon lòt peman.",
     "share": "Pataje FlupFlap",
     "copy": "Kopye lyen",
     "copied": "Lyen kopye",
@@ -613,6 +614,10 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Imèl",
   },
   "fr": {
+    "continueToPayment": "Continuer vers le paiement",
+    "transactionFee": "Frais de transaction",
+    "totalToPay": "Total à payer",
+    "selectAmountForTotal": "Sélectionnez un produit et saisissez un montant valide pour afficher le total.",
     "internetBundlesTitle": "Internet et forfaits",
     "chooseBundlePlan": "Choisissez un forfait adapté à vos besoins",
     "bundlePlan": "Forfait",
@@ -620,9 +625,9 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "buyNow": "Acheter",
     "internetBundles": "Internet et forfaits",
     "internetBundlesHelp": "Choisissez une destination et un opérateur pour voir les forfaits disponibles.",
-    "noInternetOperators": "Aucun forfait internet disponible pour cette destination.",
-    "nationalPhoneHelp":
-        "Saisissez votre numéro local. Nous ajoutons l’indicatif automatiquement.",
+    "noInternetOperators":
+        "Aucun forfait internet disponible pour cette destination.",
+    "nationalPhoneHelp": "Saisissez votre numéro local. Nous ajoutons l’indicatif automatiquement.",
     "invalidNationalPhone":
         "Saisissez un numéro valide pour le pays sélectionné.",
     "havePromo": "Vous avez un code promo ?",
@@ -634,17 +639,14 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "codeCopied": "Code de parrainage copié",
     "shareAction": "Partager",
     "guestReferral": "Créez un compte pour obtenir votre code de parrainage",
-    "shareHelp":
-        "Invitez quelqu’un avec votre code personnel, votre lien ou votre code QR.",
+    "shareHelp": "Invitez quelqu’un avec votre code personnel, votre lien ou votre code QR.",
     "pendingPayment": "Paiement en attente",
-    "pendingRecoveryHelp":
-        "Ce paiement n’est pas encore résolu. Vérifiez son état ou annulez-le avant de commencer une autre recharge.",
+    "pendingRecoveryHelp": "Ce paiement n’est pas encore résolu. Vérifiez son état ou annulez-le avant de commencer une autre recharge.",
     "cancelPending":
         "Annuler le paiement en attente et commencer une nouvelle recharge",
     "cancelledStartNew":
         "Paiement annulé. Vous pouvez commencer une nouvelle recharge.",
-    "cancellationUnresolved":
-        "Ce paiement ne peut pas encore être annulé en toute sécurité. Vérifiez son état avant de commencer une autre recharge.",
+    "cancellationUnresolved": "Ce paiement ne peut pas encore être annulé en toute sécurité. Vérifiez son état avant de commencer une autre recharge.",
     "unconfirmedValue": "Le fournisseur n’a pas confirmé la valeur livrée.",
     "quotedReceiver": "Valeur prévue pour le bénéficiaire",
     "receiverMismatch":
@@ -708,8 +710,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "recurringPaymentUnavailable": "Cette carte n’a pas été enregistrée pour la recharge automatique. Effectuez d’abord un nouveau paiement par carte, puis activez la recharge automatique.",
     "promo": "Code promotionnel",
     "apply": "Appliquer",
-    "promotionApplied":
-        "Promotion enregistrée. Demandez un nouveau devis pour vérifier les avantages.",
+    "promotionApplied": "Promotion enregistrée. Demandez un nouveau devis pour vérifier les avantages.",
     "promotion": "Promotion",
     "originalFee": "Frais initiaux",
     "benefit": "Avantage promotionnel",
@@ -747,8 +748,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "accountRequired": "Connectez-vous ou créez un compte pour cette fonction.",
     "insufficientFunds": "Paiement refusé : fonds insuffisants.",
     "paymentDeclined": "Paiement refusé. Vérifiez vos coordonnées de paiement.",
-    "resumeUnavailable":
-        "Lien indisponible. Connectez-vous et consultez l’historique avant un autre paiement.",
+    "resumeUnavailable": "Lien indisponible. Connectez-vous et consultez l’historique avant un autre paiement.",
     "share": "Partager FlupFlap",
     "copy": "Copier le lien",
     "copied": "Lien copié",
@@ -858,15 +858,13 @@ const Map<String, Map<String, String>> flupFlapStrings = {
         "Si le compte existe, les instructions ont été envoyées.",
     "No recharges yet": "Aucune recharge pour le moment",
     "No saved recipients yet": "Aucun destinataire enregistré",
-    "Payments and recharge processing use protected server connections.":
-        "Les paiements et recharges utilisent des connexions serveur protégées.",
+    "Payments and recharge processing use protected server connections.": "Les paiements et recharges utilisent des connexions serveur protégées.",
     "Please wait…": "Veuillez patienter…",
     "Profile updated": "Profil mis à jour",
     "Pull down to try again.": "Tirez vers le bas pour réessayer.",
     "Quick access": "Accès rapide",
     "Recent activity": "Activité récente",
-    "Recharge family and friends with supported mobile operators around the world.":
-        "Rechargez vos proches auprès des opérateurs pris en charge dans le monde.",
+    "Recharge family and friends with supported mobile operators around the world.": "Rechargez vos proches auprès des opérateurs pris en charge dans le monde.",
     "Recharge phones worldwide in a few taps.":
         "Rechargez des téléphones dans le monde en quelques gestes.",
     "Recipient name": "Nom du destinataire",
@@ -879,8 +877,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Save profile": "Enregistrer le profil",
     "Save recipient": "Enregistrer le destinataire",
     "Saving…": "Enregistrement…",
-    "Save someone during a recharge for faster sending next time.":
-        "Enregistrez un destinataire lors d’une recharge pour la prochaine fois.",
+    "Save someone during a recharge for faster sending next time.": "Enregistrez un destinataire lors d’une recharge pour la prochaine fois.",
     "Secure recharge": "Recharge sécurisée",
     "See history": "Voir l’historique",
     "Send a recharge": "Envoyer une recharge",
@@ -912,21 +909,24 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "E-mail",
   },
   "es": {
+    "continueToPayment": "Continuar al pago",
+    "transactionFee": "Comisión de transacción",
+    "totalToPay": "Total a pagar",
+    "selectAmountForTotal": "Selecciona un producto e introduce un importe válido para ver el total.",
     "internetBundlesTitle": "Internet y paquetes",
     "chooseBundlePlan": "Elige un plan que se adapte a tus necesidades",
     "bundlePlan": "Paquete",
     "providerDescription": "Descripción del proveedor",
     "buyNow": "Comprar ahora",
     "internetBundles": "Internet y paquetes",
-    "internetBundlesHelp": "Elige un destino y operador para ver los planes disponibles.",
+    "internetBundlesHelp":
+        "Elige un destino y operador para ver los planes disponibles.",
     "noInternetOperators": "No hay paquetes de internet para este destino.",
-    "nationalPhoneHelp":
-        "Introduce tu número local. Añadimos el prefijo del país automáticamente.",
+    "nationalPhoneHelp": "Introduce tu número local. Añadimos el prefijo del país automáticamente.",
     "invalidNationalPhone":
         "Introduce un número válido para el país seleccionado.",
     "havePromo": "¿Tienes un código promocional?",
-    "promoUnavailable":
-        "Este código no es válido, ha caducado o no está disponible para tu cuenta.",
+    "promoUnavailable": "Este código no es válido, ha caducado o no está disponible para tu cuenta.",
     "promoSaved": "Código guardado: {name}",
     "copyCode": "Copiar código de referido",
     "copyReferralLink": "Copiar enlace de referido",
@@ -935,12 +935,10 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "guestReferral": "Crea una cuenta para obtener tu código de referido",
     "shareHelp": "Invita a alguien con tu código personal, enlace o código QR.",
     "pendingPayment": "Pago pendiente",
-    "pendingRecoveryHelp":
-        "Este pago aún no está resuelto. Comprueba su estado o cancélalo antes de iniciar otra recarga.",
+    "pendingRecoveryHelp": "Este pago aún no está resuelto. Comprueba su estado o cancélalo antes de iniciar otra recarga.",
     "cancelPending": "Cancelar el pago pendiente e iniciar una nueva recarga",
     "cancelledStartNew": "Pago cancelado. Puedes iniciar una nueva recarga.",
-    "cancellationUnresolved":
-        "Este pago aún no se puede cancelar de forma segura. Comprueba su estado antes de iniciar otra recarga.",
+    "cancellationUnresolved": "Este pago aún no se puede cancelar de forma segura. Comprueba su estado antes de iniciar otra recarga.",
     "unconfirmedValue": "El proveedor no ha confirmado el valor entregado.",
     "quotedReceiver": "Valor cotizado para el destinatario",
     "receiverMismatch":
@@ -1003,8 +1001,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "recurringPaymentUnavailable": "Esta tarjeta no se guardó para recargas automáticas. Complete primero un nuevo pago con tarjeta y luego active la recarga automática.",
     "promo": "Código promocional",
     "apply": "Aplicar",
-    "promotionApplied":
-        "Promoción registrada. Solicite un nuevo presupuesto para revisar los beneficios.",
+    "promotionApplied": "Promoción registrada. Solicite un nuevo presupuesto para revisar los beneficios.",
     "promotion": "Promoción",
     "originalFee": "Comisión original",
     "benefit": "Beneficio promocional",
@@ -1041,8 +1038,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "accountRequired": "Inicie sesión o cree una cuenta para esta función.",
     "insufficientFunds": "Pago rechazado: fondos insuficientes.",
     "paymentDeclined": "Pago rechazado. Revise sus datos de pago.",
-    "resumeUnavailable":
-        "Enlace no disponible. Inicie sesión y consulte el historial antes de otro pago.",
+    "resumeUnavailable": "Enlace no disponible. Inicie sesión y consulte el historial antes de otro pago.",
     "share": "Compartir FlupFlap",
     "copy": "Copiar enlace",
     "copied": "Enlace copiado",
@@ -1204,20 +1200,24 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "Email": "Correo electrónico",
   },
   "pt": {
+    "continueToPayment": "Continuar para pagamento",
+    "transactionFee": "Taxa de transação",
+    "totalToPay": "Total a pagar",
+    "selectAmountForTotal":
+        "Selecione um produto e insira um valor válido para ver o total.",
     "internetBundlesTitle": "Internet e pacotes",
     "chooseBundlePlan": "Escolha um plano que atenda às suas necessidades",
     "bundlePlan": "Pacote",
     "providerDescription": "Descrição do provedor",
     "buyNow": "Comprar agora",
     "internetBundles": "Internet e pacotes",
-    "internetBundlesHelp": "Escolha um destino e uma operadora para ver os planos disponíveis.",
+    "internetBundlesHelp":
+        "Escolha um destino e uma operadora para ver os planos disponíveis.",
     "noInternetOperators": "Não há pacotes de internet para este destino.",
-    "nationalPhoneHelp":
-        "Digite seu número local. Adicionamos o código do país automaticamente.",
+    "nationalPhoneHelp": "Digite seu número local. Adicionamos o código do país automaticamente.",
     "invalidNationalPhone": "Digite um número válido para o país selecionado.",
     "havePromo": "Tem um código promocional?",
-    "promoUnavailable":
-        "Este código é inválido, expirou ou não está disponível para sua conta.",
+    "promoUnavailable": "Este código é inválido, expirou ou não está disponível para sua conta.",
     "promoSaved": "Código salvo: {name}",
     "copyCode": "Copiar código de indicação",
     "copyReferralLink": "Copiar link de indicação",
@@ -1226,13 +1226,11 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "guestReferral": "Crie uma conta para obter seu código de indicação",
     "shareHelp": "Convide alguém usando seu código pessoal, link ou código QR.",
     "pendingPayment": "Pagamento pendente",
-    "pendingRecoveryHelp":
-        "Este pagamento ainda não foi resolvido. Verifique o estado ou cancele-o antes de iniciar outra recarga.",
+    "pendingRecoveryHelp": "Este pagamento ainda não foi resolvido. Verifique o estado ou cancele-o antes de iniciar outra recarga.",
     "cancelPending": "Cancelar o pagamento pendente e iniciar uma nova recarga",
     "cancelledStartNew":
         "Pagamento cancelado. Você pode iniciar uma nova recarga.",
-    "cancellationUnresolved":
-        "Este pagamento ainda não pode ser cancelado com segurança. Verifique o estado antes de iniciar outra recarga.",
+    "cancellationUnresolved": "Este pagamento ainda não pode ser cancelado com segurança. Verifique o estado antes de iniciar outra recarga.",
     "unconfirmedValue": "O provedor não confirmou o valor entregue.",
     "quotedReceiver": "Valor cotado para o destinatário",
     "receiverMismatch":
@@ -1295,8 +1293,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "recurringPaymentUnavailable": "Este cartão não foi salvo para recarga automática. Primeiro conclua um novo pagamento com cartão e depois ative a recarga automática.",
     "promo": "Código promocional",
     "apply": "Aplicar",
-    "promotionApplied":
-        "Promoção registrada. Solicite nova cotação para revisar os benefícios.",
+    "promotionApplied": "Promoção registrada. Solicite nova cotação para revisar os benefícios.",
     "promotion": "Promoção",
     "originalFee": "Taxa original",
     "benefit": "Benefício promocional",
@@ -1334,8 +1331,7 @@ const Map<String, Map<String, String>> flupFlapStrings = {
     "accountRequired": "Entre ou crie uma conta para este recurso.",
     "insufficientFunds": "Pagamento recusado: saldo insuficiente.",
     "paymentDeclined": "Pagamento recusado. Verifique seus dados.",
-    "resumeUnavailable":
-        "Link indisponível. Entre e consulte o histórico antes de outro pagamento.",
+    "resumeUnavailable": "Link indisponível. Entre e consulte o histórico antes de outro pagamento.",
     "share": "Compartilhar FlupFlap",
     "copy": "Copiar link",
     "copied": "Link copiado",

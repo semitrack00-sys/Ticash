@@ -5,6 +5,7 @@ import 'package:flupflap/recharge_screen.dart';
 import 'package:flupflap/parity_strings.dart';
 import 'package:flupflap/phone_country_field.dart';
 import 'package:ticash/localization/app_localizations.dart';
+
 import 'checkout_parity_test.dart' show fixture;
 import 'parity_widget_test.dart' show shell, press;
 
@@ -51,25 +52,22 @@ void main() {
     },
   );
 
-  test(
-    'manual operator selection also selects its single offer and clears the old amount',
-    () async {
-      final (adapter, _, j) = fixture();
-      adapter.products
-        ..clear()
-        ..add({...range});
-      await loadProducts(j);
-      j.setAmount('10');
-      adapter.products
-        ..clear()
-        ..add({...range, 'id': 'other-provider-product', 'operatorId': 10});
-      await j.selectOperator(j.operators.last);
-      expect(j.product?.id, 'other-provider-product');
-      expect(j.product?.operatorId, 10);
-      expect(j.amount, isEmpty);
-      expect(j.canReview, isFalse);
-    },
-  );
+  test('manual operator selection also selects its single offer and clears the old amount', () async {
+    final (adapter, _, j) = fixture();
+    adapter.products
+      ..clear()
+      ..add({...range});
+    await loadProducts(j);
+    j.setAmount('10');
+    adapter.products
+      ..clear()
+      ..add({...range, 'id': 'other-provider-product', 'operatorId': 10});
+    await j.selectOperator(j.operators.last);
+    expect(j.product?.id, 'other-provider-product');
+    expect(j.product?.operatorId, 10);
+    expect(j.amount, isEmpty);
+    expect(j.canReview, isFalse);
+  });
 
   test(
     'invalid offers do not prevent selecting the sole valid product',
@@ -92,50 +90,47 @@ void main() {
     },
   );
 
-  test(
-    'range limits, precision and increment gate both Continue and quote creation',
-    () async {
-      final (adapter, _, j) = fixture();
-      adapter.products
-        ..clear()
-        ..add({...range, 'amountPrecision': 1, 'amountIncrement': 0.5});
-      await loadProducts(j);
-      for (final pair in [
-        ('', RechargeAmountIssue.empty),
-        ('0.99', RechargeAmountIssue.belowMinimum),
-        ('100.01', RechargeAmountIssue.aboveMaximum),
-        ('6.25', RechargeAmountIssue.precision),
-        ('6.20', RechargeAmountIssue.increment),
-        ('6.501', RechargeAmountIssue.invalid),
-        ('NaN', RechargeAmountIssue.invalid),
-      ]) {
-        j.setAmount(pair.$1);
-        expect(j.amountIssue, pair.$2, reason: pair.$1);
-        expect(j.canReview, isFalse);
-        await j.review();
-      }
-      expect(adapter.quoteCount, 0);
-      for (final amount in ['1', '6.50', '100']) {
-        j.setAmount(amount);
-        expect(j.amountIssue, isNull);
-        expect(j.canReview, isTrue);
-      }
+  test('range limits, precision and increment gate both Continue and quote creation', () async {
+    final (adapter, _, j) = fixture();
+    adapter.products
+      ..clear()
+      ..add({...range, 'amountPrecision': 1, 'amountIncrement': 0.5});
+    await loadProducts(j);
+    for (final pair in [
+      ('', RechargeAmountIssue.empty),
+      ('0.99', RechargeAmountIssue.belowMinimum),
+      ('100.01', RechargeAmountIssue.aboveMaximum),
+      ('6.25', RechargeAmountIssue.precision),
+      ('6.20', RechargeAmountIssue.increment),
+      ('6.501', RechargeAmountIssue.invalid),
+      ('NaN', RechargeAmountIssue.invalid),
+    ]) {
+      j.setAmount(pair.$1);
+      expect(j.amountIssue, pair.$2, reason: pair.$1);
+      expect(j.canReview, isFalse);
       await j.review();
-      expect(
-        adapter.requests.singleWhere((r) => r.path.endsWith('/quotes')).data,
-        {
-          'countryCode': 'HT',
-          'phone': '+50937000000',
-          'operatorId': 9,
-          'productId': range['id'],
-          'catalogVersion': range['catalogVersion'],
-          'amount': 100.0,
-        },
-      );
-      expect(j.quote?.feeUsd, 1.24);
-      expect(j.quote?.totalChargeUsd, 6.24);
-    },
-  );
+    }
+    expect(adapter.quoteCount, 0);
+    for (final amount in ['1', '6.50', '100']) {
+      j.setAmount(amount);
+      expect(j.amountIssue, isNull);
+      expect(j.canReview, isTrue);
+    }
+    await j.review();
+    expect(
+      adapter.requests.singleWhere((r) => r.path.endsWith('/quotes')).data,
+      {
+        'countryCode': 'HT',
+        'phone': '+50937000000',
+        'operatorId': 9,
+        'productId': range['id'],
+        'catalogVersion': range['catalogVersion'],
+        'amount': 100.0,
+      },
+    );
+    expect(j.quote?.feeUsd, 1.24);
+    expect(j.quote?.totalChargeUsd, 6.24);
+  });
 
   testWidgets(
     'single range is highlighted, amount is immediate, and Continue follows min/max validation',
@@ -163,15 +158,19 @@ void main() {
       expect(j.product?.id, range['id']);
       final offer = find.byKey(ValueKey('bundle-card-${range['id']}'));
       expect(offer, findsOneWidget);
-      final decoration = t.widget<Container>(offer).decoration! as BoxDecoration;
-      expect((decoration.border! as Border).top.color, const Color(0xFF102650));
+      final decoration =
+          t.widget<Container>(offer).decoration! as BoxDecoration;
+      expect((decoration.border! as Border).top.color, const Color(0xFF082F60));
       final input = find.byKey(const ValueKey('range-amount'));
       expect(input, findsOneWidget);
-      expect(t.getRect(input).top, greaterThanOrEqualTo(t.getRect(offer).bottom));
+      expect(
+        t.getRect(input).top,
+        greaterThanOrEqualTo(t.getRect(offer).bottom),
+      );
       expect(t.getRect(input).bottom, lessThan(t.view.physicalSize.height));
       expect(t.widget<TextField>(input).controller!.text, isEmpty);
-      expect(find.textContaining('Minimum: 1.0 USD'), findsOneWidget);
-      final next = find.widgetWithText(FilledButton, 'Continue');
+      expect(find.text('Minimum: \$1'), findsOneWidget);
+      final next = find.byKey(const ValueKey('continue-to-payment'));
       expect(t.widget<FilledButton>(next).onPressed, isNull);
       expect(find.byType(Chip), findsNothing);
       for (final pair in [
@@ -192,11 +191,21 @@ void main() {
       await t.enterText(input, '');
       await t.pump();
       expect(t.widget<FilledButton>(next).onPressed, isNull);
-      expect(adapter.quoteCount, 0);
+      expect(
+        adapter.requests.where((r) => r.path.endsWith('/payment-sessions')),
+        isEmpty,
+      );
+      final previousQuotes = adapter.quoteCount;
       await t.enterText(input, '10');
       await press(t, next);
       expect(j.step, RechargeStep.review);
-      expect(adapter.quoteCount, 1);
+      expect(adapter.quoteCount, previousQuotes + 1);
+      expect(
+        adapter.requests
+            .lastWhere((r) => r.path.endsWith('/quotes'))
+            .data['amount'],
+        10,
+      );
       await t.pumpWidget(const SizedBox());
       j.startAnother();
     },
@@ -244,7 +253,10 @@ void main() {
       expect(t.widget<TextField>(amount).controller!.text, isEmpty);
       expect(j.canReview, isFalse);
       expect(find.byType(Chip), findsNothing);
-      expect(adapter.quoteCount, 0);
+      expect(
+        adapter.requests.where((r) => r.path.endsWith('/payment-sessions')),
+        isEmpty,
+      );
       await t.pumpWidget(const SizedBox());
     },
   );
@@ -274,7 +286,7 @@ void main() {
         expect(
           t
               .widget<FilledButton>(
-                find.widgetWithText(FilledButton, 'Continue'),
+                find.byKey(const ValueKey('continue-to-payment')),
               )
               .onPressed,
           isNull,
@@ -300,7 +312,7 @@ void main() {
       await t.pumpAndSettle();
       expect(j.product?.id, 'fixed-provider-id');
       expect(find.byKey(const ValueKey('range-amount')), findsNothing);
-      final next = find.widgetWithText(FilledButton, 'Continue');
+      final next = find.byKey(const ValueKey('continue-to-payment'));
       expect(t.widget<FilledButton>(next).onPressed, isNotNull);
       await press(t, next);
       final body =
@@ -326,6 +338,7 @@ void main() {
       await t.pumpAndSettle();
       final input = find.byKey(const ValueKey('range-amount'));
       await t.enterText(input, '10');
+      await press(t, find.text('Have a promo code?'));
       await t.enterText(
         find.byKey(const ValueKey('promotion-code')),
         'welcome',
@@ -334,7 +347,10 @@ void main() {
       expect(j.product?.id, range['id']);
       expect(j.amount, '10');
       expect(j.canReview, isTrue);
-      expect(adapter.quoteCount, 0);
+      expect(
+        adapter.requests.where((r) => r.path.endsWith('/payment-sessions')),
+        isEmpty,
+      );
       await t.enterText(input, '0.99');
       for (final language in AppLanguage.values) {
         await t.pumpWidget(

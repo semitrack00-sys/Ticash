@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flupflap/main.dart';
 import 'package:flupflap/session.dart';
+
 import 'flupflap_test.dart' show FixtureAdapter, MemoryStorage;
 
 // These fixtures never participate in a production build or contact a provider.
@@ -251,9 +253,8 @@ Future<void> screenshot(WidgetTester tester, String name) async {
     final image = await boundary.toImage();
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     await Directory(directory).create(recursive: true);
-    await File(
-      '$directory/$name.png',
-    ).writeAsBytes(bytes!.buffer.asUint8List());
+    await File('$directory/$name.png')
+        .writeAsBytes(bytes!.buffer.asUint8List());
     image.dispose();
   });
 }
@@ -313,7 +314,10 @@ void main() {
         await tap(tester, find.text('Sign out'));
         expect(find.text('Welcome'), findsOneWidget);
         if (scale == 1) await screenshot(tester, 'login-${width.toInt()}');
-        final guestButton = find.widgetWithText(OutlinedButton, 'Continue as guest');
+        final guestButton = find.widgetWithText(
+          OutlinedButton,
+          'Continue as guest',
+        );
         await tester.ensureVisible(guestButton);
         await tester.pumpAndSettle();
         final buttonRect = tester.getRect(guestButton);
@@ -339,14 +343,20 @@ void main() {
     }
   }
 
-  testWidgets('account internet shortcut opens the internet recharge selection', (tester) async {
-    final (_, adapter) = await app(tester, 390);
-    await tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
-    await tap(tester, find.text('Internet & bundles'));
-    expect(find.text('Destination'), findsWidgets);
-    expect(adapter.requests.where((r) => r.path.endsWith('/payment-sessions')), isEmpty);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'account internet shortcut opens the internet recharge selection',
+    (tester) async {
+      final (_, adapter) = await app(tester, 390);
+      await tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
+      await tap(tester, find.text('Internet & bundles'));
+      expect(find.text('Destination'), findsWidgets);
+      expect(
+        adapter.requests.where((r) => r.path.endsWith('/payment-sessions')),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'saved recipient prefills recharge; AUTO, quote and purchase remain server-authoritative',
@@ -370,7 +380,7 @@ void main() {
         'phone': recipient['phone'],
       });
       await tap(tester, find.text(terms['productName'] as String));
-      await tap(tester, find.text('Continue'));
+      await tap(tester, find.byKey(const ValueKey('continue-to-payment')));
       final quote = adapter.requests.singleWhere(
         (r) => r.path.endsWith('/quotes'),
       );

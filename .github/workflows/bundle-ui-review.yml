@@ -24,9 +24,8 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test
       - name: Capture actual Flutter card renders
-        run: flutter test test/internet_bundle_card_test.dart test/internet_bundle_screen_test.dart
+        run: flutter test test/internet_bundle_card_test.dart test/internet_bundle_screen_test.dart test/approved_recharge_design_test.dart
         env:
           CAPTURE_BUNDLE_SCREENSHOTS: '1'
           FLUPFLAP_SCREENSHOT_DIR: build/bundle-screenshots
@@ -35,6 +34,10 @@ jobs:
           name: bundle-ui-screenshots
           path: apps/flupflap/build/bundle-screenshots/
           if-no-files-found: error
+      - name: Run complete Flutter regression suite
+        run: |
+          mkdir -p build
+          flutter test --reporter expanded > build/recharge-test.log 2>&1
       - name: Build review APK
         run: flutter build apk --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
       - name: Build web review bundle
@@ -44,6 +47,7 @@ jobs:
         with:
           name: bundle-ui-review
           path: |
+            apps/flupflap/build/recharge-test.log
             apps/flupflap/build/bundle-screenshots/
             apps/flupflap/build/app/outputs/flutter-apk/app-debug.apk
             apps/flupflap/build/web/

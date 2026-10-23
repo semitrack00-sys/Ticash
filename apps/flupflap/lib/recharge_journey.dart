@@ -50,8 +50,9 @@ class RechargeJourney extends ChangeNotifier {
 
   void selectService(bool value) {
     _editable();
-    if (step != RechargeStep.destination && step != RechargeStep.product)
+    if (step != RechargeStep.destination && step != RechargeStep.product) {
       return;
+    }
     if (internet == value) return;
     internet = value;
     _revision++;
@@ -563,8 +564,9 @@ class RechargeJourney extends ChangeNotifier {
         if (!_current(revision) ||
             generation != _quoteRevision ||
             locked ||
-            step != RechargeStep.product)
+            step != RechargeStep.product) {
           return;
+        }
         quote = q;
         promotion = q.promotion;
         _watchQuote();

@@ -398,7 +398,128 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         const SizedBox(height: 20),
         if (j.serviceOperators.isEmpty && !j.busy)
           Text(context.ft(j.internet ? 'noInternetOperators' : 'noProducts')),
-        DropdownButtonFormFie…1140 tokens truncated…  key: const ValueKey('apply-promo'),
+        DropdownButtonFormField<int>(
+          key: ValueKey('${j.country}:${j.internet}:${j.operator?.id}'),
+          isExpanded: true,
+          initialValue: j.operator?.id,
+          decoration: RechargeDesign.input(label: context.ft('operator')),
+          style: const TextStyle(
+            color: RechargeDesign.navy,
+            fontWeight: FontWeight.w700,
+            fontSize: 17,
+          ),
+          icon: const Icon(
+            Icons.keyboard_arrow_down,
+            color: RechargeDesign.muted,
+          ),
+          items: j.serviceOperators
+              .map(
+                (o) => DropdownMenuItem(
+                  value: o.id,
+                  child: Row(
+                    children: [
+                      MobileOperatorLogo(logoUrl: o.logoUrl),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(o.name, overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: !editable
+              ? null
+              : (id) {
+                  if (id == null) return;
+                  j.selectOperator(
+                    j.serviceOperators.firstWhere((o) => o.id == id),
+                  );
+                  amount.clear();
+                },
+        ),
+        const SizedBox(height: 12),
+        if (j.products.isEmpty && !j.busy && j.serviceOperators.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(context.ft('noProducts')),
+          ),
+        for (final p in j.products)
+          RechargeProductCard(
+            product: p,
+            selected: j.product?.id == p.id,
+            operatorName: j.operator?.name,
+            logoUrl: j.operator?.logoUrl,
+            detailLabel: productDetail,
+            onSelected: !editable
+                ? null
+                : () {
+                    // Tapping the already selected card must not erase an entered amount.
+                    if (j.product?.id != p.id) {
+                      j.selectProduct(p);
+                      amount.clear();
+                    }
+                  },
+          ),
+        if (j.product?.amountType == 'RANGE') ...[
+          const SizedBox(height: 4),
+          RechargeAmountField(
+            product: j.product!,
+            controller: amount,
+            enabled: editable,
+            errorText: amountErrorText(),
+            onChanged: j.setAmount,
+          ),
+        ],
+        const SizedBox(height: 12),
+        Container(
+          key: const ValueKey('promo-panel'),
+          decoration: const BoxDecoration(
+            color: RechargeDesign.paleBlue,
+            borderRadius: RechargeDesign.radius,
+          ),
+          child: ExpansionTile(
+            key: const PageStorageKey('recharge-promotion'),
+            shape: const Border(),
+            collapsedShape: const Border(),
+            iconColor: RechargeDesign.navy,
+            collapsedIconColor: RechargeDesign.navy,
+            leading: const Icon(
+              Icons.local_offer_outlined,
+              color: RechargeDesign.navy,
+            ),
+            title: Text(
+              context.ft('havePromo'),
+              style: RechargeDesign.title.copyWith(fontSize: 16),
+            ),
+            subtitle: j.appliedPromotionLabel == null
+                ? null
+                : Text(
+                    context.ft('promoSaved', {
+                      'name': j.appliedPromotionLabel!,
+                    }),
+                    key: const ValueKey('promo-success'),
+                  ),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            children: [
+              TextField(
+                key: const ValueKey('promotion-code'),
+                controller: promo,
+                enabled: editable,
+                textCapitalization: TextCapitalization.characters,
+                decoration: RechargeDesign.input(label: context.ft('promo'))
+                    .copyWith(
+                      errorText: j.promotionError == null
+                          ? null
+                          : context.ft(j.promotionError!),
+                      errorMaxLines: 3,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  key: const ValueKey('apply-promo'),
                   onPressed: !editable
                       ? null
                       : () => j.applyPromotion(promo.text),

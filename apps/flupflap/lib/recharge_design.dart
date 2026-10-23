@@ -27,6 +27,14 @@ abstract final class RechargeDesign {
     'GBP' => '£',
     _ => currency,
   };
+  static String limit(num amount, String currency) =>
+      '${symbol(currency)}${symbol(currency) == currency ? ' ' : ''}${number(amount)}';
+  static double textWidth(BuildContext context, String text, TextStyle style) =>
+      (TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout()).width;
   static String money(num amount, String currency) =>
       '${currency == 'USD' ? '\$' : ''}${amount.toStringAsFixed(2)} $currency';
   static InputDecoration input({String? label}) => InputDecoration(
@@ -101,11 +109,12 @@ class RechargeServiceTabs extends StatelessWidget {
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
       ];
-      if (stacked)
+      if (stacked) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [tabs.first, const SizedBox(height: 8), tabs.last],
         );
+      }
       return Row(
         children: [
           Expanded(child: tabs.first),
@@ -182,11 +191,11 @@ class RechargeProductCard extends StatelessWidget {
       children: [
         if (range) ...[
           Text(
-            '${context.ft('minimum')}: ${RechargeDesign.symbol(product.priceCurrency)}${product.priceCurrency == 'USD' || product.priceCurrency == 'EUR' || product.priceCurrency == 'GBP' ? '' : ' '}${RechargeDesign.number(product.minimumAmount!)}',
+            '${context.ft('minimum')}: ${RechargeDesign.limit(product.minimumAmount!, product.priceCurrency)}',
             style: const TextStyle(color: RechargeDesign.muted, fontSize: 14),
           ),
           Text(
-            '${context.ft('maximum')}: ${RechargeDesign.symbol(product.priceCurrency)}${product.priceCurrency == 'USD' || product.priceCurrency == 'EUR' || product.priceCurrency == 'GBP' ? '' : ' '}${RechargeDesign.number(product.maximumAmount!)}',
+            '${context.ft('maximum')}: ${RechargeDesign.limit(product.maximumAmount!, product.priceCurrency)}',
             style: const TextStyle(color: RechargeDesign.muted, fontSize: 14),
           ),
         ] else
@@ -231,9 +240,28 @@ class RechargeProductCard extends StatelessWidget {
                 children: [
                   LayoutBuilder(
                     builder: (context, constraints) {
+                      final priceWidth = range
+                          ? [product.minimumAmount!, product.maximumAmount!]
+                                .map(
+                                  (amount) => RechargeDesign.textWidth(
+                                    context,
+                                    '${context.ft(amount == product.minimumAmount ? 'minimum' : 'maximum')}: ${RechargeDesign.limit(amount, product.priceCurrency)}',
+                                    const TextStyle(fontSize: 14),
+                                  ),
+                                )
+                                .reduce((a, b) => a > b ? a : b)
+                          : RechargeDesign.textWidth(
+                              context,
+                              '${product.priceCurrency == 'USD' ? '\$' : ''}${product.price.toStringAsFixed(2)}',
+                              const TextStyle(
+                                fontSize: 21,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            );
                       final narrow =
                           constraints.maxWidth < 280 ||
-                          MediaQuery.textScalerOf(context).scale(14) > 20;
+                          MediaQuery.textScalerOf(context).scale(14) > 20 ||
+                          priceWidth > constraints.maxWidth * .44;
                       final heading = Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
@@ -255,7 +283,7 @@ class RechargeProductCard extends StatelessWidget {
                             ),
                         ],
                       );
-                      if (narrow)
+                      if (narrow) {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -264,6 +292,7 @@ class RechargeProductCard extends StatelessWidget {
                             price(),
                           ],
                         );
+                      }
                       return Row(
                         children: [
                           Expanded(child: heading),
@@ -359,34 +388,61 @@ class RechargeAmountField extends StatelessWidget {
           style: RechargeDesign.title.copyWith(fontSize: 16),
         ),
         const SizedBox(height: 9),
-        TextField(
-          key: const ValueKey('range-amount'),
-          controller: controller,
-          enabled: enabled,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          style: const TextStyle(
-            color: RechargeDesign.navy,
-            fontSize: 23,
-            fontWeight: FontWeight.w800,
-          ),
-          decoration: RechargeDesign.input().copyWith(
-            prefixIcon: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Text(
-                RechargeDesign.symbol(product.priceCurrency),
-                style: const TextStyle(
-                  color: RechargeDesign.muted,
-                  fontSize: 23,
-                ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const hintStyle = TextStyle(
+              color: RechargeDesign.muted,
+              fontSize: 12,
+            );
+            final inline =
+                MediaQuery.textScalerOf(context).scale(12) <= 15 &&
+                RechargeDesign.textWidth(context, limits, hintStyle) <
+                    constraints.maxWidth * .58;
+            return TextField(
+              key: const ValueKey('range-amount'),
+              controller: controller,
+              enabled: enabled,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
-            ),
-            prefixIconConstraints: const BoxConstraints(minWidth: 48),
-            helperText: limits,
-            helperMaxLines: 3,
-            errorText: errorText,
-            errorMaxLines: 3,
-          ),
-          onChanged: onChanged,
+              style: const TextStyle(
+                color: RechargeDesign.navy,
+                fontSize: 23,
+                fontWeight: FontWeight.w800,
+              ),
+              decoration: RechargeDesign.input().copyWith(
+                prefixIcon: Container(
+                  margin: const EdgeInsets.only(right: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      right: BorderSide(color: RechargeDesign.border),
+                    ),
+                  ),
+                  child: Text(
+                    RechargeDesign.symbol(product.priceCurrency),
+                    style: const TextStyle(
+                      color: RechargeDesign.muted,
+                      fontSize: 23,
+                    ),
+                  ),
+                ),
+                prefixIconConstraints: const BoxConstraints(minWidth: 48),
+                helperText: inline ? null : limits,
+                suffixIcon: inline
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: Text(limits, style: hintStyle),
+                      )
+                    : null,
+                suffixIconConstraints: const BoxConstraints(minHeight: 24),
+                helperMaxLines: 3,
+                errorText: errorText,
+                errorMaxLines: 3,
+              ),
+              onChanged: onChanged,
+            );
+          },
         ),
       ],
     );

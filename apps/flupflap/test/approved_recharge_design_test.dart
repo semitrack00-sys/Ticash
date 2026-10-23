@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -82,11 +81,12 @@ class CountryCatalog extends ParityAdapter {
       quoteCount++;
       final fee = feeCents;
       await quoteGate?.future;
-      if (failQuote)
+      if (failQuote) {
         throw DioException(
           requestOptions: o,
           type: DioExceptionType.connectionError,
         );
+      }
       return ResponseBody.fromString(
         jsonEncode({
           'quote': {
@@ -135,8 +135,10 @@ Future<RechargeJourney> catalog(CountryCatalog adapter) async {
 void main() {
   setUpAll(() async {
     final root = Platform.environment['FLUTTER_ROOT'];
-    if (Platform.environment['FLUPFLAP_SCREENSHOT_DIR'] == null || root == null)
+    if (Platform.environment['FLUPFLAP_SCREENSHOT_DIR'] == null ||
+        root == null) {
       return;
+    }
     for (final entry in {
       'Roboto': 'Roboto-Regular.ttf',
       'MaterialIcons': 'MaterialIcons-Regular.otf',

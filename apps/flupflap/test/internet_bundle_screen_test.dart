@@ -88,8 +88,10 @@ class BundleScreenAdapter extends CatalogAdapter {
 void main() {
   setUpAll(() async {
     final root = Platform.environment['FLUTTER_ROOT'];
-    if (Platform.environment['FLUPFLAP_SCREENSHOT_DIR'] == null || root == null)
+    if (Platform.environment['FLUPFLAP_SCREENSHOT_DIR'] == null ||
+        root == null) {
       return;
+    }
     for (final entry in {
       'Roboto': 'Roboto-Regular.ttf',
       'MaterialIcons': 'MaterialIcons-Regular.otf',

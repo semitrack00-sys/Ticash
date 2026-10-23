@@ -1,0 +1,138 @@
+name: FlupFlap iOS store captures
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/flupflap-ios-store-captures.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Capture actual iPhone and iPad screens
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          cache: true
+      - run: flutter config --no-enable-swift-package-manager
+      - run: flutter pub get --enforce-lockfile
+      - name: Build actual release-equivalent simulator application
+        run: |
+          flutter build ios --simulator --debug --build-name=1.0.4 --build-number=11 --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+          git diff --exit-code -- pubspec.yaml pubspec.lock lib ios/Runner
+      - name: Add disposable native UI capture target
+        run: |
+          set -euo pipefail
+          mkdir -p ios/StoreCaptureTests build/store-captures
+          cat > ios/StoreCaptureTests/StoreCaptureTests.swift <<'SWIFT'
+          import XCTest
+
+          final class StoreCaptureTests: XCTestCase {
+            private func capture(_ name: String) {
+              let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+              image.name = name
+              image.lifetime = .keepAlways
+              add(image)
+            }
+
+            func testActualGuestNavigation() {
+              continueAfterFailure = false
+              let app = XCUIApplication(bundleIdentifier: "com.ticash.flupflap")
+              app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+              app.launch()
+              let guest = app.buttons.matching(NSPredicate(format: "label == %@", "Continue as guest")).firstMatch
+              XCTAssertTrue(guest.waitForExistence(timeout: 60), "Actual sign-in screen did not appear")
+              capture("01-sign-in")
+              guest.tap()
+              let send = app.buttons.matching(NSPredicate(format: "label == %@", "Send a recharge")).firstMatch
+              XCTAssertTrue(send.waitForExistence(timeout: 90), "Guest navigation did not reach Home")
+              capture("02-home")
+              send.tap()
+              XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 30), "Recharge phone field is missing")
+              capture("03-recharge")
+              let account = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Account")).firstMatch
+              XCTAssertTrue(account.waitForExistence(timeout: 15), "Account navigation is missing")
+              account.tap()
+              XCTAssertTrue(app.staticTexts["Guest"].waitForExistence(timeout: 20), "Guest account screen is missing")
+              capture("04-account")
+              app.terminate()
+              app.launch()
+              XCTAssertTrue(send.waitForExistence(timeout: 60), "Guest session did not survive restart")
+              // No phone numbers, quotes, orders, payments or delivery requests are created.
+            }
+          }
+          SWIFT
+          ruby <<'RUBY'
+          require 'xcodeproj'
+          project = Xcodeproj::Project.open('ios/Runner.xcodeproj')
+          runner = project.targets.find { |t| t.name == 'Runner' }
+          raise 'Runner target missing' unless runner
+          target = project.new_target(:ui_test_bundle, 'StoreCaptureTests', :ios, '15.0')
+          target.add_dependency(runner)
+          group = project.main_group.new_group('StoreCaptureTests', 'StoreCaptureTests')
+          source = group.new_file('StoreCaptureTests.swift')
+          target.source_build_phase.add_file_reference(source)
+          target.build_configurations.each do |config|
+            config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.ticash.flupflap.StoreCaptureTests'
+            config.build_settings['GENERATE_INFOPLIST_FILE'] = 'YES'
+            config.build_settings['SWIFT_VERSION'] = '5.0'
+            config.build_settings['TEST_TARGET_NAME'] = 'Runner'
+            config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+            config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+          end
+          project.save
+          scheme = Xcodeproj::XCScheme.new
+          scheme.add_build_target(runner)
+          scheme.add_build_target(target)
+          scheme.add_test_target(target)
+          scheme.set_launch_target(runner)
+          scheme.save_as('ios/Runner.xcodeproj', 'StoreCaptures', true)
+          RUBY
+      - name: Capture iPhone and iPad with native guest smoke tests
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available --json > build/store-captures/devices.json
+          python3 - <<'PY'
+          import json, pathlib
+          data = json.loads(pathlib.Path('build/store-captures/devices.json').read_text())
+          devices = [d for values in data['devices'].values() for d in values if d.get('isAvailable')]
+          groups = {'iphone': lambda n: n.startswith('iPhone') and 'Pro Max' in n,
+                    'ipad': lambda n: n.startswith('iPad Pro') and '13-inch' in n}
+          chosen = {}
+          for kind, accepts in groups.items():
+              matches = [d for d in devices if accepts(d['name'])]
+              assert matches, f'No supported {kind} simulator available'
+              chosen[kind] = matches[0]
+          pathlib.Path('build/store-captures/selected-devices.json').write_text(json.dumps(chosen, indent=2))
+          PY
+          for device_kind in iphone ipad; do
+            device_id=$(python3 -c 'import json,sys; print(json.load(open("build/store-captures/selected-devices.json"))[sys.argv[1]]["udid"])' "$device_kind")
+            state=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["state"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["udid"] == sys.argv[1]))' "$device_id")
+            if [ "$state" != Booted ]; then xcrun simctl boot "$device_id"; fi
+            xcrun simctl bootstatus "$device_id" -b
+            xcrun simctl status_bar "$device_id" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+            xcodebuild test -workspace ios/Runner.xcworkspace -scheme StoreCaptures -configuration Debug \
+              -destination "id=$device_id" -resultBundlePath "build/store-captures/$device_kind.xcresult" \
+              -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -quiet
+            xcrun xcresulttool export attachments --path "build/store-captures/$device_kind.xcresult" --output-path "build/store-captures/$device_kind"
+            xcrun simctl shutdown "$device_id"
+          done
+          git rev-parse HEAD > build/store-captures/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flupflap-ios-store-captures
+          path: apps/flupflap/build/store-captures/
+          retention-days: 7
+          if-no-files-found: error

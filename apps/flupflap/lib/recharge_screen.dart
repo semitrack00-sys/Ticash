@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ticash/models/mobile_top_up.dart';
 import 'package:ticash/widgets/mobile_operator_logo.dart';
+
 import 'billing_countries.dart';
-import 'internet_bundle_card.dart';
+import 'recharge_design.dart';
 import 'flupflap_page_title.dart';
 import 'checkout_contract.dart';
 import 'country_flag.dart';
@@ -111,6 +114,25 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       nickname = TextEditingController();
   RechargeJourney get j => widget.journey;
   String? uiError;
+  Timer? _previewTimer;
+  int? _scheduledQuoteRevision;
+
+  void schedulePricePreview() {
+    if (widget.history ||
+        widget.returnOnly ||
+        j.step != RechargeStep.product ||
+        !j.canReview) {
+      _previewTimer?.cancel();
+      _scheduledQuoteRevision = null;
+      return;
+    }
+    if (_scheduledQuoteRevision == j.quoteRevision) return;
+    _scheduledQuoteRevision = j.quoteRevision;
+    _previewTimer?.cancel();
+    _previewTimer = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) j.previewQuote();
+    });
+  }
 
   bool get canReturnToDestination =>
       !j.busy &&
@@ -166,6 +188,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    j.addListener(schedulePricePreview);
     phone.text = j.phone;
     amount.text = j.amount;
     nickname.text = j.nickname;
@@ -197,6 +220,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         j.selectService(true);
       }
       if (widget.history) await j.loadHistory();
+      schedulePricePreview();
     });
   }
 
@@ -230,6 +254,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    j.removeListener(schedulePricePreview);
+    _previewTimer?.cancel();
     phone.dispose();
     amount.dispose();
     promo.dispose();
@@ -280,6 +306,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     }
     return code;
   }
+
   // Translate our shared model's labels, not the provider's product description.
   String productDetail(String value) => value.replaceAllMapped(
     RegExp(
@@ -353,238 +380,87 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
   }
 
   Widget product() {
-    final kinds = j.products.map((p) => p.kind.name.toUpperCase()).toSet();
-    final children = <Widget>[
-      if (!j.internet) Text(
-        context.ft('operatorProduct'),
-        style: Theme.of(context).textTheme.headlineSmall,
-      ),
-      const SizedBox(height: 16),
-      if (j.internet)
-        Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE7EBF0)),
-          ),
-          child: Row(children: [
-            for (final internet in [false, true])
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    border: Border(bottom: BorderSide(
-                      color: j.internet == internet
-                          ? InternetBundleCard.blue : Colors.transparent,
-                      width: 3,
-                    )),
-                  ),
-                  child: ChoiceChip(
-                    showCheckmark: false,
-                    label: SizedBox(
-                      width: double.infinity,
-                      child: Text(
-                        context.ft(internet ? 'internetBundles' : 'AIRTIME'),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    labelStyle: TextStyle(
-                      color: j.internet == internet
-                          ? InternetBundleCard.blue : InternetBundleCard.navy,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    selectedColor: const Color(0xFFF1F5FA),
-                    backgroundColor: Colors.white,
-                    side: BorderSide.none,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    selected: j.internet == internet,
-                    onSelected: j.busy || j.locked ? null : (_) {
-                      j.selectService(internet);
-                      amount.clear();
-                    },
-                  ),
-                ),
-              ),
-          ]),
-        )
-      else
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final internet in [false, true])
-            ChoiceChip(
-              label: Text(context.ft(internet ? 'internetBundles' : 'AIRTIME')),
-              selected: j.internet == internet,
-              onSelected: j.busy || j.locked ? null : (_) {
-                j.selectService(internet);
-                amount.clear();
-              },
-            ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      if (j.serviceOperators.isEmpty && !j.busy)
-        Text(context.ft(j.internet ? 'noInternetOperators' : 'noProducts')),
-      DropdownButtonFormField<int>(
-        key: ValueKey('${j.country}:${j.internet}:${j.operator?.id}'),
-        isExpanded: true,
-        initialValue: j.operator?.id,
-        decoration: InputDecoration(labelText: context.ft('operator')),
-        items: j.serviceOperators
-            .map(
-              (o) => DropdownMenuItem(
-                value: o.id,
-                child: Row(
-                  children: [
-                    MobileOperatorLogo(logoUrl: o.logoUrl),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(o.name, overflow: TextOverflow.ellipsis),
-                    ),
-                  ],
-                ),
-              ),
-            )
-            .toList(),
-        onChanged: j.busy || j.locked
-            ? null
-            : (id) {
-                final op = j.operators.firstWhere((o) => o.id == id);
-                j.selectOperator(op);
-                amount.clear();
-              },
-      ),
-      if (j.operator != null && !j.internet) ...[
+    final editable = !j.busy && !j.locked;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(context.ft('operatorProduct'), style: RechargeDesign.title),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            MobileOperatorLogo(logoUrl: j.operator!.logoUrl),
-            const SizedBox(width: 10),
-            Expanded(child: Text(j.operator!.name)),
-          ],
+        RechargeServiceTabs(
+          internet: j.internet,
+          onChanged: editable
+              ? (value) {
+                  j.selectService(value);
+                  amount.clear();
+                }
+              : null,
         ),
-      ],
-      if (j.products.isEmpty && !j.busy)
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(context.ft('noProducts')),
-        ),
-      if (j.internet) ...[
         const SizedBox(height: 20),
-        Text(context.ft('internetBundlesTitle'), style: const TextStyle(
-            color: InternetBundleCard.navy, fontSize: 24, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 6),
-        Text(context.ft('chooseBundlePlan'), style: const TextStyle(
-            color: InternetBundleCard.navy, fontSize: 14)),
-        const SizedBox(height: 16),
-        for (final p in j.products)
-          InternetBundleCard(
-            product: p,
-            selected: j.product?.id == p.id,
-            detailLabel: productDetail,
-            onSelected: j.busy || j.locked ? null : () {
-              j.selectProduct(p);
-              amount.clear();
-            },
-          ),
-      ],
-      if (!j.internet) for (final kind in kinds) ...[
-        Padding(
-          padding: const EdgeInsets.only(top: 16, bottom: 8),
-          child: Text(
-            context.ft(kind),
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        for (final p in j.products.where(
-          (p) => p.kind.name.toUpperCase() == kind,
-        ))
-          InternetBundleCard(
-            product: p,
-            selected: j.product?.id == p.id,
-            detailLabel: productDetail,
-            onSelected: j.busy || j.locked ? null : () {
-              j.selectProduct(p);
-              amount.clear();
-            },
-          ),
-      ],
-      if (j.product?.amountType == 'RANGE')
-        TextField(
-          key: const ValueKey('range-amount'),
-          controller: amount,
-          enabled: !j.busy && !j.locked,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: context.ft('amount'),
-            errorText: amountErrorText(),
-            errorMaxLines: 3,
-          ),
-          onChanged: j.setAmount,
-        ),
-      const SizedBox(height: 16),
-      Container(
-        key: const ValueKey('promo-panel'),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: j.internet ? Colors.white : const Color(0xFFE9F2FF),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: j.internet
-              ? const Color(0xFFE7EBF0) : const Color(0xFFC5DCFF)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              context.ft('havePromo'),
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('promotion-code'),
-              controller: promo,
-              enabled: !j.busy && !j.locked,
-              textCapitalization: TextCapitalization.characters,
-              decoration: InputDecoration(
-                labelText: context.ft('promo'),
-                prefixIcon: const Icon(Icons.local_offer_outlined),
-                errorText: j.promotionError == null
-                    ? null
-                    : context.ft(j.promotionError!),
-                errorMaxLines: 3,
-              ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              key: const ValueKey('apply-promo'),
-              onPressed: j.busy || j.locked
-                  ? null
-                  : () => j.applyPromotion(promo.text),
-              child: Text(context.ft('apply')),
-            ),
-            if (j.appliedPromotionLabel != null) ...[
-              const SizedBox(height: 8),
-              Semantics(
-                liveRegion: true,
-                child: Text(
-                  context.ft('promoSaved', {'name': j.appliedPromotionLabel!}),
-                  key: const ValueKey('promo-success'),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+        if (j.serviceOperators.isEmpty && !j.busy)
+          Text(context.ft(j.internet ? 'noInternetOperators' : 'noProducts')),
+        DropdownButtonFormFie…1140 tokens truncated…  key: const ValueKey('apply-promo'),
+                  onPressed: !editable
+                      ? null
+                      : () => j.applyPromotion(promo.text),
+                  child: Text(context.ft('apply')),
                 ),
               ),
-              Text(context.ft('promotionApplied')),
+              if (j.appliedPromotionLabel != null)
+                Text(context.ft('promotionApplied')),
             ],
-          ],
+          ),
         ),
-      ),
-      button('continue', j.canReview ? j.review : null),
-    ];
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+        const SizedBox(height: 12),
+        RechargePriceSummary(
+          quote: j.quoteValid ? j.quote : null,
+          loading: j.previewBusy,
+          message: j.previewError != null
+              ? context.ft(j.previewError!)
+              : j.quote != null && !j.quoteValid
+              ? context.ft('quoteExpired')
+              : null,
+          onRetry:
+              editable &&
+                  (j.previewError != null || j.quote != null && !j.quoteValid)
+              ? j.previewQuote
+              : null,
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            key: const ValueKey('continue-to-payment'),
+            style: FilledButton.styleFrom(
+              backgroundColor: RechargeDesign.navy,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 52),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              shape: const RoundedRectangleBorder(
+                borderRadius: RechargeDesign.radius,
+              ),
+            ),
+            onPressed: j.canReview ? j.review : null,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    context.ft('continueToPayment'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 17,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Icon(Icons.arrow_forward),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget review() {
@@ -717,9 +593,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         const SizedBox(height: 18),
         Text(
           context.ft('recurringTitle'),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
+          style: Theme.of(context).textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
         Text(context.ft('recurringReviewHelp')),
@@ -906,9 +781,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         const Divider(),
         Text(
           context.ft('recurringTitle'),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
+          style: Theme.of(context).textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
         if (recurring == null)
@@ -916,7 +790,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         else ...[
           row(
             'recurringFrequency',
-            context.ft('everyDays', {'days': recurring.intervalDays.toString()}),
+            context.ft('everyDays', {
+              'days': recurring.intervalDays.toString(),
+            }),
           ),
           row('recurringNext', recurring.nextRunAt.toLocal().toString()),
           Text(context.ft('recurringStatus${recurring.status}')),
@@ -958,29 +834,35 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           key: ValueKey('receipt-delete-${r.id}'),
           icon: const Icon(Icons.delete_outline),
           label: Text(context.ft('Delete receipt')),
-          onPressed: j.busy ? null : () async {
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (dialogContext) => AlertDialog(
-                title: Text(context.ft('Delete receipt')),
-                content: Text(context.ft('This removes the receipt from your history.')),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: Text(context.ft('Cancel')),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    child: Text(context.ft('Delete')),
-                  ),
-                ],
-              ),
-            );
-            if (confirmed == true && r.id != null) {
-              await j.client.removeReceipt(r.id!);
-              await j.loadHistory();
-            }
-          },
+          onPressed: j.busy
+              ? null
+              : () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: Text(context.ft('Delete receipt')),
+                      content: Text(
+                        context.ft(
+                          'This removes the receipt from your history.',
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: Text(context.ft('Cancel')),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: Text(context.ft('Delete')),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true && r.id != null) {
+                    await j.client.removeReceipt(r.id!);
+                    await j.loadHistory();
+                  }
+                },
         ),
       if (historical && r.terminal)
         button(
@@ -1013,14 +895,25 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         if (!didPop) goBack();
       },
       child: Scaffold(
-        backgroundColor: j.step == RechargeStep.product
-            ? Colors.white : null,
+        backgroundColor: j.step == RechargeStep.product ? Colors.white : null,
         appBar: AppBar(
-          backgroundColor: j.step == RechargeStep.product
-              ? Colors.white : null,
+          backgroundColor: !widget.history ? RechargeDesign.navy : null,
+          foregroundColor: !widget.history ? Colors.white : null,
+          titleTextStyle: !widget.history
+              ? const TextStyle(
+                  fontFamily: 'Roboto',
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                )
+              : null,
           surfaceTintColor: j.step == RechargeStep.product
-              ? Colors.transparent : null,
-          title: FlupFlapPageTitle(context.ft(widget.history ? 'history' : 'recharge')),
+              ? Colors.transparent
+              : null,
+          title: FlupFlapPageTitle(
+            context.ft(widget.history ? 'history' : 'recharge'),
+            onNavy: !widget.history,
+          ),
           automaticallyImplyLeading: widget.history,
           leading: !widget.history && j.step != RechargeStep.destination
               ? IconButton(
@@ -1104,4 +997,3 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     ),
   );
 }
-

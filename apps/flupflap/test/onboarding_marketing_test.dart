@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +14,7 @@ import 'package:flupflap/recharge_journey.dart';
 import 'package:flupflap/recharge_screen.dart';
 import 'package:flupflap/session.dart';
 import 'package:ticash/localization/app_localizations.dart';
+
 import 'flupflap_test.dart' as auth;
 import 'checkout_parity_test.dart' as checkout;
 import 'parity_widget_test.dart' show shell, press, capture;
@@ -93,9 +95,8 @@ void noPurchases(List<RequestOptions> requests) {
     requests.where(
       (r) =>
           r.method != 'GET' &&
-          RegExp(
-            r'payment|transactions|purchase|refund|reward|sms',
-          ).hasMatch(r.path),
+          RegExp(r'payment|transactions|purchase|refund|reward|sms')
+              .hasMatch(r.path),
     ),
     isEmpty,
   );
@@ -337,6 +338,7 @@ void main() {
       await t.pumpWidget(shell(RechargeJourneyScreen(journey: j)));
       await t.pumpAndSettle();
       expect(find.text('Have a promo code?'), findsOneWidget);
+      await press(t, find.text('Have a promo code?'));
       await t.enterText(
         find.byKey(const ValueKey('promotion-code')),
         'welcome',
@@ -347,13 +349,14 @@ void main() {
       expect(j.canPay, isFalse);
       expect(a.quoteCount, 1);
       await capture(t, 'promo-applied');
-      await press(t, find.widgetWithText(FilledButton, 'Continue'));
+      await press(t, find.byKey(const ValueKey('continue-to-payment')));
       expect(a.quoteCount, 2);
       expect(j.quote!.feeUsd, .74);
       expect(find.text('Server promotion'), findsOneWidget);
       await t.runAsync(j.back);
       await t.pumpAndSettle();
       a.rejected = true;
+      await press(t, find.text('Have a promo code?'));
       await t.enterText(
         find.byKey(const ValueKey('promotion-code')),
         'expired',

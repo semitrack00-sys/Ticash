@@ -26,7 +26,7 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - name: Capture actual Flutter card renders
-        run: flutter test test/internet_bundle_card_test.dart test/internet_bundle_screen_test.dart
+        run: flutter test test/internet_bundle_card_test.dart test/internet_bundle_screen_test.dart test/approved_recharge_design_test.dart
         env:
           CAPTURE_BUNDLE_SCREENSHOTS: '1'
           FLUPFLAP_SCREENSHOT_DIR: build/bundle-screenshots

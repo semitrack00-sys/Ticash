@@ -1,7 +1,9 @@
 import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:ticash/models/mobile_top_up.dart';
+
 import 'checkout_contract.dart';
 
 enum RechargeStep { destination, product, review, payment, recovery, result }
@@ -43,12 +45,13 @@ class RechargeJourney extends ChangeNotifier {
   String phone = '', amount = '', nickname = '';
   int? recurringIntervalDays;
   bool internet = false;
-  List<MobileTopUpOperator> get serviceOperators => operators
-      .where((o) => o.internetService == internet).toList();
+  List<MobileTopUpOperator> get serviceOperators =>
+      operators.where((o) => o.internetService == internet).toList();
 
   void selectService(bool value) {
     _editable();
-    if (step != RechargeStep.destination && step != RechargeStep.product) return;
+    if (step != RechargeStep.destination && step != RechargeStep.product)
+      return;
     if (internet == value) return;
     internet = value;
     _revision++;
@@ -354,7 +357,17 @@ class RechargeJourney extends ChangeNotifier {
     if (locked || busy) throw StateError('Resolve pending checkout first');
   }
 
+  int _quoteRevision = 0;
+  int get quoteRevision => _quoteRevision;
+  bool previewBusy = false;
+  String? previewError;
+  Future<void>? _previewFlight;
+
   void _invalidateQuote() {
+    _quoteRevision++;
+    _previewFlight = null;
+    previewBusy = false;
+    previewError = null;
     _quoteTimer?.cancel();
     quote = null;
     promotion = null;
@@ -464,9 +477,8 @@ class RechargeJourney extends ChangeNotifier {
   Future<void> continueDestination() => _run((v) async {
     if (country == null ||
         !countries.any((c) => c.code == country) ||
-        !RegExp(
-          r'^\+[1-9][0-9]{6,14}$',
-        ).hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
+        !RegExp(r'^\+[1-9][0-9]{6,14}$')
+            .hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
       throw const FormatException('Invalid destination');
     }
     phone = phone.replaceAll(RegExp(r'[\s().-]'), '');
@@ -485,7 +497,12 @@ class RechargeJourney extends ChangeNotifier {
     operator = detected == null
         ? null
         : list
-              .where((o) => o.id == detected!.id && o.countryCode == country && o.internetService == internet)
+              .where(
+                (o) =>
+                    o.id == detected!.id &&
+                    o.countryCode == country &&
+                    o.internetService == internet,
+              )
               .firstOrNull;
     product = null;
     products = [];
@@ -497,7 +514,9 @@ class RechargeJourney extends ChangeNotifier {
     }
   });
   Future<void> selectOperator(MobileTopUpOperator value) => _run((v) async {
-    if (locked || !serviceOperators.contains(value) || value.countryCode != country) {
+    if (locked ||
+        !serviceOperators.contains(value) ||
+        value.countryCode != country) {
       throw StateError('Invalid operator');
     }
     operator = value;
@@ -528,30 +547,80 @@ class RechargeJourney extends ChangeNotifier {
     return double.parse(amount);
   }
 
-  Future<void> review() => _run((v) async {
-    if (locked || !_validSelection) {
-      throw StateError('Select product');
-    }
+  /// A server quote for the product-page summary. It never reserves a payment.
+  /// Edits invalidate the generation so an older response cannot replace a newer
+  /// selection, amount, country or promotion (even if requests finish out of order).
+  Future<void> previewQuote() async {
+    if (!canReview || step != RechargeStep.product || quoteValid) return;
+    if (_previewFlight != null) return _previewFlight;
+    final generation = _quoteRevision;
+    final revision = _revision;
+    previewBusy = true;
+    previewError = null;
+    final flight = () async {
+      try {
+        final q = await _requestQuote();
+        if (!_current(revision) ||
+            generation != _quoteRevision ||
+            locked ||
+            step != RechargeStep.product)
+          return;
+        quote = q;
+        promotion = q.promotion;
+        _watchQuote();
+      } catch (e) {
+        if (_current(revision) && generation == _quoteRevision) {
+          previewError = safeError(e);
+        }
+      } finally {
+        if (!_disposed && generation == _quoteRevision) {
+          previewBusy = false;
+          _previewFlight = null;
+          _emit();
+        }
+      }
+    }();
+    _previewFlight = flight;
+    _emit();
+    return flight;
+  }
+
+  Future<MobileTopUpQuote> _requestQuote() async {
+    if (locked || !_validSelection) throw StateError('Select product');
+    final selectedCountry = country!;
+    final selectedPhone = phone;
+    final selectedOperator = operator!.id;
+    final selectedProduct = product!;
     final q = await client.topups.quote(
-      countryCode: country!,
-      phone: phone,
-      operatorId: operator!.id,
-      productId: product!.id,
+      countryCode: selectedCountry,
+      phone: selectedPhone,
+      operatorId: selectedOperator,
+      productId: selectedProduct.id,
       amount: _rangeAmount(),
-      catalogVersion: product!.catalogVersion,
+      catalogVersion: selectedProduct.catalogVersion,
     );
-    if (!_current(v)) return;
-    if (q.countryCode != country ||
-        q.phone != phone ||
-        q.operatorId != operator!.id ||
-        q.productId != product!.id) {
+    if (q.countryCode != selectedCountry ||
+        q.phone != selectedPhone ||
+        q.operatorId != selectedOperator ||
+        q.productId != selectedProduct.id) {
       throw const FormatException('Quote binding mismatch');
     }
+    return q;
+  }
+
+  Future<void> review() => _run((v) async {
+    if (locked || !_validSelection) throw StateError('Select product');
+    // Reuse exactly the quote displayed in the summary. A failed or expired
+    // preview is retried here; confirmation and payment remain separate steps.
+    await _previewFlight;
+    if (!_current(v)) return;
+    final q = quoteValid ? quote! : await _requestQuote();
+    if (!_current(v)) return;
     quote = q;
     _watchQuote();
     reviewed = false;
     step = RechargeStep.review;
-    promotion = null;
+    promotion = q.promotion;
     try {
       final details = await client.promotion(q.id);
       promotion = details == null ? q.promotion : {...?q.promotion, ...details};

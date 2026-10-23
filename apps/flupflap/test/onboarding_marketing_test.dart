@@ -345,9 +345,14 @@ void main() {
       );
       await press(t, find.byKey(const ValueKey('apply-promo')));
       expect(find.text('Code saved: Server welcome offer'), findsOneWidget);
-      expect(j.quote, isNull);
+      await t.pump(const Duration(milliseconds: 450));
+      await t.pumpAndSettle();
+      expect(
+        j.quote!.feeUsd,
+        .74,
+      ); // fresh server preview after claiming the promotion
       expect(j.canPay, isFalse);
-      expect(a.quoteCount, 1);
+      expect(a.quoteCount, 2);
       await capture(t, 'promo-applied');
       await press(t, find.byKey(const ValueKey('continue-to-payment')));
       expect(a.quoteCount, 2);
@@ -369,7 +374,12 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('promo-success')), findsNothing);
-      expect(j.quote, isNull);
+      await t.pump(const Duration(milliseconds: 450));
+      await t.pumpAndSettle();
+      // A rejected code never fabricates a discount. The server retains the
+      // previously claimed promotion and returns its authoritative fee.
+      expect(j.quote!.feeUsd, .74);
+      expect(a.quoteCount, 3);
       expect(j.canPay, isFalse);
       noPurchases(a.requests);
       await t.pumpWidget(const SizedBox());

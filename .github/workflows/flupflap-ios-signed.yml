@@ -1,0 +1,140 @@
+name: FlupFlap signed iOS review build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: 'Unused App Store Connect build number'
+        required: true
+        default: '10'
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    # Signing is available only through an explicit dispatch of the main branch.
+    if: github.ref == 'refs/heads/main'
+    environment: flupflap-ios-release
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          cache: true
+      - run: flutter config --no-enable-swift-package-manager
+      - run: flutter pub get
+      - name: Install approved distribution credentials in a temporary keychain
+        env:
+          P12_BASE64: ${{ secrets.FLUPFLAP_IOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.FLUPFLAP_IOS_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.FLUPFLAP_IOS_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$P12_BASE64" && test -n "$P12_PASSWORD" && test -n "$PROFILE_BASE64"
+          signing_dir="$RUNNER_TEMP/flupflap-signing"
+          mkdir -p "$signing_dir"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$signing_dir/distribution.p12"
+          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$signing_dir/profile.mobileprovision"
+          security cms -D -i "$signing_dir/profile.mobileprovision" > "$signing_dir/profile.plist"
+          python3 - "$signing_dir" <<'PY'
+          import datetime, hashlib, pathlib, plistlib, sys
+          root = pathlib.Path(sys.argv[1])
+          profile = plistlib.loads((root / 'profile.plist').read_bytes())
+          assert profile['TeamIdentifier'] == ['7P2QSN66T7']
+          assert profile['Name'] == 'FlupFlap Recharge App Store'
+          assert profile['Entitlements']['application-identifier'] == '7P2QSN66T7.com.ticash.flupflap'
+          assert not profile['Entitlements']['get-task-allow']
+          assert not profile.get('ProvisionedDevices') and not profile.get('ProvisionsAllDevices')
+          assert profile['ExpirationDate'] > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+          expected = '9f1f60dc7313f840283fe10a0b95b84da7f1c9dba1229d582dcdd4f7237578ee'
+          assert any(hashlib.sha256(c).hexdigest() == expected for c in profile['DeveloperCertificates'])
+          (root / 'profile-uuid').write_text(profile['UUID'])
+          PY
+          profile_uuid=$(cat "$signing_dir/profile-uuid")
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$signing_dir/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          keychain="$signing_dir/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 32)
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_dir/distribution.p12" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm "$signing_dir/distribution.p12"
+      - name: Build signed App Store archive
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          # Set manual signing only for this disposable build checkout.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('ios/Runner.xcodeproj/project.pbxproj')
+          s = p.read_text()
+          marker = 'CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'
+          assert s.count(marker) == 3
+          s = s.replace(marker, marker + '\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\t"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";\n\t\t\t\t"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "FlupFlap Recharge App Store";')
+          p.write_text(s)
+          import plistlib
+          options = dict(method='app-store-connect', signingStyle='manual', teamID='7P2QSN66T7',
+                         signingCertificate='Apple Distribution',
+                         provisioningProfiles={'com.ticash.flupflap': 'FlupFlap Recharge App Store'},
+                         manageAppVersionAndBuildNumber=False, uploadSymbols=True)
+          Path('ios/ExportOptions.plist').write_bytes(plistlib.dumps(options))
+          PY
+          flutter build ipa --release --build-name=1.0.4 --build-number="$BUILD_NUMBER" \
+            --export-options-plist=ios/ExportOptions.plist \
+            --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - name: Verify exported app identity and distribution entitlements
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          verification_dir="$RUNNER_TEMP/flupflap-ipa-verification"
+          mkdir -p "$verification_dir"
+          ipa=$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)
+          test -n "$ipa"
+          unzip -q "$ipa" -d "$verification_dir"
+          app="$verification_dir/Payload/Runner.app"
+          codesign --verify --deep --strict "$app"
+          codesign -d --entitlements :- "$app" > "$verification_dir/entitlements.plist" 2>/dev/null
+          python3 - "$verification_dir" "$BUILD_NUMBER" <<'PY'
+          import pathlib, plistlib, sys
+          root = pathlib.Path(sys.argv[1])
+          info = plistlib.loads((root / 'Payload/Runner.app/Info.plist').read_bytes())
+          ent = plistlib.loads((root / 'entitlements.plist').read_bytes())
+          assert info['CFBundleIdentifier'] == 'com.ticash.flupflap'
+          assert info['CFBundleShortVersionString'] == '1.0.4'
+          assert info['CFBundleVersion'] == sys.argv[2]
+          assert ent['application-identifier'] == '7P2QSN66T7.com.ticash.flupflap'
+          assert not ent.get('get-task-allow', False)
+          assert ent['com.apple.developer.team-identifier'] == '7P2QSN66T7'
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-ios-signed-review-${{ inputs.build_number }}
+          retention-days: 7
+          if-no-files-found: error
+          path: apps/flupflap/build/ios/ipa/*.ipa
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          signing_dir="$RUNNER_TEMP/flupflap-signing"
+          if test -f "$signing_dir/profile-uuid"; then
+            profile_uuid=$(cat "$signing_dir/profile-uuid")
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          fi
+          security delete-keychain "$signing_dir/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$signing_dir" "$RUNNER_TEMP/flupflap-ipa-verification"

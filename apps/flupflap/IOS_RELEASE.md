@@ -16,6 +16,15 @@ The current CI workflow builds simulator and unsigned device release apps and ru
 checkout/privacy boundary tests. **Its artifacts cannot be uploaded to TestFlight.**
 The original complete Flutter regression suite remains in Bundle UI review.
 
+`FlupFlap signed iOS review build` is a separate manual workflow, restricted in code to
+`main` and the `flupflap-ios-release` GitHub environment. It is dormant until approved
+environment secrets `FLUPFLAP_IOS_P12_BASE64`, `FLUPFLAP_IOS_P12_PASSWORD` and
+`FLUPFLAP_IOS_PROFILE_BASE64` exist. Configure the environment to allow only `main`
+before storing credentials. It validates the profile/team/certificate fingerprint, imports
+the key into a temporary keychain, builds and verifies an IPA, and always removes its
+temporary signing material. The signed IPA artifact expires after seven days. This
+workflow does not create an App Store Connect API key or upload/submit to Apple.
+
 ## Native behavior
 
 The iOS customer-actions channel implements the same checkout, sharing and privacy actions

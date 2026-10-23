@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.47.1'
           cache: true
       - run: flutter pub get
       - uses: actions/upload-artifact@v4
@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.47.1'
           cache: true
       - uses: actions/setup-java@v4
         with:
@@ -62,20 +62,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.47.1'
           cache: true
       - run: flutter pub get
       - run: flutter config --no-enable-swift-package-manager
-      - run: flutter create --platforms=ios .
+      - run: flutter create --platforms=ios --no-pub .
+      - run: flutter pub get --enforce-lockfile
       - name: Resolve retained TiCash identity SDK from its official podspec
         run: |
           python3 - <<'PYCODE'
+          import json, re
           from pathlib import Path
+          plugins = json.loads(Path('.flutter-plugins-dependencies').read_text())['plugins']['ios']
+          plugin = next(p for p in plugins if p['name'] == 'didit_sdk_autodetection')
+          plugin_root = Path(plugin['path'])
+          metadata = (plugin_root / 'pubspec.yaml').read_text()
+          assert re.search(r'^version:\s*4\.7\.4\s*$', metadata, re.M)
+          podspec = (plugin_root / 'ios/didit_sdk_autodetection.podspec').read_text()
+          match = re.search(r"dependency\s+['\"]DiditSDK/AutoDetection['\"],\s*['\"](?:=\s*)?(\d+\.\d+\.\d+)['\"]", podspec)
+          assert match, 'Expected the locked identity plugin to declare its exact native SDK'
+          version = match.group(1)
           p = Path('ios/Podfile')
           s = p.read_text()
           marker = '  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))'
           assert marker in s
-          s = s.replace(marker, "  pod 'DiditSDK/AutoDetection', :podspec => 'https://raw.githubusercontent.com/didit-protocol/sdk-ios/4.7.2/DiditSDK.podspec'\n" + marker)
+          s = s.replace(marker, f"  pod 'DiditSDK/AutoDetection', :podspec => 'https://raw.githubusercontent.com/didit-protocol/sdk-ios/{version}/DiditSDK.podspec'\n" + marker)
           p.write_text(s)
           PYCODE
-      - run: flutter build ios --release --no-codesign
+      - run: flutter build ios --release --no-codesign --no-pub

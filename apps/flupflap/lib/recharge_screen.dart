@@ -479,7 +479,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             borderRadius: RechargeDesign.radius,
           ),
           child: ExpansionTile(
-            key: const PageStorageKey('recharge-promotion'),
+            key: const ValueKey('recharge-promotion'),
             shape: const Border(),
             collapsedShape: const Border(),
             iconColor: RechargeDesign.navy,

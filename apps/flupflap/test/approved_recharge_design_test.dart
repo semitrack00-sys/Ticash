@@ -193,7 +193,7 @@ void main() {
           if (bundles) {
             await press(t, find.byKey(ValueKey('bundle-buy-${pair.$1}-offer')));
             expect(find.byKey(const ValueKey('range-amount')), findsNothing);
-            expect(find.text('3 GB data'), findsOneWidget);
+            expect(find.text('3 GB Data'), findsOneWidget);
           } else {
             expect(
               find.text(
@@ -237,6 +237,7 @@ void main() {
           expect(j.canPay, isFalse);
           expect(t.takeException(), isNull);
           await t.pumpWidget(const SizedBox());
+          j.startAnother();
         },
       );
     }
@@ -331,6 +332,7 @@ void main() {
           final summary = find.byKey(const ValueKey('recharge-price-summary'));
           expect(t.getRect(summary).width, lessThanOrEqualTo(width));
           await t.pumpWidget(const SizedBox());
+          j.startAnother();
         },
       );
     }

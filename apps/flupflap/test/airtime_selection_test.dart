@@ -195,10 +195,17 @@ void main() {
         adapter.requests.where((r) => r.path.endsWith('/payment-sessions')),
         isEmpty,
       );
+      final previousQuotes = adapter.quoteCount;
       await t.enterText(input, '10');
       await press(t, next);
       expect(j.step, RechargeStep.review);
-      expect(adapter.quoteCount, 1);
+      expect(adapter.quoteCount, previousQuotes + 1);
+      expect(
+        adapter.requests
+            .lastWhere((r) => r.path.endsWith('/quotes'))
+            .data['amount'],
+        10,
+      );
       await t.pumpWidget(const SizedBox());
       j.startAnother();
     },

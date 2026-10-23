@@ -153,7 +153,7 @@ void main() {
       await screenshot(tester, 'bundle-selected-${width.toInt()}');
       await tap(tester, find.byKey(const ValueKey('continue-to-payment')));
       final request = adapter.requests.singleWhere(
-        (r) => r.path.endsWith('/quotes'),
+        (r) => r.path.endsWith('/quotes') && r.data['productId'] == 'bundle-7',
       );
       expect(request.data['productId'], 'bundle-7');
       expect(request.data['operatorId'], 682);

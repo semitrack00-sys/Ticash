@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 
@@ -139,12 +138,17 @@ void main() {
   setUpAll(() async {
     // Geometry assertions use the actual UI fonts in every test run,
     // rather than Flutter's deliberately wide Ahem placeholder font.
-    final materialUri = await Isolate.resolvePackageUri(
-      Uri.parse('package:flutter/material.dart'),
-    );
-    final root =
-        Platform.environment['FLUTTER_ROOT'] ??
-        File(materialUri!.toFilePath()).parent.parent.parent.parent.path;
+    var root = Platform.environment['FLUTTER_ROOT'];
+    if (root == null) {
+      final configFile = File('.dart_tool/package_config.json').absolute;
+      final config = jsonDecode(await configFile.readAsString()) as Map;
+      final flutter = (config['packages'] as List).cast<Map>().singleWhere(
+        (p) => p['name'] == 'flutter',
+      );
+      root = Directory.fromUri(
+        configFile.uri.resolve(flutter['rootUri'] as String),
+      ).parent.parent.path;
+    }
     for (final entry in {
       'Roboto': 'Roboto-Regular.ttf',
       'MaterialIcons': 'MaterialIcons-Regular.otf',

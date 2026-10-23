@@ -109,7 +109,7 @@ jobs:
           import json, pathlib
           data = json.loads(pathlib.Path('build/store-captures/devices.json').read_text())
           devices = [d for values in data['devices'].values() for d in values if d.get('isAvailable')]
-          groups = {'iphone': lambda n: n.startswith('iPhone') and 'Pro Max' in n,
+          groups = {'iphone': lambda n: n.startswith('iPhone') and 'Pro' in n and 'Max' not in n,
                     'ipad': lambda n: n.startswith('iPad Pro') and '13-inch' in n}
           chosen = {}
           for kind, accepts in groups.items():

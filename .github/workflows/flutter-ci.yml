@@ -67,7 +67,10 @@ jobs:
       - run: flutter pub get
       - run: flutter config --no-enable-swift-package-manager
       - run: flutter create --platforms=ios --no-pub .
+      - name: Preserve reviewed Dart dependencies after runner generation
+        run: git restore --source=HEAD -- pubspec.yaml pubspec.lock
       - run: flutter pub get --enforce-lockfile
+      - run: git diff --exit-code -- pubspec.yaml pubspec.lock
       - name: Resolve retained TiCash identity SDK from its official podspec
         run: |
           python3 - <<'PYCODE'

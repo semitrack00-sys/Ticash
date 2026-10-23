@@ -64,8 +64,8 @@ jobs:
         with:
           flutter-version: '3.47.1'
           cache: true
-      - name: Generate temporary iOS runner for compatibility verification
-        run: flutter create --platforms=ios --project-name=flupflap .
+      - name: Use checked-in CocoaPods iOS runner
+        run: flutter config --no-enable-swift-package-manager
       - run: flutter pub get
       - name: Build iOS simulator app without signing or deployment
         run: flutter build ios --simulator --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api

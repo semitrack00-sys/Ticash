@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 
@@ -136,11 +137,14 @@ Future<RechargeJourney> catalog(CountryCatalog adapter) async {
 
 void main() {
   setUpAll(() async {
-    final root = Platform.environment['FLUTTER_ROOT'];
-    if (Platform.environment['FLUPFLAP_SCREENSHOT_DIR'] == null ||
-        root == null) {
-      return;
-    }
+    // Geometry assertions use the actual UI fonts in every test run,
+    // rather than Flutter's deliberately wide Ahem placeholder font.
+    final materialUri = await Isolate.resolvePackageUri(
+      Uri.parse('package:flutter/material.dart'),
+    );
+    final root =
+        Platform.environment['FLUTTER_ROOT'] ??
+        File(materialUri!.toFilePath()).parent.parent.parent.parent.path;
     for (final entry in {
       'Roboto': 'Roboto-Regular.ttf',
       'MaterialIcons': 'MaterialIcons-Regular.otf',

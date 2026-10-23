@@ -1,0 +1,98 @@
+name: FlupFlap upload verified iOS build
+
+on:
+  workflow_dispatch:
+    inputs:
+      signed_run_id:
+        description: 'Successful main-branch signed iOS build run ID'
+        required: true
+      build_number:
+        description: 'Build number of the signed IPA'
+        required: true
+        default: '10'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/main'
+    environment: flupflap-ios-release
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Verify signed artifact provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_RUN_ID: ${{ inputs.signed_run_id }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$SIGNED_RUN_ID" =~ ^[1-9][0-9]{0,12}$ ]]
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" > "$RUNNER_TEMP/signed-run.json"
+          python3 - "$RUNNER_TEMP/signed-run.json" "$GH_REPO" <<'PY'
+          import json, sys
+          run = json.load(open(sys.argv[1]))
+          assert run['repository']['full_name'] == sys.argv[2]
+          assert run['head_repository']['full_name'] == sys.argv[2]
+          assert run['path'] == '.github/workflows/flupflap-ios-signed.yml'
+          assert run['head_branch'] == 'main'
+          assert run['event'] == 'workflow_dispatch'
+          assert run['status'] == 'completed' and run['conclusion'] == 'success'
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: flupflap-ios-signed-review-${{ inputs.build_number }}
+          path: signed-ipa
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.signed_run_id }}
+      - name: Verify signed application identity
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, zipfile
+          files = list(pathlib.Path('signed-ipa').glob('*.ipa'))
+          assert len(files) == 1
+          with zipfile.ZipFile(files[0]) as archive:
+              archive.extractall(pathlib.Path('verified-app'))
+          PY
+          codesign --verify --deep --strict verified-app/Payload/Runner.app
+          codesign -d --entitlements :- verified-app/Payload/Runner.app > "$RUNNER_TEMP/upload-entitlements.plist" 2>/dev/null
+          python3 - "$BUILD_NUMBER" <<'PY'
+          import os, pathlib, plistlib, sys
+          info = plistlib.loads(pathlib.Path('verified-app/Payload/Runner.app/Info.plist').read_bytes())
+          ent = plistlib.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'upload-entitlements.plist').read_bytes())
+          assert info['CFBundleIdentifier'] == 'com.ticash.flupflap'
+          assert info['CFBundleShortVersionString'] == '1.0.4'
+          assert info['CFBundleVersion'] == sys.argv[1]
+          assert ent['application-identifier'] == '7P2QSN66T7.com.ticash.flupflap'
+          assert ent['com.apple.developer.team-identifier'] == '7P2QSN66T7'
+          assert not ent.get('get-task-allow', False)
+          PY
+      - name: Validate and upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.FLUPFLAP_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.FLUPFLAP_ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.FLUPFLAP_ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]
+          [[ "$ASC_ISSUER_ID" =~ ^[a-fA-F0-9-]{36}$ ]]
+          test -n "$ASC_PRIVATE_KEY"
+          export API_PRIVATE_KEYS_DIR="$RUNNER_TEMP/flupflap-upload-key"
+          mkdir -p "$API_PRIVATE_KEYS_DIR"
+          trap 'rm -rf "$API_PRIVATE_KEYS_DIR"' EXIT
+          printf '%s' "$ASC_PRIVATE_KEY" > "$API_PRIVATE_KEYS_DIR/AuthKey_$ASC_KEY_ID.p8"
+          unset ASC_PRIVATE_KEY
+          ipa=$(find signed-ipa -maxdepth 1 -name '*.ipa' -print -quit)
+          xcrun altool --validate-app --type ios --file "$ipa" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          xcrun altool --upload-app --type ios --file "$ipa" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+      - name: Remove temporary upload files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/flupflap-upload-key" "$RUNNER_TEMP/upload-entitlements.plist" signed-ipa verified-app

@@ -21,8 +21,11 @@ The original complete Flutter regression suite remains in Bundle UI review.
 The iOS customer-actions channel implements the same checkout, sharing and privacy actions
 as Android. Checkout opens only validated HTTPS Stripe Checkout URLs. The `flupflap` URL
 scheme routes checkout return, referral and password-reset links through the existing Dart router.
-The existing backend mobile return target already produces that scheme; no provider or fee
-contract is changed. Payment state still comes from the backend, never from URL parameters.
+The existing mobile return page chooses the registered scheme on iPhone/iPad, including
+iPadOS desktop mode, while preserving Android intent links and the website fallback.
+Manual iPhone/iPad links also work without JavaScript. Deploy that backend change before
+iOS TestFlight checkout verification. No provider or fee contract is changed. Payment state
+still comes from the backend, never from URL parameters.
 
 Secure storage uses the app's own default keychain access group. No shared app group,
 Apple Pay entitlement, push service or new customer-data permission is enabled.

@@ -71,7 +71,7 @@ jobs:
               let account = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Account")).firstMatch
               XCTAssertTrue(account.waitForExistence(timeout: 15), "Account navigation is missing")
               account.tap()
-              XCTAssertTrue(app.staticTexts["Guest"].waitForExistence(timeout: 20), "Guest account screen is missing")
+              XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Guest recharge session")).firstMatch.waitForExistence(timeout: 20), "Guest account screen is missing")
               capture("04-account")
               app.terminate()
               app.launch()

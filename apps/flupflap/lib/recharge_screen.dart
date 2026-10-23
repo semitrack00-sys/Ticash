@@ -111,6 +111,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       nickname = TextEditingController();
   RechargeJourney get j => widget.journey;
   String? uiError;
+  bool _promoExpanded = false;
 
   bool get canReturnToDestination =>
       !j.busy &&
@@ -538,35 +539,54 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              context.ft('havePromo'),
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('promotion-code'),
-              controller: promo,
-              enabled: !j.busy && !j.locked,
-              textCapitalization: TextCapitalization.characters,
-              decoration: InputDecoration(
-                labelText: context.ft('promo'),
-                prefixIcon: const Icon(Icons.local_offer_outlined),
-                errorText: j.promotionError == null
-                    ? null
-                    : context.ft(j.promotionError!),
-                errorMaxLines: 3,
+            InkWell(
+              key: const ValueKey('promo-toggle'),
+              onTap: () => setState(() => _promoExpanded = !_promoExpanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_offer_outlined, color: Color(0xFF092A57)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        context.ft('havePromo'),
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF092A57),
+                        ),
+                      ),
+                    ),
+                    Icon(_promoExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              key: const ValueKey('apply-promo'),
-              onPressed: j.busy || j.locked
-                  ? null
-                  : () => j.applyPromotion(promo.text),
-              child: Text(context.ft('apply')),
-            ),
+            if (_promoExpanded) ...[
+              const SizedBox(height: 12),
+              TextField(
+                key: const ValueKey('promotion-code'),
+                controller: promo,
+                enabled: !j.busy && !j.locked,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  labelText: context.ft('promo'),
+                  prefixIcon: const Icon(Icons.local_offer_outlined),
+                  errorText: j.promotionError == null
+                      ? null
+                      : context.ft(j.promotionError!),
+                  errorMaxLines: 3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                key: const ValueKey('apply-promo'),
+                onPressed: j.busy || j.locked
+                    ? null
+                    : () => j.applyPromotion(promo.text),
+                child: Text(context.ft('apply')),
+              ),
+            ],
             if (j.appliedPromotionLabel != null) ...[
               const SizedBox(height: 8),
               Semantics(

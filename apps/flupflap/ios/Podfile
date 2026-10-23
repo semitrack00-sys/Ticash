@@ -31,10 +31,6 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # The transitive TiCash identity SDK is not published on CocoaPods trunk.
-  # Match the native version pinned by didit_sdk_autodetection 4.7.4.
-  pod 'DiditSDK/AutoDetection', :podspec => 'https://raw.githubusercontent.com/didit-protocol/sdk-ios/4.7.2/DiditSDK.podspec'
-
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

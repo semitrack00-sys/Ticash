@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/recharge_screen.dart';
-import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 
 import 'checkout_parity_test.dart' show fixture;
 import 'airtime_selection_test.dart' show loadProducts;

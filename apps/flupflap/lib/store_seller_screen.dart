@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'session.dart';
 import 'flupflap_page_title.dart';
 import 'internet_bundle_card.dart';
-import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 
 class StoreSellerScreen extends StatefulWidget {
   const StoreSellerScreen({super.key, required this.session});

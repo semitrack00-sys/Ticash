@@ -13,7 +13,7 @@ import 'package:flupflap/phone_country_field.dart';
 import 'package:flupflap/recharge_journey.dart';
 import 'package:flupflap/recharge_screen.dart';
 import 'package:flupflap/session.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 import 'flupflap_test.dart' as auth;
 import 'checkout_parity_test.dart' as checkout;

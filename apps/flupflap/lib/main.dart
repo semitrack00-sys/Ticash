@@ -4,9 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:ticash/providers/mobile_top_up_provider.dart';
+import 'package:ticash_recharge_core/providers/mobile_top_up_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 import 'account_parity.dart';
 import 'auth_layout.dart';
@@ -17,8 +17,8 @@ import 'parity_strings.dart';
 import 'phone_country_field.dart';
 import 'privacy_actions.dart';
 
-import 'package:ticash/services/mobile_top_up_service.dart';
-import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/services/mobile_top_up_service.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 
 import 'session.dart';
 import 'browser_transport_stub.dart'

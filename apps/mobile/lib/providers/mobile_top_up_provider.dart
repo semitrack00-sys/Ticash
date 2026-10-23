@@ -1,20 +1,2 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/mobile_top_up.dart';
-import '../services/mobile_top_up_service.dart';
-
-final mobileTopUpServiceProvider = Provider<MobileTopUpService>(
-  (ref) => MobileTopUpService(),
-);
-final mobileTopUpCountriesProvider = FutureProvider<List<MobileTopUpCountry>>(
-  (ref) => ref.watch(mobileTopUpServiceProvider).countries(),
-);
-final mobileTopUpAvailabilityProvider = FutureProvider<MobileTopUpAvailability>(
-  (ref) => ref.watch(mobileTopUpServiceProvider).availability(),
-);
-final mobileTopUpHistoryProvider = FutureProvider<List<MobileTopUpTransaction>>(
-  (ref) => ref.watch(mobileTopUpServiceProvider).history(),
-);
-final mobileTopUpRecipientsProvider =
-    FutureProvider<List<MobileTopUpRecipient>>(
-      (ref) => ref.watch(mobileTopUpServiceProvider).recipients(),
-    );
+// Shared implementation; preserve existing TiCash import paths.
+export 'package:ticash_recharge_core/providers/mobile_top_up_provider.dart';

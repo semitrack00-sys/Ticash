@@ -121,6 +121,7 @@ jobs:
           assert ent['application-identifier'] == '7P2QSN66T7.com.ticash.flupflap'
           assert not ent.get('get-task-allow', False)
           assert ent['com.apple.developer.team-identifier'] == '7P2QSN66T7'
+          assert not any('didit' in p.name.lower() for p in (root / 'Payload/Runner.app').rglob('*'))
           PY
       - uses: actions/upload-artifact@v4
         with:

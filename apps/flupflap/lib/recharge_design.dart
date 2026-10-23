@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:ticash/models/mobile_top_up.dart';
-import 'package:ticash/widgets/mobile_operator_logo.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/widgets/mobile_operator_logo.dart';
 
 import 'parity_strings.dart';
 

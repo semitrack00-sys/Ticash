@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:ticash/models/mobile_top_up.dart';
-import 'package:ticash/widgets/mobile_operator_logo.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/widgets/mobile_operator_logo.dart';
 
 import 'billing_countries.dart';
 import 'recharge_design.dart';

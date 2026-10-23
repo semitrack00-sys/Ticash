@@ -7,8 +7,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  ticash:
-    path: ../mobile
+  ticash_recharge_core:
+    path: ../recharge_core
   flutter_riverpod: ^2.5.1
   flutter_svg: ^2.2.0
   flutter_localizations:

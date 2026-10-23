@@ -12,7 +12,7 @@ import 'package:flupflap/recharge_journey.dart';
 import 'package:flupflap/parity_strings.dart';
 import 'package:flupflap/native_actions.dart';
 import 'package:flupflap/main.dart' show flupFlapTheme;
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 import 'checkout_parity_test.dart' show fixture;
 

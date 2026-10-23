@@ -4,7 +4,7 @@ import 'package:flupflap/recharge_journey.dart';
 import 'package:flupflap/recharge_screen.dart';
 import 'package:flupflap/parity_strings.dart';
 import 'package:flupflap/phone_country_field.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 import 'checkout_parity_test.dart' show fixture;
 import 'parity_widget_test.dart' show shell, press;

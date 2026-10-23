@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 import 'checkout_contract.dart';
 import 'native_actions.dart';
 import 'parity_strings.dart';

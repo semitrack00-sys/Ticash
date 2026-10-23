@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 import 'parity_strings.dart';
 
 /// Presentation only: never derives a price, expiry or entitlement from prose.

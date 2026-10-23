@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/checkout_contract.dart';
 import 'package:flupflap/recharge_journey.dart';
 import 'package:flupflap/parity_strings.dart';
-import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 
 const txnId = '12345678-1234-4234-8234-123456789abc';
 const quoteId = '12345678-1234-4234-8234-123456789abd';

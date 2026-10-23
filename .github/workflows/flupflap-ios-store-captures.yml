@@ -51,6 +51,13 @@ jobs:
               let app = XCUIApplication(bundleIdentifier: "com.ticash.flupflap")
               app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
               app.launch()
+              defer {
+                capture("99-final-state")
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "Final accessibility state"
+                tree.lifetime = .keepAlways
+                add(tree)
+              }
               let guest = app.buttons.matching(NSPredicate(format: "label == %@", "Continue as guest")).firstMatch
               XCTAssertTrue(guest.waitForExistence(timeout: 60), "Actual sign-in screen did not appear")
               capture("01-sign-in")
@@ -93,6 +100,10 @@ jobs:
             config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
             config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
           end
+          runner.build_configurations.each do |config|
+            config.build_settings['CODE_SIGN_IDENTITY'] = '-'
+            config.build_settings['DEVELOPMENT_TEAM'] = ''
+          end
           project.save
           scheme = Xcodeproj::XCScheme.new
           scheme.add_build_target(runner)
@@ -124,11 +135,15 @@ jobs:
             if [ "$state" != Booted ]; then xcrun simctl boot "$device_id"; fi
             xcrun simctl bootstatus "$device_id" -b
             xcrun simctl status_bar "$device_id" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+            test_status=0
             xcodebuild test -workspace ios/Runner.xcworkspace -scheme StoreCaptures -configuration Debug \
               -destination "id=$device_id" -resultBundlePath "build/store-captures/$device_kind.xcresult" \
-              -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -quiet
+              -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= -quiet || test_status=$?
+            xcrun xcresulttool get test-results summary --path "build/store-captures/$device_kind.xcresult" > "build/store-captures/$device_kind-summary.json"
+            cat "build/store-captures/$device_kind-summary.json"
             xcrun xcresulttool export attachments --path "build/store-captures/$device_kind.xcresult" --output-path "build/store-captures/$device_kind"
             xcrun simctl shutdown "$device_id"
+            if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
           done
           git rev-parse HEAD > build/store-captures/source-commit.txt
       - uses: actions/upload-artifact@v4

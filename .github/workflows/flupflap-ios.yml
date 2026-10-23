@@ -3,8 +3,9 @@ name: FlupFlap iOS release foundation
 on:
   pull_request:
     paths:
-      - 'apps/flupflap/ios/**'
+      - 'apps/flupflap/**'
       - '.github/workflows/flupflap-ios.yml'
+      - '.github/workflows/flupflap-ios-signed.yml'
   workflow_dispatch:
 
 permissions:

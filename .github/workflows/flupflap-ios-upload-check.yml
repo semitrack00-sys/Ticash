@@ -1,0 +1,58 @@
+name: Verify iOS upload workflow
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/flupflap-ios-upload.yml'
+      - '.github/workflows/flupflap-ios-upload-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check syntax and artifact provenance rejection
+        run: |
+          set -euo pipefail
+          ruby -ryaml -rjson -e 'puts JSON.generate(YAML.load_file(".github/workflows/flupflap-ios-upload.yml"))' > /tmp/upload-workflow.json
+          python3 - <<'PY'
+          import ast, json, pathlib, subprocess, tempfile
+          workflow = json.loads(pathlib.Path('/tmp/upload-workflow.json').read_text())
+          assert workflow['permissions'] == {'contents': 'read', 'actions': 'read'}
+          job = workflow['jobs']['upload']
+          assert job['if'] == "github.ref == 'refs/heads/main'"
+          assert job['environment'] == 'flupflap-ios-release'
+          scripts = [step['run'] for step in job['steps'] if 'run' in step]
+          for script in scripts:
+              subprocess.run(['bash', '-n'], input=script, text=True, check=True)
+              for python in script.split("<<'PY'\n")[1:]:
+                  ast.parse(python.split('\nPY')[0])
+          guard = scripts[0].split("<<'PY'\n")[1].split('\nPY')[0]
+          valid = dict(repository=dict(full_name='semitrack00-sys/Ticash'),
+                       head_repository=dict(full_name='semitrack00-sys/Ticash'),
+                       path='.github/workflows/flupflap-ios-signed.yml', head_branch='main',
+                       event='workflow_dispatch', status='completed', conclusion='success')
+          cases = [(valid, True)]
+          for field, value in [('head_branch', 'untrusted'), ('path', '.github/workflows/other.yml'),
+                               ('conclusion', 'failure'), ('status', 'in_progress'), ('event', 'pull_request'),
+                               ('head_repository', dict(full_name='someone/fork'))]:
+              cases.append(({**valid, field: value}, False))
+          with tempfile.TemporaryDirectory() as directory:
+              path = pathlib.Path(directory) / 'run.json'
+              for run, accepted in cases:
+                  path.write_text(json.dumps(run))
+                  result = subprocess.run(['python3', '-c', guard, str(path), 'semitrack00-sys/Ticash'],
+                                          capture_output=True, text=True)
+                  assert (result.returncode == 0) == accepted
+          upload = next(script for script in scripts if 'xcrun altool --upload-app' in script)
+          assert upload.index('--validate-app') < upload.index('--upload-app')
+          assert "trap 'rm -rf" in upload
+          assert job['steps'][-1]['if'] == 'always()'
+          print('Syntax valid; trusted build accepted and six unsafe provenance cases rejected.')
+          PY

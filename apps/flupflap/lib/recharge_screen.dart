@@ -402,8 +402,15 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
           key: ValueKey('${j.country}:${j.internet}:${j.operator?.id}'),
           isExpanded: true,
           initialValue: j.operator?.id,
-          decoration: RechargeDesign.input(label: context.ft('operator')),
+          decoration: RechargeDesign.input(label: context.ft('operator'))
+              .copyWith(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+              ),
           style: const TextStyle(
+            fontFamily: 'Roboto',
             color: RechargeDesign.navy,
             fontWeight: FontWeight.w700,
             fontSize: 17,

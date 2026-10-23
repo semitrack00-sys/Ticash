@@ -27,31 +27,18 @@ class FlupFlapPageTitle extends StatelessWidget {
   );
 }
 
-/// Retains the official multicolour mark and uses the approved white wordmark.
-/// The existing source artwork includes a dark tagline; clip only its mark for
-/// this compact header, leaving the full original logo intact everywhere else.
+/// Uses the existing official isolated mark with the approved white wordmark.
 class _NavyWordmark extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      ClipRect(
-        child: SizedBox(
-          width: 32,
-          height: 30,
-          child: OverflowBox(
-            alignment: Alignment.topLeft,
-            maxWidth: 104,
-            maxHeight: 35,
-            child: Image.asset(
-              'assets/flupflap-logo.png',
-              width: 104,
-              height: 35,
-              fit: BoxFit.contain,
-              excludeFromSemantics: true,
-            ),
-          ),
-        ),
+      Image.asset(
+        'assets/flupflap-mark.png',
+        width: 32,
+        height: 36,
+        fit: BoxFit.contain,
+        excludeFromSemantics: true,
       ),
       const SizedBox(width: 4),
       const Text(

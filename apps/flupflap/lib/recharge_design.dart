@@ -31,7 +31,10 @@ abstract final class RechargeDesign {
       '${symbol(currency)}${symbol(currency) == currency ? ' ' : ''}${number(amount)}';
   static double textWidth(BuildContext context, String text, TextStyle style) =>
       (TextPainter(
-        text: TextSpan(text: text, style: style),
+        text: TextSpan(
+          text: text,
+          style: DefaultTextStyle.of(context).style.merge(style),
+        ),
         textDirection: Directionality.of(context),
         textScaler: MediaQuery.textScalerOf(context),
       )..layout()).width;
@@ -64,63 +67,83 @@ class RechargeServiceTabs extends StatelessWidget {
   });
   final bool internet;
   final ValueChanged<bool>? onChanged;
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      // Keep translated labels readable at accessibility text sizes.
       final stacked =
           constraints.maxWidth < 300 ||
           MediaQuery.textScalerOf(context).scale(14) > 22;
-      final tabs = [
-        for (final value in [false, true])
-          ChoiceChip(
-            key: ValueKey('recharge-service-$value'),
-            showCheckmark: false,
-            avatar: Icon(
-              value ? Icons.language : Icons.phone,
-              size: 20,
-              color: internet == value ? Colors.white : RechargeDesign.muted,
-            ),
-            label: Text(
-              context.ft(value ? 'internetBundles' : 'AIRTIME'),
-              textAlign: TextAlign.center,
-            ),
-            selected: internet == value,
-            onSelected: onChanged == null ? null : (_) => onChanged!(value),
-            selectedColor: RechargeDesign.navy,
-            backgroundColor: Colors.white,
-            disabledColor: internet == value
-                ? RechargeDesign.navy
-                : Colors.white,
-            labelStyle: TextStyle(
-              color: internet == value ? Colors.white : RechargeDesign.muted,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-            side: BorderSide(
-              color: internet == value
-                  ? RechargeDesign.navy
-                  : RechargeDesign.border,
-            ),
-            shape: const RoundedRectangleBorder(
+      Widget tab(bool value) {
+        final active = internet == value;
+        final foreground = active ? Colors.white : RechargeDesign.muted;
+        return Semantics(
+          selected: active,
+          button: true,
+          child: Material(
+            color: active ? RechargeDesign.navy : Colors.white,
+            shape: RoundedRectangleBorder(
               borderRadius: RechargeDesign.radius,
+              side: BorderSide(
+                color: active ? RechargeDesign.navy : RechargeDesign.border,
+              ),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            child: InkWell(
+              key: ValueKey('recharge-service-$value'),
+              borderRadius: RechargeDesign.radius,
+              onTap: onChanged == null ? null : () => onChanged!(value),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        value ? Icons.language : Icons.phone,
+                        size: 20,
+                        color: foreground,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          context.ft(value ? 'internetBundles' : 'AIRTIME'),
+                          textAlign: TextAlign.center,
+                          softWrap: true,
+                          style: TextStyle(
+                            color: foreground,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
-      ];
+        );
+      }
+
       if (stacked) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [tabs.first, const SizedBox(height: 8), tabs.last],
+          children: [tab(false), const SizedBox(height: 8), tab(true)],
         );
       }
-      return Row(
-        children: [
-          Expanded(child: tabs.first),
-          const SizedBox(width: 10),
-          Expanded(child: tabs.last),
-        ],
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: tab(false)),
+            const SizedBox(width: 10),
+            Expanded(child: tab(true)),
+          ],
+        ),
       );
     },
   );

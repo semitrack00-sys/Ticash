@@ -24,7 +24,10 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test
+      - name: Run complete Flutter regression suite
+        run: |
+          mkdir -p build
+          flutter test --reporter expanded > build/recharge-test.log 2>&1
       - name: Capture actual Flutter card renders
         run: flutter test test/internet_bundle_card_test.dart test/internet_bundle_screen_test.dart test/approved_recharge_design_test.dart
         env:
@@ -44,6 +47,7 @@ jobs:
         with:
           name: bundle-ui-review
           path: |
+            apps/flupflap/build/recharge-test.log
             apps/flupflap/build/bundle-screenshots/
             apps/flupflap/build/app/outputs/flutter-apk/app-debug.apk
             apps/flupflap/build/web/

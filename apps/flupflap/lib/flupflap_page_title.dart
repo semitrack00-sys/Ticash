@@ -37,7 +37,7 @@ class _NavyWordmark extends StatelessWidget {
     children: [
       ClipRect(
         child: SizedBox(
-          width: 25,
+          width: 32,
           height: 30,
           child: OverflowBox(
             alignment: Alignment.topLeft,

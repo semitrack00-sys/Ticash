@@ -21,7 +21,7 @@ class CountryCatalog extends ParityAdapter {
   CountryCatalog(this.country, this.currency, {this.bundles = false});
   final String country, currency;
   final bool bundles;
-  Completer<void>? quoteGate;
+  Completer<void>? quoteGate, quoteStarted;
   bool failQuote = false;
   int feeCents = 83;
   Map<String, dynamic> get carrier => {
@@ -79,6 +79,7 @@ class CountryCatalog extends ParityAdapter {
       final body = Map<String, dynamic>.from(o.data as Map);
       requests.add(o);
       quoteCount++;
+      if (quoteStarted?.isCompleted == false) quoteStarted!.complete();
       final fee = feeCents;
       await quoteGate?.future;
       if (failQuote) {

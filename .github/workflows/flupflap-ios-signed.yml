@@ -55,7 +55,7 @@ jobs:
           assert not profile['Entitlements']['get-task-allow']
           assert not profile.get('ProvisionedDevices') and not profile.get('ProvisionsAllDevices')
           assert profile['ExpirationDate'] > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-          expected = '9f1f60dc7313f840283fe10a0b95b84da7f1c9dba1229d582dcdd4f7237578ee'
+          expected = '5ddcbe7758308f233e0c034088a62bb2edfa1cf364e81fd8618631d57c20f677'
           assert any(hashlib.sha256(c).hexdigest() == expected for c in profile['DeveloperCertificates'])
           (root / 'profile-uuid').write_text(profile['UUID'])
           PY

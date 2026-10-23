@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -134,7 +135,7 @@ Future<RechargeJourney> catalog(CountryCatalog adapter) async {
   return j;
 }
 
-void main() {
+void main({TargetPlatformVariant? platformVariant}) {
   setUpAll(() async {
     // Geometry assertions use the actual UI fonts in every test run,
     // rather than Flutter's deliberately wide Ahem placeholder font.
@@ -280,6 +281,8 @@ void main() {
           await t.pumpWidget(const SizedBox());
           j.startAnother();
         },
+        variant:
+            platformVariant ?? TargetPlatformVariant.only(TargetPlatform.android),
       );
     }
   }
@@ -385,6 +388,8 @@ void main() {
             await t.pumpWidget(const SizedBox());
             j.startAnother();
           },
+          variant:
+            platformVariant ?? TargetPlatformVariant.only(TargetPlatform.android),
         );
       }
     }

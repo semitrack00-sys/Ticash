@@ -1,0 +1,9 @@
+Pods/
+.symlinks/
+Flutter/ephemeral/
+Flutter/Generated.xcconfig
+Flutter/flutter_export_environment.sh
+Runner/GeneratedPluginRegistrant.*
+**/xcuserdata/
+*.p12
+*.mobileprovision

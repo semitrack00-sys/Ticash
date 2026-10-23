@@ -59,6 +59,7 @@ export const androidCheckoutReturn: RequestHandler = (req, res) => {
     <div id="fallback" class="actions">
       <p class="hint" role="status">Still here? Choose how you'd like to continue.</p>
       <a id="open-app" class="primary" href="intent://checkout-return?checkoutResumeToken=${encoded}#Intent;scheme=flupflap;package=com.ticash.flupflap;end">Open FlupFlap App</a>
+      <a id="open-ios" class="secondary" href="flupflap://checkout-return?checkoutResumeToken=${encoded}">Open on iPhone or iPad</a>
       <a class="secondary" href="https://www.flupflap.com/?checkoutResumeToken=${encoded}">Continue on Website</a>
     </div>
     <p class="footer">Your latest status will appear in FlupFlap.</p>
@@ -67,6 +68,15 @@ export const androidCheckoutReturn: RequestHandler = (req, res) => {
     (() => {
       const fallback = document.getElementById('fallback');
       const openApp = document.getElementById('open-app');
+      const openIOS = document.getElementById('open-ios');
+      // iPadOS may identify as a Mac when requesting desktop websites.
+      // This only chooses a launch link; the backend still verifies payment.
+      const appleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+        (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+      if (appleMobile) {
+        openApp.href = openIOS.href;
+        openIOS.hidden = true;
+      }
       const showFallback = () => { fallback.hidden = false; };
       // Links remain usable when JavaScript is disabled. Install the fallback
       // before attempting navigation: Android browsers may block auto-launch.

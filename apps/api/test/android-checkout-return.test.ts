@@ -7,11 +7,12 @@ import { androidCheckoutReturn } from '../src/topup/android-checkout-return.js';
 const token = `a_-${'B'.repeat(40)}`;
 const encoded = encodeURIComponent(token);
 const intent = `intent://checkout-return?checkoutResumeToken=${encoded}#Intent;scheme=flupflap;package=com.ticash.flupflap;end`;
+const ios = `flupflap://checkout-return?checkoutResumeToken=${encoded}`;
 const website = `https://www.flupflap.com/?checkoutResumeToken=${encoded}`;
 const app = express().get('/return', androidCheckoutReturn);
 const render = () => request(app).get('/return').query({ checkoutResumeToken: token }).expect(200);
 
-function browser(html: string, blocked = false) {
+function browser(html: string, blocked = false, userAgent = 'Android', maxTouchPoints = 1) {
   const script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)![1]!;
   const fallback = { hidden: false };
   const documentEvents: Record<string, () => void> = {};
@@ -19,13 +20,16 @@ function browser(html: string, blocked = false) {
   const assign = vi.fn(() => { if (blocked) throw new Error('User gesture required'); });
   const setTimeout = vi.fn<(callback: () => void, delay: number) => number>().mockReturnValue(1);
   const clearTimeout = vi.fn();
+  const openApp = { href: intent };
+  const openIOS = { href: ios, hidden: false };
   const document = {
     visibilityState: 'visible',
-    getElementById: (id: string) => id === 'fallback' ? fallback : { href: intent },
+    getElementById: (id: string) => id === 'fallback' ? fallback : id === 'open-ios' ? openIOS : openApp,
     addEventListener: (name: string, callback: () => void) => { documentEvents[name] = callback; },
   };
   runInNewContext(script, {
     document,
+    navigator: { userAgent, maxTouchPoints },
     window: {
       location: { assign },
       addEventListener: (name: string, callback: (event: { persisted?: boolean }) => void) => { windowEvents[name] = callback; },
@@ -46,7 +50,7 @@ describe('Android checkout return page', () => {
     expect(page.text).toContain('width=device-width,initial-scale=1');
     expect(page.text).toContain('prefers-reduced-motion');
     expect(page.text).toContain('class="spinner"');
-    expect(page.text.match(/href="([^"]+)"/g)).toEqual([`href="${intent}"`, `href="${website}"`]);
+    expect(page.text.match(/href="([^"]+)"/g)).toEqual([`href="${intent}"`, `href="${ios}"`, `href="${website}"`]);
     expect(page.text).toContain('>Open FlupFlap App</a>');
     expect(page.text).toContain('>Continue on Website</a>');
     // The capability must not appear in visible copy or be interpolated into JS.
@@ -79,6 +83,17 @@ describe('Android checkout return page', () => {
     b.setTimeout.mock.calls[0]![0]();
     expect(b.fallback.hidden).toBe(false);
     expect(b.assign).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 5],
+    ['Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)', 5],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', 5],
+  ])('returns Apple mobile browsers through the registered app scheme: %s', async (agent, touches) => {
+    const b = browser((await render()).text, false, agent, touches);
+    expect(b.assign).toHaveBeenCalledExactlyOnceWith(ios);
+    b.setTimeout.mock.calls[0]![0]();
+    expect(b.fallback.hidden).toBe(false);
   });
 
   it('stops the fallback timer when the app opens and restores links when returning to the browser', async () => {

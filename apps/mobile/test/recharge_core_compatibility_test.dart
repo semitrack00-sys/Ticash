@@ -26,6 +26,6 @@ void main() {
   });
 
   test('TiCash keeps the same localization type', () {
-    expect(legacy_l10n.AppLocalizations, same(core_l10n.AppLocalizations));
+    expect(legacy_l10n.AppLanguage, same(core_l10n.AppLanguage));
   });
 }

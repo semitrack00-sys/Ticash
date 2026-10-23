@@ -29,6 +29,8 @@ jobs:
           cache: true
       - run: flutter config --no-enable-swift-package-manager
       - run: flutter pub get
+      - name: Verify approved recharge layout with iOS platform behavior
+        run: flutter test test/ios_recharge_design_test.dart
       - name: Build real iOS simulator app
         run: flutter build ios --simulator --debug --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
       - name: Test native checkout URL and privacy boundaries

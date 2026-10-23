@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:dio/dio.dart';
-import 'package:ticash/models/mobile_top_up.dart';
-import 'package:ticash/services/mobile_top_up_service.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/services/mobile_top_up_service.dart';
 
 final _uuid = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

@@ -4,11 +4,13 @@ on:
   push:
     paths:
       - 'apps/flupflap/**'
+      - 'apps/recharge_core/**'
       - 'apps/mobile/**'
       - '.github/workflows/flupflap-android.yml'
   pull_request:
     paths:
       - 'apps/flupflap/**'
+      - 'apps/recharge_core/**'
       - 'apps/mobile/**'
       - '.github/workflows/flupflap-android.yml'
 

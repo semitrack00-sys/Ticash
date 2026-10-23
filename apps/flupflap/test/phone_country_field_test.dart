@@ -3,7 +3,7 @@ import 'package:flupflap/phone_country_field.dart';
 import 'package:flupflap/country_flag.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 Widget phoneShell({required Widget home}) => AppLocalizationScope(
   language: AppLanguage.english,

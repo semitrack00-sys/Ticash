@@ -53,10 +53,11 @@ Apple Pay entitlement, push service or new customer-data permission is enabled.
    Airtime/Bundles quotes, checkout/browser return, failure/cancel recovery, SMS/WhatsApp/share
    availability and account-deletion links. Use controlled test payments; do not spend real funds
    without a separate authorized transaction.
-5. Audit the bundled SDKs and App Privacy answers. The shared TiCash package currently brings
-   the Didit native dependency even though FlupFlap does not invoke identity capture. Resolve
-   unused SDK packaging or any App Store validation warnings before submission; do not declare
-   camera/microphone collection merely because the SDK is transitively linked.
+5. Audit the bundled SDKs and App Privacy answers. Build 10 passed upload validation but Apple
+   rejected processing with ITMS-90683 because the former whole-TiCash dependency bundled
+   an unused identity SDK. FlupFlap now depends only on `recharge_core`; CI verifies that no
+   Didit plugin/framework is present. TiCash retains its working identity SDK. Use a new build
+   number (11 or higher), and verify Apple processing before declaring TestFlight ready.
 6. Capture actual iPhone/iPad store screenshots and complete age rating, content rights,
    review access, export compliance and EU trader information using verified facts.
 

@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'apps/flupflap/**'
+      - 'apps/recharge_core/**'
       - '.github/workflows/bundle-ui-review.yml'
 permissions:
   contents: read

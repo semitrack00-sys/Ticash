@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 /// Presentation only: authentication, guest access, and registration stay in
 /// AuthScreen. The scroll viewport shrinks naturally when the keyboard opens.

@@ -8,6 +8,8 @@ environment:
   flutter: '>=3.38.4'
 
 dependencies:
+  ticash_recharge_core:
+    path: ../recharge_core
   flutter:
     sdk: flutter
   flutter_localizations:

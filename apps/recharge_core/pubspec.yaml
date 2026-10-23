@@ -1,0 +1,12 @@
+name: ticash_recharge_core
+description: Shared recharge models, transport, localization and operator widgets.
+publish_to: none
+version: 0.1.0
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  dio: ^5.4.3+1
+  flutter_secure_storage: ^9.2.2

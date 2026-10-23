@@ -2,9 +2,9 @@ name: Flutter CI
 
 on:
   push:
-    paths: ['apps/mobile/**', '.github/workflows/flutter-ci.yml']
+    paths: ['apps/mobile/**', 'apps/recharge_core/**', '.github/workflows/flutter-ci.yml']
   pull_request:
-    paths: ['apps/mobile/**', '.github/workflows/flutter-ci.yml']
+    paths: ['apps/mobile/**', 'apps/recharge_core/**', '.github/workflows/flutter-ci.yml']
 
 defaults:
   run:
@@ -21,9 +21,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.47.1'
           cache: true
       - run: flutter pub get
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ticash-resolved-dependencies
+          path: apps/mobile/pubspec.lock
       - run: flutter analyze
       - run: flutter test --coverage
 
@@ -35,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.47.1'
           cache: true
       - uses: actions/setup-java@v4
         with:
@@ -58,8 +62,34 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.47.1'
           cache: true
       - run: flutter pub get
-      - run: flutter create --platforms=ios .
-      - run: flutter build ios --release --no-codesign
+      - run: flutter config --no-enable-swift-package-manager
+      - run: flutter create --platforms=ios --no-pub .
+      - name: Preserve reviewed Dart dependencies after runner generation
+        run: git restore --source=HEAD -- pubspec.yaml pubspec.lock
+      - run: flutter pub get --enforce-lockfile
+      - run: git diff --exit-code -- pubspec.yaml pubspec.lock
+      - name: Resolve retained TiCash identity SDK from its official podspec
+        run: |
+          python3 - <<'PYCODE'
+          import json, re
+          from pathlib import Path
+          plugins = json.loads(Path('.flutter-plugins-dependencies').read_text())['plugins']['ios']
+          plugin = next(p for p in plugins if p['name'] == 'didit_sdk_autodetection')
+          plugin_root = Path(plugin['path'])
+          metadata = (plugin_root / 'pubspec.yaml').read_text()
+          assert re.search(r'^version:\s*4\.7\.4\s*$', metadata, re.M)
+          podspec = (plugin_root / 'ios/didit_sdk_autodetection.podspec').read_text()
+          match = re.search(r"dependency\s+['\"]DiditSDK/AutoDetection['\"],\s*['\"](?:=\s*)?(\d+\.\d+\.\d+)['\"]", podspec)
+          assert match, 'Expected the locked identity plugin to declare its exact native SDK'
+          version = match.group(1)
+          p = Path('ios/Podfile')
+          s = p.read_text()
+          marker = '  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))'
+          assert marker in s
+          s = s.replace(marker, f"  pod 'DiditSDK/AutoDetection', :podspec => 'https://raw.githubusercontent.com/didit-protocol/sdk-ios/{version}/DiditSDK.podspec'\n" + marker)
+          p.write_text(s)
+          PYCODE
+      - run: flutter build ios --release --no-codesign --no-pub

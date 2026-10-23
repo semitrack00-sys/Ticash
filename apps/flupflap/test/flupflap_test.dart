@@ -1,4 +1,4 @@
-import 'package:ticash/services/mobile_top_up_service.dart';
+import 'package:ticash_recharge_core/services/mobile_top_up_service.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';

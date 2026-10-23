@@ -2,10 +2,10 @@ name: Render admin web
 
 on:
   pull_request:
-    paths: ['apps/mobile/**', 'scripts/render-admin-build.sh', '.github/workflows/render-admin.yml']
+    paths: ['apps/mobile/**', 'apps/recharge_core/**', 'scripts/render-admin-build.sh', '.github/workflows/render-admin.yml']
   push:
     branches: [main]
-    paths: ['apps/mobile/**', 'scripts/render-admin-build.sh', '.github/workflows/render-admin.yml']
+    paths: ['apps/mobile/**', 'apps/recharge_core/**', 'scripts/render-admin-build.sh', '.github/workflows/render-admin.yml']
   workflow_dispatch:
 
 permissions:

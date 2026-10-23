@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/internet_bundle_card.dart';
-import 'package:ticash/models/mobile_top_up.dart';
+import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 
 MobileTopUpProduct plan(int days, {bool structured = true}) => MobileTopUpProduct(
   id: 'plan-$days', operatorId: 1, kind: MobileTopUpKind.bundle,

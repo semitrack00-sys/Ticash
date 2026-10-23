@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flupflap/native_actions.dart';
 import 'package:flupflap/privacy_actions.dart';
 import 'package:flupflap/privacy_strings.dart';
-import 'package:ticash/localization/app_localizations.dart';
+import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 Widget privacyShell(Widget home, [AppLanguage language = AppLanguage.english]) =>
     AppLocalizationScope(language: language, child: MaterialApp(home: home));

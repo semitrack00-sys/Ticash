@@ -1,9 +1,9 @@
 name: FlupFlap PWA
 on:
   push:
-    paths: ['apps/flupflap/**', 'apps/mobile/**', '.github/workflows/flupflap-pwa.yml']
+    paths: ['apps/flupflap/**', 'apps/recharge_core/**', 'apps/mobile/**', '.github/workflows/flupflap-pwa.yml']
   pull_request:
-    paths: ['apps/flupflap/**', 'apps/mobile/**', '.github/workflows/flupflap-pwa.yml']
+    paths: ['apps/flupflap/**', 'apps/recharge_core/**', 'apps/mobile/**', '.github/workflows/flupflap-pwa.yml']
   workflow_dispatch:
 permissions:
   contents: read

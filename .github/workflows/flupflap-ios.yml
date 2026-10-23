@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'apps/flupflap/**'
+      - 'apps/recharge_core/**'
       - '.github/workflows/flupflap-ios.yml'
       - '.github/workflows/flupflap-ios-signed.yml'
   workflow_dispatch:
@@ -29,6 +30,18 @@ jobs:
           cache: true
       - run: flutter config --no-enable-swift-package-manager
       - run: flutter pub get
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-resolved-dependencies
+          path: apps/flupflap/pubspec.lock
+      - name: Verify recharge-only native dependencies
+        run: |
+          python3 - <<'PYCODE'
+          import json, pathlib
+          data = json.loads(pathlib.Path('.flutter-plugins-dependencies').read_text())
+          assert all('didit' not in plugin['name'].lower()
+                     for plugins in data['plugins'].values() for plugin in plugins)
+          PYCODE
       - name: Verify approved recharge layout with iOS platform behavior
         run: flutter test test/ios_recharge_design_test.dart
       - name: Build real iOS simulator app
@@ -42,6 +55,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO -quiet
       - name: Verify device release compilation without signing
         run: flutter build ios --release --no-codesign --build-name=1.0.4 --build-number=10 --dart-define=FLUPFLAP_API_BASE_URL=https://ticash-api.onrender.com/api
+      - name: Verify no unused identity framework is bundled
+        run: |
+          python3 - <<'PYCODE'
+          import pathlib
+          app = pathlib.Path('build/ios/iphoneos/Runner.app')
+          assert app.exists()
+          assert not any('didit' in p.name.lower() for p in app.rglob('*'))
+          PYCODE
       - uses: actions/upload-artifact@v4
         with:
           name: flupflap-ios-unsigned-review

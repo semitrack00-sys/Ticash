@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ticash/services/trusted_api_transport.dart';
+import 'package:ticash_recharge_core/services/trusted_api_transport.dart';
 
 abstract interface class SessionStorage {
   Future<String?> read();

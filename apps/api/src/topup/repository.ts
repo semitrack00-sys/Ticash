@@ -468,7 +468,7 @@ function transactionFromDb(record: {
 }
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly prisma: PrismaClient, private readonly requireVerifiedContacts = false) {}
 
   async getCountryCatalogCache(key: string) {
     const record = await this.prisma.mobileTopUpCountryCatalogCache.findUnique({ where: { key } });
@@ -678,6 +678,9 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           const customer = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
           if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
             throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active registered account is required.', 403);
+          }
+          if (this.requireVerifiedContacts && (!customer.emailVerifiedAt || !customer.phoneVerifiedAt)) {
+            throw new MobileTopUpError('CONTACT_VERIFICATION_REQUIRED', 'Verify your email and phone in Account before purchasing.', 403);
           }
           const replay = await tx.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
           if (replay) return replay;

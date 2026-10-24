@@ -21,8 +21,10 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     const quote=await repo.createQuote({userId:'flupflap:'+customerId,countryCode:'HT',recipientPhone:'+50937123456',
       operatorId:173,operatorName:'Fixture',productId:'fixture',productName:'Fixture',kind:'AIRTIME',providerAmount:5,
       providerCurrency:'USD',deliveredCurrency:'HTG',feeUsd:0,totalChargeUsd:5,testMode:false,expiresAt:new Date(Date.now()+300000).toISOString()});
-    return {...quote,id:randomUUID(),quoteId:quote.id,idempotencyKey:randomUUID(),requestHash:'fixture',
-      customIdentifier:randomUUID(),status:'PENDING' as const,paymentStatus:'PENDING' as const,updatedAt:new Date().toISOString()};
+    const {expiresAt,consumedAt,...snapshot}=quote;
+    void expiresAt; void consumedAt;
+    return {...snapshot,id:randomUUID(),quoteId:quote.id,idempotencyKey:randomUUID(),requestHash:'fixture',
+      paymentEnvironment:'PRODUCTION' as const,rechargeEnvironment:'PRODUCTION' as const,customIdentifier:randomUUID(),status:'PENDING' as const,paymentStatus:'PENDING' as const,updatedAt:new Date().toISOString()};
   }
   it('allows only three concurrent reservations for one buyer',async()=>{
     const c=await customer();const inputs=await Promise.all(clients.map(()=>input(c.id)));

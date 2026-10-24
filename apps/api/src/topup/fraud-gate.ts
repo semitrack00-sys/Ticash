@@ -17,6 +17,12 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
     return db.$transaction(async tx => {
       // One account cannot race multiple cards past the limit across workers.
       await tx.$queryRaw`SELECT id FROM "FlupFlapCustomer" WHERE id = ${customerId} FOR UPDATE`;
+      if (fingerprint) {
+        // Same-card attempts across different customers must see each other's
+        // assessment, including concurrent attempts on separate API workers.
+        const cardLock = `recharge-card:${fingerprint}`;
+        await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${cardLock}, 0))`;
+      }
       const current = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
       if (!current || current.status !== 'ACTIVE' || current.rechargeRestricted || current.guestExpiresAt) return 'ACCOUNT_REVIEW_REQUIRED';
       const saved = await tx.rechargeFraudAssessment.findUnique({ where: { transactionId: record.id } });
@@ -27,7 +33,15 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
       const cards = new Set(recent.map(r => r.fingerprint).filter(Boolean));
       if (fingerprint) cards.add(fingerprint);
       const reviewed = saved?.reviewedAt && saved.chargeId === evidence.chargeId && saved.fingerprint === fingerprint;
-      const reason = paymentReviewReason(evidence) ?? (!reviewed && cards.size > 2 ? 'CARD_SWITCHING_REVIEW' : undefined);
+      const linked = fingerprint ? await tx.rechargeFraudAssessment.findMany({ where: {
+        fingerprint, customerId: { not: customerId }, createdAt: { gte: new Date(Date.now() - 30 * 86400000) },
+      }, select: { customerId: true } }) : [];
+      const restrictedLink = linked.length > 0 && await tx.flupFlapCustomer.findFirst({ where: {
+        id: { in: linked.map(r => r.customerId) }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
+      }, select: { id: true } });
+      const reason = paymentReviewReason(evidence) ?? (restrictedLink ? 'LINKED_ACCOUNT_REVIEW' : undefined) ??
+        (!reviewed && linked.length > 0 ? 'SHARED_CARD_REVIEW' : undefined) ??
+        (!reviewed && cards.size > 2 ? 'CARD_SWITCHING_REVIEW' : undefined);
       const data = { customerId, fingerprint, chargeId: evidence.chargeId, risk: evidence.risk,
         authentication: evidence.authentication ?? null, reason: reason ?? null };
       await tx.rechargeFraudAssessment.upsert({ where: { transactionId: record.id }, create: { transactionId: record.id, ...data }, update: data });

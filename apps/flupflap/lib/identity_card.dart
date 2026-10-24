@@ -26,13 +26,15 @@ class _IdentityCardState extends State<IdentityCard> with WidgetsBindingObserver
     setState(() => busy = true);
     try {
       final response = await widget.session.dio.get('/flupflap/identity');
-      if (mounted) setState(() {
+      if (mounted) { setState(() {
         enabled = response.data['enabled'] == true;
         status = response.data['status'] as String? ?? 'NOT_STARTED';
         message = null;
-      });
+      }); }
     } catch (_) {
-      if (mounted && enabled) setState(() => message = 'Unable to refresh verification. Please try again.');
+      if (mounted && enabled) {
+        setState(() => message = 'Unable to refresh verification. Please try again.');
+      }
     } finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> start() async {
@@ -44,7 +46,9 @@ class _IdentityCardState extends State<IdentityCard> with WidgetsBindingObserver
       if (url != null) await NativeActions.identity(Uri.parse(url));
       if (mounted) setState(() => status = response.data['status'] as String? ?? 'PENDING');
     } catch (_) {
-      if (mounted) setState(() => message = 'Unable to start. Verify your email and phone first, or contact contact@ticash-app.com for help.');
+      if (mounted) {
+        setState(() => message = 'Unable to start. Verify your email and phone first, or contact contact@ticash-app.com for help.');
+      }
     } finally { if (mounted) setState(() => busy = false); }
   }
   String get label => switch (status) {

@@ -387,7 +387,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                                 SelectableText('Buyer phone: ${value(row['buyerPhone'])}'),
                                 const SizedBox(height: 8),
                               ],
-                              for (final e in (row as Map).entries)
+                              for (final e in row.entries)
                                 if (!const ['buyerName', 'buyerEmail', 'buyerPhone'].contains(e.key))
                                   SelectableText('${e.key}: ${value(e.value)}'),
                               if (section == 'transactions' &&

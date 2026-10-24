@@ -6,6 +6,7 @@ import type { MobileTopUpService } from '../topup/service.js';
 import { FlupFlapIdentityRepository } from './repository.js';
 import { flupFlapCustomerId } from './owner.js';
 import { publicFlupFlapCustomer } from './auth.js';
+import { transactionBuyerLookup } from './transaction-buyer.js';
 
 // This module uses TiCash staff authentication, never FlupFlap customer tokens.
 export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permission:(p:AdminPermission)=>RequestHandler;
@@ -26,10 +27,12 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
   await options.audit(req.userId,'FLUPFLAP_RESTRICTION_UPDATED','FlupFlapCustomer',id,{restricted:input.rechargeRestricted,reason:input.reason});res.status(204).end();
  });
  for(const [path,permission] of [['transactions','recharge.transactions.view'],['pending-failures','recharge.transactions.view'],['refunds','recharge.refunds'],['financials','recharge.reports'],['reports','recharge.reports']] as const){
-  router.get('/'+path,protect(permission),async(req,res)=>{
+  router.get('/'+path,protect(permission),async(req:AdminRequest,res)=>{
+   res.set('Cache-Control','no-store');
+   const buyerFor=transactionBuyerLookup(options.identities,req.permissions?.includes('recharge.customers.view')===true);
    const offset=page.parse(req.query.offset);const all=await options.recharge.listFlupFlapTransactions(offset);
    const rows=all.filter(t=>path==='pending-failures'?['PENDING','PROCESSING','FAILED'].includes(t.status):path==='refunds'?/REFUND|VOID|RECOVERY/.test(t.paymentStatus)||t.status==='REFUNDED':true);
-   res.json({transactions:await Promise.all(rows.map(async t=>({...publicTransaction(t),notification:await options.service.notificationStatus(t.id)}))),offset,limit:100,nextOffset:all.length===100?offset+100:null,scope:'PAGE',authoritativeState:'PAYMENT_AND_RECHARGE_PROVIDERS'});
+   res.json({transactions:await Promise.all(rows.map(async t=>({...publicTransaction(t),...await buyerFor(flupFlapCustomerId(t.userId)),notification:await options.service.notificationStatus(t.id)}))),offset,limit:100,nextOffset:all.length===100?offset+100:null,scope:'PAGE',authoritativeState:'PAYMENT_AND_RECHARGE_PROVIDERS'});
   });
  }
  router.post('/transactions/:id/reconcile',protect('recharge.reconciliation'),async(req:AdminRequest,res)=>{

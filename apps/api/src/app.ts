@@ -1,3 +1,4 @@
+import { createRechargeFraudGate } from './topup/fraud-gate.js';
 import { FlupFlapStores } from './flupflap/stores.js';
 import { createStoresRouter, createStoresAdminRouter } from './flupflap/stores-router.js';
 import { createAppDownloadsRouter } from './flupflap/app-downloads-router.js';
@@ -1034,6 +1035,7 @@ export function createApp(options: CreateAppOptions = {}) {
     },
     recurringRechargeActive,
     storeBalance,
+    databaseEnabled ? createRechargeFraudGate(prisma, mobileTopUpStripeProvider) : undefined,
   );
 
   const recurringRechargeService = recurringRechargeActive

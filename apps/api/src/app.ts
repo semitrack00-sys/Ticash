@@ -1,3 +1,5 @@
+import { rechargeDeviceGuard } from './flupflap/device-security.js';
+import { fraudAlertConfig, FlupFlapFraudAlerts } from './flupflap/fraud-alerts.js';
 import { createVerificationRouter, FlupFlapVerification, verificationDelivery } from './flupflap/verification.js';
 import { createRechargeFraudGate, approveRechargeReview } from './topup/fraud-gate.js';
 import { FlupFlapStores } from './flupflap/stores.js';
@@ -1046,6 +1048,21 @@ export function createApp(options: CreateAppOptions = {}) {
     databaseEnabled ? (record, actor, note) => approveRechargeReview(prisma, mobileTopUpStripeProvider, record, actor, note) : undefined,
   );
 
+  const alertConfig = fraudAlertConfig();
+  if (databaseEnabled && alertConfig && process.env.NODE_ENV !== 'test') {
+    const alerts = new FlupFlapFraudAlerts(prisma, alertConfig);
+    let running = false;
+    const run = async () => {
+      if (running) return;
+      running = true;
+      try { await alerts.run(); }
+      catch { console.warn('FlupFlap security worker failed', { code: 'FRAUD_ALERT_WORKER_ERROR' }); }
+      finally { running = false; }
+    };
+    setTimeout(() => { void run(); }, 10000).unref();
+    setInterval(() => { void run(); }, 60000).unref();
+  }
+
   const recurringRechargeService = recurringRechargeActive
     ? new FlupFlapRecurringRechargeService(prisma, flupFlapRepository, mobileTopUpService, recordAudit, options.mobileTopUpClock)
     : undefined;
@@ -1190,7 +1207,7 @@ export function createApp(options: CreateAppOptions = {}) {
       callback(new SecurityError('CORS_ORIGIN_DENIED', 'Origin is not allowed by CORS', 403));
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-FlupFlap-Device'],
     credentials: true,
     optionsSuccessStatus: 204,
   }));
@@ -1360,6 +1377,7 @@ export function createApp(options: CreateAppOptions = {}) {
     service: recurringRechargeService,
   }));
   app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
+    purchaseGuard: databaseEnabled && flupFlapProductionAllowed() ? rechargeDeviceGuard(prisma) : undefined,
     // Guest checkout is retained only for sandbox regression/recovery testing.
     allowGuestPurchases: mobileTopUpConfig.environment === 'sandbox',
     authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,

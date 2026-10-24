@@ -33,7 +33,7 @@ it('verifies saved email once without returning or storing the code',async()=>{
   await expect(service.confirm(customer.id,'email',result.challengeId,code)).rejects.toMatchObject({code:'VERIFICATION_CODE_INVALID'});
 });
 it('commits failed attempts and blocks even the right code after five guesses',async()=>{
-  const {customer,send,service}=await fixture();const {challengeId}=await service.send(customer.id,'phone');
+  const {customer,send,service}=await fixture();const {challengeId}=await service.send(customer.id,'phone',true);
   const code=send.mock.calls[0][2];const wrong=code==='000000'?'111111':'000000';
   for(let i=0;i<5;i++)await expect(service.confirm(customer.id,'phone',challengeId,wrong)).rejects.toThrow();
   expect((await prisma.flupFlapVerificationChallenge.findUniqueOrThrow({where:{id:challengeId}})).attempts).toBe(5);
@@ -59,7 +59,14 @@ it('limits resends and invalidates older codes',async()=>{
 });
 it('does not accept codes when delivery fails',async()=>{
   const {customer,send,service}=await fixture();send.mockRejectedValue(new Error('delivery unavailable'));
-  await expect(service.send(customer.id,'phone')).rejects.toMatchObject({code:'VERIFICATION_DELIVERY_FAILED'});
+  await expect(service.send(customer.id,'phone',true)).rejects.toMatchObject({code:'VERIFICATION_DELIVERY_FAILED'});
   const call=send.mock.calls[0];
   await expect(service.confirm(customer.id,'phone',call[3],call[2])).rejects.toThrow();
+});
+
+it('requires explicit SMS consent before storing or sending a code',async()=>{
+  const {customer,send,service}=await fixture();
+  await expect(service.send(customer.id,'phone')).rejects.toMatchObject({code:'SMS_CONSENT_REQUIRED'});
+  expect(send).not.toHaveBeenCalled();
+  expect(await prisma.flupFlapVerificationChallenge.count({where:{customerId:customer.id}})).toBe(0);
 });

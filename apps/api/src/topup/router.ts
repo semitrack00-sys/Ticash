@@ -61,6 +61,7 @@ const checkoutResumeLimit = rateLimit({
 export function createMobileTopUpRouter(options: {
   authenticate: RequestHandler;
   requireFundingAllowed: RequestHandler;
+  purchaseGuard?: RequestHandler;
   service: MobileTopUpService;
   quotePresentation?: (userId: string, quoteId: string) => Promise<Record<string, unknown>>;
   isGuest: (userId: string) => Promise<boolean>;
@@ -83,7 +84,7 @@ export function createMobileTopUpRouter(options: {
     res.json(options.service.paymentMethods(await options.isGuest(req.userId!)));
   }));
 
-  router.post('/payment-sessions', ...protectedRoute, asyncRoute(async (req, res) => {
+  router.post('/payment-sessions', ...protectedRoute, ...(options.purchaseGuard ? [options.purchaseGuard] : []), asyncRoute(async (req, res) => {
     if (options.allowGuestPurchases === false && await options.isGuest(req.userId!)) {
       throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'Sign in or create an account before buying a recharge.', 403);
     }
@@ -167,7 +168,7 @@ export function createMobileTopUpRouter(options: {
     res.status(201).json({ quote: { ...quote, ...await options.quotePresentation?.(req.userId!, quote.id) } });
   }));
 
-  router.post('/transactions', ...protectedRoute, asyncRoute(async (req, res) => {
+  router.post('/transactions', ...protectedRoute, ...(options.purchaseGuard ? [options.purchaseGuard] : []), asyncRoute(async (req, res) => {
     if (options.allowGuestPurchases === false && await options.isGuest(req.userId!)) {
       throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'Sign in or create an account before buying a recharge.', 403);
     }

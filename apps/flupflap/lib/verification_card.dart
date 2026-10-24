@@ -33,10 +33,12 @@ class _VerificationCardState extends State<VerificationCard> {
     setState(() { busy = true; message = null; });
     try {
       final response = await widget.session.dio.post('/flupflap/verification/send', data: {'channel': value});
-      if (mounted) setState(() {
-        channel = value; challengeId = response.data['challengeId'] as String;
-        code.clear(); message = 'verificationSent';
-      });
+      if (mounted) {
+        setState(() {
+          channel = value; challengeId = response.data['challengeId'] as String;
+          code.clear(); message = 'verificationSent';
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => message = 'verificationUnavailable');
     } finally { if (mounted) setState(() => busy = false); }
@@ -47,9 +49,11 @@ class _VerificationCardState extends State<VerificationCard> {
     try {
       await widget.session.dio.post('/flupflap/verification/confirm',
         data: {'channel': channel, 'challengeId': challengeId, 'code': code.text});
-      if (mounted) setState(() {
-        verified.add(channel!); challengeId = null; code.clear(); message = 'verificationComplete';
-      });
+      if (mounted) {
+        setState(() {
+          verified.add(channel!); challengeId = null; code.clear(); message = 'verificationComplete';
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => message = 'verificationInvalid');
     } finally { if (mounted) setState(() => busy = false); }

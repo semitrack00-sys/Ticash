@@ -74,7 +74,7 @@ class _VerificationCardState extends State<VerificationCard> {
             title: const Text('I agree to receive FlupFlap verification texts at my account phone number when I request a code.'),
             subtitle: const Text('Message frequency varies with your requests. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase. Support: contact@ticash-app.com.'),
           ),
-          const SelectableText('Privacy: https://www.flupflap.com/legal/flupflap-privacy.html\nTerms: https://www.flupflap.com/legal/flupflap-terms.html'),
+          const SelectableText('Privacy: https://www.flupflap.com/legal/privacy\nTerms: https://www.flupflap.com/legal/terms'),
         ],
         for (final value in ['email', 'phone'])
           if (availability?[value] == true)

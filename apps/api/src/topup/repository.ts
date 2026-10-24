@@ -684,6 +684,18 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           }
           const replay = await tx.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
           if (replay) return replay;
+          // A new account must not reset limits for the same recipient. The
+          // phone is normalized to E.164 before the quote is created. Serialize
+          // this shared budget across customers and API workers.
+          const recipientLock = `recharge-recipient:${input.recipientPhone}`;
+          await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${recipientLock}, 0))`;
+          const recipientHistory = await tx.mobileTopUpTransaction.findMany({ where: {
+            recipientPhone: input.recipientPhone, flupFlapCustomerId: { not: null }, testMode: false,
+            createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) },
+          } });
+          assertPurchaseLimits(input.totalChargeUsd, recipientHistory.map(r => ({
+            createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus,
+          })), new Date(input.createdAt), false);
           const recent = await tx.mobileTopUpTransaction.findMany({ where: { flupFlapCustomerId: customerId, testMode: false,
             createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) } } });
           assertPurchaseLimits(input.totalChargeUsd, recent.map(r => ({ createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus })),

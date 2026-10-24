@@ -1181,3 +1181,17 @@ model FlupFlapStoreEntry {
   store FlupFlapStore @relation(fields: [storeId], references: [id], onDelete: Restrict)
   @@index([storeId, createdAt])
 }
+
+// Minimal server-sourced evidence; never store PAN/CVC or client claims.
+model RechargeFraudAssessment {
+  transactionId String @id
+  customerId String
+  fingerprint String?
+  chargeId String?
+  risk String
+  authentication String?
+  reason String?
+  createdAt DateTime @default(now())
+  @@index([customerId, createdAt])
+  @@index([fingerprint, createdAt])
+}

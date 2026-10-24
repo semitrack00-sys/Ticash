@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaMobileTopUpRepository } from '../src/topup/repository.js';
 import { FlupFlapVerification } from '../src/flupflap/verification.js';
+import { createRechargeFraudGate } from '../src/topup/fraud-gate.js';
 
 // CI supplies a disposable, fully migrated database; never use DATABASE_URL here.
 const url=process.env.FRAUD_TEST_DATABASE_URL;
@@ -16,9 +17,9 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
   async function customer(){
     return clients[0]!.flupFlapCustomer.create({data:{email:randomUUID()+'@example.test',passwordHash:'fixture'}});
   }
-  async function input(customerId:string){
+  async function input(customerId:string, recipientPhone='+509'+randomUUID().replace(/\D/g,'').slice(0,8).padEnd(8,'1')){
     const repo=new PrismaMobileTopUpRepository(clients[0]!);
-    const quote=await repo.createQuote({userId:'flupflap:'+customerId,countryCode:'HT',recipientPhone:'+50937123456',
+    const quote=await repo.createQuote({userId:'flupflap:'+customerId,countryCode:'HT',recipientPhone,
       operatorId:173,operatorName:'Fixture',productId:'fixture',productName:'Fixture',kind:'AIRTIME',providerAmount:5,
       providerCurrency:'USD',deliveredCurrency:'HTG',feeUsd:0,totalChargeUsd:5,testMode:false,expiresAt:new Date(Date.now()+300000).toISOString()});
     const {expiresAt,consumedAt,...snapshot}=quote;
@@ -38,6 +39,27 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     const results=await Promise.all(clients.map(db=>new PrismaMobileTopUpRepository(db).reserveTransaction(record)));
     expect(new Set(results.map(r=>r.record.id)).size).toBe(1);
     expect(await clients[0]!.mobileTopUpTransaction.count({where:{flupFlapCustomerId:c.id}})).toBe(1);
+  });
+  it('shares recipient limits across concurrent new accounts before consuming quotes',async()=>{
+    const phone='+509'+randomUUID().replace(/\D/g,'').slice(0,8).padEnd(8,'2');
+    const buyers=await Promise.all(clients.map(()=>customer()));
+    const inputs=await Promise.all(buyers.map(c=>input(c.id,phone)));
+    const results=await Promise.allSettled(inputs.map((r,i)=>new PrismaMobileTopUpRepository(clients[i]!).reserveTransaction(r)));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(3);
+    for(let i=0;i<results.length;i++)if(results[i]!.status==='rejected'){
+      expect((results[i] as PromiseRejectedResult).reason).toMatchObject({code:'RECHARGE_LIMIT_REACHED'});
+      expect((await clients[0]!.mobileTopUpQuote.findUniqueOrThrow({where:{id:inputs[i]!.quoteId}})).consumedAt).toBeNull();
+    }
+  });
+  it('holds all but the first concurrent account using the same card',async()=>{
+    const buyers=await Promise.all(clients.map(()=>customer()));
+    const fingerprint=randomUUID();
+    const stripe={fraudEvidence:async()=>({chargeId:'ch_fixture',fingerprint,risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})};
+    const results=await Promise.all(buyers.map((c,i)=>createRechargeFraudGate(clients[i]!,stripe as never)({
+      id:randomUUID(),userId:'flupflap:'+c.id,paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_fixture',
+    } as never)));
+    expect(results.filter(r=>r===undefined)).toHaveLength(1);
+    expect(results.filter(r=>r==='SHARED_CARD_REVIEW')).toHaveLength(5);
   });
   it('does not consume a quote before contact verification',async()=>{
     const c=await customer();const record=await input(c.id);const repo=new PrismaMobileTopUpRepository(clients[0]!,true);

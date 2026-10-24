@@ -77,6 +77,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     }
     const { data } = await this.request('/v1/checkout/sessions', 'POST', {
       mode: 'payment',
+      billing_address_collection: 'required',
       payment_method_options: { card: { request_three_d_secure: 'challenge' } },
       success_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.successUrl!, input.resumeToken),
       cancel_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.failureUrl!, input.resumeToken),

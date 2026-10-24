@@ -23,8 +23,8 @@ export function paymentReviewReason(e: PaymentEvidence): string | undefined {
   if (e.review || e.risk !== 'normal') return 'PAYMENT_RISK_REVIEW';
   if (e.paymentType !== 'card') return 'PAYMENT_METHOD_REVIEW';
   // An issuer may authorize even when AVS/CVC fails. Normal risk and 3DS
-  // authentication must never override an explicit verification failure.
-  if (e.postalCodeCheck === 'fail' || e.cvcCheck === 'fail') return 'PAYMENT_CARD_CHECK_FAILED';
+  // authentication must never override missing, unavailable or non-passing verification.
+  if (e.postalCodeCheck !== 'pass' || e.cvcCheck !== 'pass') return 'PAYMENT_CARD_CHECK_FAILED';
   if (!e.fingerprint || e.authentication !== 'authenticated') return 'PAYMENT_AUTHENTICATION_REVIEW';
   // Use the network response, not the provisional 3DS ECI. Authentication
   // can be downgraded during authorization. This is not a liability guarantee.

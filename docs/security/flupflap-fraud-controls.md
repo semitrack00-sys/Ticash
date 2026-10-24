@@ -13,24 +13,32 @@ This change is not a declaration that any buyer committed fraud. It adds conserv
 - Evidence is durable in RechargeFraudAssessment. Fingerprints are hashed. No card numbers or CVCs are stored. Transaction IDs join existing recipient and supplier-delivery evidence.
 - Held orders remain PENDING/CAPTURED with FRAUD_REVIEW_REQUIRED and an internal reason. Webhook retries/reconciliation cannot automatically release them. Existing admin pending-failures view exposes the held records. No automatic refunds or fraud accusations.
 
-## Failed card verification checks
+## Mandatory card verification passes
 
-Fresh Stripe evidence includes `card.checks.address_postal_code_check` and
-`card.checks.cvc_check`. An explicit `fail` on either check prevents production
-FlupFlap Stripe fulfillment with `PAYMENT_CARD_CHECK_FAILED`, even with normal
-risk and authenticated 3DS. Staff review uses the same policy and cannot override
-the failure. Retries retain the existing durable hold. Only check result strings
-are read; no CVC values are collected or stored by this check.
+Production FlupFlap card delivery now requires both
+`card.checks.address_postal_code_check === 'pass'` and `card.checks.cvc_check === 'pass'`.
+Failed, unavailable, unchecked, not-provided, unknown, null and missing results all
+hold fulfillment with `PAYMENT_CARD_CHECK_FAILED`. Normal risk, authenticated 3DS,
+retries and staff review cannot override this requirement. Only result strings are
+read; the backend never receives or stores CVC values.
 
-The matching permanent Radar block is `:address_zip_check: = 'fail' or
-:cvc_check: = 'fail'` at 100% traffic. It has no normal-risk exemption. Missing,
-unavailable, unchecked and not-provided results are not explicit failures; all
-other fraud checks continue to apply. This is not a requirement that every issuer
-support AVS, nor proof that a card is legitimate.
+The permanent Radar block is:
 
-Keep the emergency purchase pause (`MOBILE_TOPUP_ENABLED=false`) and temporary
-Radar recharge block `!(is_missing(::transactionId::))` in place during deployment.
-This change does not reopen purchases or refund previously captured payments.
+```
+is_missing(:address_zip_check:) or :address_zip_check: != 'pass' or is_missing(:cvc_check:) or :cvc_check: != 'pass'
+```
+
+Explicit `is_missing` terms are necessary: comparisons and NOT do not match missing
+Radar attributes. The rule applies at 100% traffic. Stripe collects card details;
+issuers determine check results. This strict policy may decline legitimate issuers,
+wallets or saved cards without supported checks and is not a zero-fraud guarantee.
+Checkout always requests the full billing address to collect the postal code.
+Existing payment risk, registration, authentication and purchase limits still apply.
+
+Purchases were reopened at the owner's direction on 2026-10-24 using
+`MOBILE_TOPUP_ENABLED=true`; the temporary transactionId blanket block is disabled.
+The KYC rollout was cancelled and was never merged or enabled. This change does
+not refund payments or release existing fraud holds.
 
 ## Deployment and operations
 

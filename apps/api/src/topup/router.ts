@@ -67,6 +67,7 @@ export function createMobileTopUpRouter(options: {
   supportedCountriesPath?: string;
   allowAndroidReturn?: boolean;
   allowRecurring?: boolean;
+  allowGuestPurchases?: boolean;
   billingCountryForUser: (userId: string) => Promise<string | undefined>;
 }) {
   const router = express.Router();
@@ -83,6 +84,9 @@ export function createMobileTopUpRouter(options: {
   }));
 
   router.post('/payment-sessions', ...protectedRoute, asyncRoute(async (req, res) => {
+    if (options.allowGuestPurchases === false && await options.isGuest(req.userId!)) {
+      throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'Sign in or create an account before buying a recharge.', 403);
+    }
     const key = req.header('idempotency-key');
     if (!key) throw new MobileTopUpError('IDEMPOTENCY_KEY_REQUIRED', 'An Idempotency-Key header is required', 400);
     const guest = await options.isGuest(req.userId!);
@@ -164,6 +168,9 @@ export function createMobileTopUpRouter(options: {
   }));
 
   router.post('/transactions', ...protectedRoute, asyncRoute(async (req, res) => {
+    if (options.allowGuestPurchases === false && await options.isGuest(req.userId!)) {
+      throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'Sign in or create an account before buying a recharge.', 403);
+    }
     const idempotencyKey = req.header('idempotency-key');
     if (!idempotencyKey) throw new MobileTopUpError('IDEMPOTENCY_KEY_REQUIRED', 'An Idempotency-Key header is required', 400);
     const transaction = await options.service.purchase(req.userId!, purchaseSchema.parse(req.body), idempotencyKey);

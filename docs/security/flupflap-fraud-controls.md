@@ -15,7 +15,7 @@ This change is not a declaration that any buyer committed fraud. It adds conserv
 
 ## Deployment and operations
 
-Apply migration 20261024010000_recharge_fraud_assessment and generate Prisma before deploying. Missing database/provider evidence fails closed into a hold. Review held payments promptly in Stripe and the admin dashboard. Investigate the supplier state before refunds. This first change deliberately has no override/release endpoint; a separately reviewed release workflow is required before deployment so legitimate held customers are not stranded. Do not clear the failure code directly as an operational workaround.
+Apply migrations 20261024010000_recharge_fraud_assessment and 20261024020000_recharge_fraud_review and generate Prisma before deploying. Missing database/provider evidence fails closed into a hold. Review held payments promptly in Stripe and the admin dashboard. Investigate the supplier state before refunds. Authorized staff with recharge.reconciliation permission can POST /api/admin/flupflap/transactions/:id/fraud-review/release with a reason of 20–500 characters. Release requires fresh normal-risk, authenticated, captured, undisputed, unrefunded Stripe evidence and an active unrestricted customer. Approval is audited and bound to the charge and hashed card fingerprint; fulfillment checks evidence again. This permits reviewed card-velocity exceptions, never risk or authentication overrides. The mobile receipt and checkout resume response identify held payments and tell customers not to pay again. Staff review UI and Flutter validation remain outstanding. Do not clear the failure code directly as an operational workaround.
 
 ## Outstanding work — do not describe as enabled
 

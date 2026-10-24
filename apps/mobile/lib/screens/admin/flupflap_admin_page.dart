@@ -126,6 +126,53 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     }
   }
 
+  final Set<String> reviewing = {};
+  Future<void> reviewPayment(Map row) async {
+    final id = row['id'].toString();
+    if (reviewing.contains(id)) return;
+    final input = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Review held payment'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Check the payment in Stripe and confirm the buyer and recipient. Release will recheck payment safety and may deliver the recharge.'),
+          TextField(controller: input, maxLength: 500, minLines: 2, maxLines: 4,
+            decoration: const InputDecoration(labelText: 'Review findings (at least 20 characters)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () {
+            if (input.text.trim().length >= 20) Navigator.pop(context, input.text.trim());
+          }, child: const Text('Review and release')),
+        ],
+      ),
+    );
+    input.dispose();
+    if (!mounted || reason == null) return;
+    setState(() => reviewing.add(id));
+    try {
+      final response = await client.post(
+        '/admin/flupflap/transactions/$id/fraud-review/release',
+        data: {'reason': reason},
+      );
+      if (!mounted) return;
+      final transaction = response.data['transaction'];
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+        transaction['reviewRequired'] == true
+          ? 'Payment remains on hold. New evidence requires review.'
+          : 'Review recorded. Check the updated delivery status.',
+      )));
+      setState(load);
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Release was not confirmed. Refresh the order before trying again.')),
+      );
+    } finally {
+      if (mounted) setState(() => reviewing.remove(id));
+    }
+  }
+
   Future<void> retryNotification(Map row) async {
     try {
       await client.post(
@@ -403,6 +450,12 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                                 TextButton(
                                   onPressed: () => retryNotification(row),
                                   child: const Text('Retry receiver SMS'),
+                                ),
+                              if (row['reviewRequired'] == true &&
+                                  widget.session.can('recharge.reconciliation'))
+                                TextButton(
+                                  onPressed: reviewing.contains(row['id'].toString()) ? null : () => reviewPayment(row),
+                                  child: const Text('Review held payment'),
                                 ),
                               if (section == 'customers' &&
                                   widget.session.can('recharge.operations'))

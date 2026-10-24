@@ -36,6 +36,7 @@ export interface HostedCheckoutSessionContract extends HostedCheckoutSessionBase
 
 // Public capability response: explicit customer-facing fields, never an internal record.
 export interface MobileTopUpCheckoutResumeDto {
+  reviewRequired: boolean;
   paymentStatus: MobileTopUpPaymentStatus;
   failureReason: 'INSUFFICIENT_FUNDS' | 'PAYMENT_DECLINED' | 'PAYMENT_CANCELLED' | 'PAYMENT_EXPIRED' | 'RECHARGE_PROVIDER_FAILED' | null;
   countryCode: string;

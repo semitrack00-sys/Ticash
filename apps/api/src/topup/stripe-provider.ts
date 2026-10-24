@@ -1,3 +1,4 @@
+import type { PaymentEvidence } from './fraud-policy.js';
 import { ANDROID_CHECKOUT_RETURN_URL } from './android-checkout-return.js';
 import { MobileTopUpError, type HostedCheckoutSession, type HostedCheckoutSessionBaseContract, type MobileTopUpPaymentCapture, type MobileTopUpPaymentQuery, type MobileTopUpPaymentRecovery, type MobileTopUpSessionProvider, type PaymentSessionInput } from './types.js';
 import { validateStripeConfig, type StripeConfig } from './stripe-config.js';
@@ -76,6 +77,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     }
     const { data } = await this.request('/v1/checkout/sessions', 'POST', {
       mode: 'payment',
+      payment_method_options: { card: { request_three_d_secure: 'challenge' } },
       success_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.successUrl!, input.resumeToken),
       cancel_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.failureUrl!, input.resumeToken),
       client_reference_id: input.transactionId,
@@ -99,6 +101,26 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
       } }],
     }, input.transactionId + ':checkout');
     return this.assertSafeSession(data);
+  }
+
+  async fraudEvidence(paymentIntentId: string, transactionId: string): Promise<PaymentEvidence> {
+    if (!/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid payment binding', 502);
+    const { data } = await this.request(`/v1/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge`);
+    const charge = data.latest_charge as Record<string, unknown> | undefined;
+    const metadata = data.metadata as Record<string, unknown> | undefined;
+    if (data.id !== paymentIntentId || data.status !== 'succeeded' || data.livemode !== (this.config.environment === 'production') || metadata?.transactionId !== transactionId ||
+        !charge || typeof charge !== 'object' || typeof charge.id !== 'string' || charge.paid !== true || charge.captured !== true) {
+      throw new MobileTopUpError('PAYMENT_RISK_UNAVAILABLE', 'Payment verification is unavailable', 503);
+    }
+    const outcome = charge.outcome as Record<string, unknown> | undefined;
+    const details = charge.payment_method_details as Record<string, unknown> | undefined;
+    const card = details?.card as Record<string, unknown> | undefined;
+    const auth = card?.three_d_secure as Record<string, unknown> | undefined;
+    return { chargeId: charge.id, fingerprint: typeof card?.fingerprint === 'string' ? card.fingerprint : undefined,
+      risk: typeof outcome?.risk_level === 'string' ? outcome.risk_level : 'unknown',
+      authentication: typeof auth?.result === 'string' ? auth.result : undefined,
+      paymentType: typeof details?.type === 'string' ? details.type : 'unknown',
+      review: Boolean(data.review || charge.review), disputed: charge.disputed === true, refunded: Number(charge.amount_refunded ?? 0) > 0 };
   }
 
   private assertSafeSession(data: Record<string, unknown>): HostedCheckoutSession {

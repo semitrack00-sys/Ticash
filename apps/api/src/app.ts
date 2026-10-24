@@ -1,3 +1,5 @@
+import { createVerificationRouter, FlupFlapVerification, verificationDelivery } from './flupflap/verification.js';
+import { createRechargeFraudGate, approveRechargeReview } from './topup/fraud-gate.js';
 import { FlupFlapStores } from './flupflap/stores.js';
 import { createStoresRouter, createStoresAdminRouter } from './flupflap/stores-router.js';
 import { createAppDownloadsRouter } from './flupflap/app-downloads-router.js';
@@ -976,7 +978,7 @@ export function createApp(options: CreateAppOptions = {}) {
   };
   app.locals.guestAuthError = guestAuthError;
   const mobileTopUpRepository = options.mobileTopUpRepository ?? (
-    databaseEnabled ? new PrismaMobileTopUpRepository(prisma) : new MemoryMobileTopUpRepository()
+    databaseEnabled ? new PrismaMobileTopUpRepository(prisma, process.env.FLUPFLAP_REQUIRE_VERIFIED_CONTACTS === 'true') : new MemoryMobileTopUpRepository()
   );
   const mobileTopUpProvider = options.mobileTopUpProvider ?? new GlobalRechargeProviderRouter(mobileTopUpConfig.enabled ? [
     ['RELOADLY', mobileTopUpConfig.environment === 'production'
@@ -1004,6 +1006,12 @@ export function createApp(options: CreateAppOptions = {}) {
     const telnyx = loadTelnyxSmsConfig();
     return telnyx ? new TelnyxReceiverSmsProvider(telnyx) : undefined;
   })();
+
+  if (process.env.FLUPFLAP_REQUIRE_VERIFIED_CONTACTS === 'true' &&
+      (process.env.FLUPFLAP_VERIFICATION_ENABLED !== 'true' || !databaseEnabled ||
+       !verificationDelivery(receiverSmsProvider).available('email') || !verificationDelivery(receiverSmsProvider).available('phone'))) {
+    throw new Error('Contact verification enforcement requires enabled verification, database, email and SMS delivery');
+  }
 
   const recurringRechargeActive = recurringRechargeEnabled() &&
     databaseEnabled &&
@@ -1034,6 +1042,8 @@ export function createApp(options: CreateAppOptions = {}) {
     },
     recurringRechargeActive,
     storeBalance,
+    databaseEnabled ? createRechargeFraudGate(prisma, mobileTopUpStripeProvider) : undefined,
+    databaseEnabled ? (record, actor, note) => approveRechargeReview(prisma, mobileTopUpStripeProvider, record, actor, note) : undefined,
   );
 
   const recurringRechargeService = recurringRechargeActive
@@ -1318,6 +1328,10 @@ export function createApp(options: CreateAppOptions = {}) {
     }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
+  app.use('/api/flupflap/verification', createVerificationRouter(flupFlap.authenticate,
+    databaseEnabled && process.env.FLUPFLAP_VERIFICATION_ENABLED === 'true'
+      ? new FlupFlapVerification(prisma, (options.flupFlapConfig ?? loadFlupFlapConfig()).accessSecret!, verificationDelivery(receiverSmsProvider))
+      : undefined));
   app.use('/api/flupflap/stores', createStoresRouter({ stores: flupFlapStores, authenticate: flupFlap.authenticate,
     requireRechargeAllowed: flupFlap.requireRechargeAllowed, isGuest: flupFlap.isGuest, recharge: mobileTopUpService }));
   app.use('/api/admin/flupflap/stores', createStoresAdminRouter({ stores: flupFlapStores, authenticate, permission }));

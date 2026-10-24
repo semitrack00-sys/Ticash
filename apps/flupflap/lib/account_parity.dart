@@ -1,3 +1,4 @@
+import 'verification_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -130,6 +131,7 @@ class _AccountParityState extends State<AccountParity> {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      if (registered) VerificationCard(key: ValueKey(owner), session: widget.session),
       DropdownButtonFormField<AppLanguage>(
         initialValue: widget.language,
         isExpanded: true,

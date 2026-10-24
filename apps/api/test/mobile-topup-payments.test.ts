@@ -1229,7 +1229,7 @@ describe('Stripe sandbox flow',()=>{
 
     expect(response.body).toEqual({ transaction: {
       countryCode: 'JM', receiverQuote: quote.receiverQuote, deliveredValue: null, deliveredCurrency: null, receiverDiscrepancy: false,
-      status: 'PENDING', paymentStatus: 'SESSION_CREATED', failureReason: null, testMode: true, recipientPhone: quote.recipientPhone,
+      status: 'PENDING', paymentStatus: 'SESSION_CREATED', failureReason: null, reviewRequired: false, testMode: true, recipientPhone: quote.recipientPhone,
       operatorName: quote.operatorName, productName: quote.productName,
       providerAmount: 5, providerCurrency: 'USD', feeUsd: 0.99, totalChargeUsd: 5.99,
     } });
@@ -1324,7 +1324,7 @@ describe('Stripe sandbox flow',()=>{
       mobileTopUpRepository: f.repository,
       mobileTopUpStripeProvider: f.stripeProvider });
     const record = (await f.repository.getTransactionById(session.transactionId))!;
-    const allowed = ['paymentStatus', 'failureReason', 'countryCode', 'receiverQuote', 'deliveredValue', 'deliveredCurrency', 'receiverDiscrepancy', 'status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
+    const allowed = ['reviewRequired', 'paymentStatus', 'failureReason', 'countryCode', 'receiverQuote', 'deliveredValue', 'deliveredCurrency', 'receiverDiscrepancy', 'status', 'testMode', 'recipientPhone', 'operatorName', 'productName', 'providerAmount', 'providerCurrency', 'feeUsd', 'totalChargeUsd'];
     for (const path of ['/api/mobile-topups/checkout-resume', '/api/flupflap/mobile-topups/checkout-resume']) {
       const response = await request(app).post(path).send({ resumeToken }).expect(200);
       expect(Object.keys(response.body.transaction).sort()).toEqual([...allowed].sort());

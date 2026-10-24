@@ -841,7 +841,14 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       _ => null,
     };
     return card([
-      Text(context.ft(state), style: Theme.of(context).textTheme.headlineSmall),
+      Text(
+        (d['reviewRequired'] == true || d['failureCode'] == 'FRAUD_REVIEW_REQUIRED')
+            ? context.ft('paymentUnderReview')
+            : context.ft(state),
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      if (d['reviewRequired'] == true || d['failureCode'] == 'FRAUD_REVIEW_REQUIRED')
+        Text(context.ft('paymentUnderReviewHelp')),
       if (d['countryCode'] is String)
         Row(
           children: [

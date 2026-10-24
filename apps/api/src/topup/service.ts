@@ -83,6 +83,8 @@ export class MobileTopUpService {
     senderReceiptEmail?: (record: MobileTopUpTransactionRecord) => Promise<boolean>,
     recurringRechargeEnabled = false,
     private readonly storeBalance?: StoreBalancePayment,
+    private readonly fraudGate?: (record: MobileTopUpTransactionRecord) => Promise<string | undefined>,
+    private readonly approveFraudReview?: (record: MobileTopUpTransactionRecord, actor: string, note: string) => Promise<void>,
   ) {
     this.config = config;
     this.provider = provider;
@@ -862,6 +864,7 @@ export class MobileTopUpService {
       status: record.status,
       paymentStatus: record.paymentStatus,
       failureReason: record.status === 'FAILED' ? failureReason : null,
+      reviewRequired: record.failureCode === 'FRAUD_REVIEW_REQUIRED',
       countryCode: record.countryCode,
       receiverQuote: record.receiverQuote ?? null,
       deliveredValue: record.status === 'DELIVERED' ? record.deliveredValue ?? null : null,
@@ -926,11 +929,33 @@ export class MobileTopUpService {
     return this.fulfillPaidRecharge(transaction.id);
   }
 
+  async reviewHeldRecharge(id: string, actor: string, note: string) {
+    const record = await this.repository.getTransactionById(id);
+    if (!record || record.failureCode !== 'FRAUD_REVIEW_REQUIRED' || record.status !== 'PENDING' || record.paymentStatus !== 'CAPTURED' || !this.approveFraudReview) {
+      throw new MobileTopUpError('FRAUD_REVIEW_CONFLICT', 'This order cannot be released.', 409);
+    }
+    await this.approveFraudReview(record, actor, note);
+    // The durable approval is charge-bound; fulfillment still runs a fresh risk check.
+    await this.repository.updateTransaction(id, { failureCode: 'FRAUD_REVIEW_APPROVED', paymentRecoveryCode: 'REVIEW_APPROVED' });
+    return this.fulfillPaidRecharge(id);
+  }
+
   async fulfillPaidRecharge(id: string) {
     this.assertEnabled();
     const transaction = await this.repository.getTransactionById(id);
     if (!transaction) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     this.assertTransactionEnvironment(transaction);
+    if (flupFlapCustomerId(transaction.userId) && !transaction.testMode && transaction.paymentProvider === 'STRIPE' && transaction.status === 'PENDING' && ['AUTHORIZED', 'CAPTURED'].includes(transaction.paymentStatus)) {
+      if (transaction.failureCode === 'FRAUD_REVIEW_REQUIRED') return transaction;
+      let reason: string | undefined;
+      try { reason = this.fraudGate ? await this.fraudGate(transaction) : 'PAYMENT_RISK_UNAVAILABLE'; }
+      catch { reason = 'PAYMENT_RISK_UNAVAILABLE'; }
+      if (reason) {
+        const held = await this.repository.updateTransaction(id, { failureCode: 'FRAUD_REVIEW_REQUIRED', paymentRecoveryCode: reason });
+        await this.audit(transaction.userId, 'FLUPFLAP_FRAUD_REVIEW_REQUIRED', 'MobileTopUpTransaction', id, { reason });
+        return held;
+      }
+    }
     if (!await this.repository.claimOperation(id, 'fulfillment', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
     await this.audit(transaction.userId, 'MOBILE_TOPUP_FULFILLMENT_STARTED', 'MobileTopUpTransaction', id, { testMode: this.isTestMode() });
     let providerResult: ProviderTopUpResult;

@@ -16,7 +16,7 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
 }) {
  const router=express.Router();router.use(options.authenticate,options.permission('recharge.view'));
  const protect=(p:AdminPermission)=>options.permission(p);
- const publicTransaction=(t:MobileTopUpTransactionRecord)=>({id:t.id,customerId:flupFlapCustomerId(t.userId),countryCode:t.countryCode,operatorName:t.operatorName,productName:t.productName,provider:t.provider,status:t.status,paymentStatus:t.paymentStatus,amountUsd:t.providerAmount,feeUsd:t.feeUsd,totalUsd:t.totalChargeUsd,createdAt:t.createdAt,receiverQuote:t.receiverQuote,deliveredValue:t.deliveredValue,deliveredCurrency:t.deliveredCurrency,receiverDiscrepancy:t.receiverDiscrepancy});
+ const publicTransaction=(t:MobileTopUpTransactionRecord)=>({id:t.id,customerId:flupFlapCustomerId(t.userId),countryCode:t.countryCode,operatorName:t.operatorName,productName:t.productName,provider:t.provider,status:t.status,paymentStatus:t.paymentStatus,reviewRequired:t.failureCode==='FRAUD_REVIEW_REQUIRED',reviewReason:t.failureCode==='FRAUD_REVIEW_REQUIRED'?t.paymentRecoveryCode:undefined,amountUsd:t.providerAmount,feeUsd:t.feeUsd,totalUsd:t.totalChargeUsd,createdAt:t.createdAt,receiverQuote:t.receiverQuote,deliveredValue:t.deliveredValue,deliveredCurrency:t.deliveredCurrency,receiverDiscrepancy:t.receiverDiscrepancy});
  const page=z.coerce.number().int().min(0).max(100000).default(0);
  router.get('/dashboard',async(_req,res)=>res.json({domain:'FLUPFLAP',...options.service.availability()}));
  router.get('/customers',protect('recharge.customers.view'),async(_req,res)=>res.json({customers:(await options.identities.listCustomers()).map(c=>({...publicFlupFlapCustomer(c),rechargeRestricted:c.rechargeRestricted})),limit:100}));
@@ -50,6 +50,13 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
   const notification=await options.service.retryReceiverNotification(id);
   await options.audit(req.userId,'RECEIVER_SMS_RETRY','MobileTopUpTransaction',id);
   res.json({notification});
+ });
+ router.post('/transactions/:id/fraud-review/release',protect('recharge.reconciliation'),async(req:AdminRequest,res)=>{
+  const id=z.uuid().parse(req.params.id);
+  const {reason}=z.object({reason:z.string().trim().min(20).max(500)}).strict().parse(req.body);
+  if(!req.userId){res.status(401).json({code:'AUTH_REQUIRED'});return;}
+  const result=await options.service.reviewHeldRecharge(id,req.userId,reason);
+  res.json({transaction:publicTransaction(result)});
  });
  router.get('/countries',protect('recharge.providers.view'),async(_req,res)=>res.json({countries:await options.service.listCountries()}));
  router.get('/operators',protect('recharge.providers.view'),async(req,res)=>res.json({operators:await options.service.listOperators(z.string().regex(/^[A-Z]{2}$/).parse(req.query.country))}));

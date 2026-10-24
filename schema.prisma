@@ -814,6 +814,7 @@ model IdempotencyKey {
 
 // SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
 model FlupFlapCustomer {
+  verificationChallenges FlupFlapVerificationChallenge[]
   stores FlupFlapStore[]
   deletionRequest FlupFlapDeletionRequest?
   referralCode ReferralCode?
@@ -1180,4 +1181,36 @@ model FlupFlapStoreEntry {
   createdAt DateTime @default(now())
   store FlupFlapStore @relation(fields: [storeId], references: [id], onDelete: Restrict)
   @@index([storeId, createdAt])
+}
+
+// Minimal server-sourced evidence; never store PAN/CVC or client claims.
+model RechargeFraudAssessment {
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
+  transactionId String @id
+  customerId String
+  fingerprint String?
+  chargeId String?
+  risk String
+  authentication String?
+  reason String?
+  createdAt DateTime @default(now())
+  @@index([customerId, createdAt])
+  @@index([fingerprint, createdAt])
+}
+
+model FlupFlapVerificationChallenge {
+  id String @id @default(uuid())
+  customerId String
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel String
+  destination String
+  codeHash String
+  attempts Int @default(0)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  sentAt DateTime?
+  consumedAt DateTime?
+  @@index([customerId, channel, createdAt])
 }

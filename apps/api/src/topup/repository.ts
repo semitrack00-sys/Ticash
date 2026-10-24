@@ -1,3 +1,4 @@
+import { assertPurchaseLimits } from './fraud-policy.js';
 import type { ReceiverQuote } from './receiver-value.js';
 import { notificationFor, retryableNotification, type ReceiverNotification, type ReceiverNotificationStore } from './receiver-notification.js';
 import { ownerData, ownerWhere, ownerFromDb, recipientOwnerKey, transactionOwnerKey } from '../flupflap/owner.js';
@@ -467,7 +468,7 @@ function transactionFromDb(record: {
 }
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly prisma: PrismaClient, private readonly requireVerifiedContacts = false) {}
 
   async getCountryCatalogCache(key: string) {
     const record = await this.prisma.mobileTopUpCountryCatalogCache.findUnique({ where: { key } });
@@ -670,6 +671,24 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     if (existing) return { record: transactionFromDb(existing), created: false };
     try {
       const record = await this.prisma.$transaction(async (tx) => {
+        if (input.userId.startsWith('flupflap:') && !input.testMode) {
+          const customerId = input.userId.slice('flupflap:'.length);
+          // Serialize reservations across processes before counting or consuming a quote.
+          await tx.$queryRaw`SELECT id FROM "FlupFlapCustomer" WHERE id = ${customerId} FOR UPDATE`;
+          const customer = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
+          if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
+            throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active registered account is required.', 403);
+          }
+          if (this.requireVerifiedContacts && (!customer.emailVerifiedAt || !customer.phoneVerifiedAt)) {
+            throw new MobileTopUpError('CONTACT_VERIFICATION_REQUIRED', 'Verify your email and phone in Account before purchasing.', 403);
+          }
+          const replay = await tx.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
+          if (replay) return replay;
+          const recent = await tx.mobileTopUpTransaction.findMany({ where: { flupFlapCustomerId: customerId, testMode: false,
+            createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) } } });
+          assertPurchaseLimits(input.totalChargeUsd, recent.map(r => ({ createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus })),
+            new Date(input.createdAt), Date.parse(input.createdAt) - customer.createdAt.getTime() < 7 * 86400000);
+        }
         const claimed = await tx.mobileTopUpQuote.updateMany({
           where: { id: input.quoteId, ...ownerWhere(input.userId), consumedAt: null, expiresAt: { gt: new Date(input.createdAt) } },
           data: { consumedAt: new Date(input.createdAt) },

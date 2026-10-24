@@ -119,6 +119,12 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   await request(app).post(notificationPath).set(headers(flup.accessToken)).send({}).expect(401);
   await request(app).post(notificationPath).set(headers(legacy.accessToken)).send({}).expect(403);
   await request(app).post(notificationPath).set(ah).send({to:'+15555555555',message:'arbitrary'}).expect(400);
+  const reviewPath='/api/admin/flupflap/transactions/00000000-0000-4000-8000-000000000001/fraud-review/release';
+  await request(app).post(reviewPath).send({reason:'Reviewed payment evidence'}).expect(401);
+  await request(app).post(reviewPath).set(headers(flup.accessToken)).send({reason:'Reviewed payment evidence'}).expect(401);
+  await request(app).post(reviewPath).set(headers(legacy.accessToken)).send({reason:'Reviewed payment evidence'}).expect(403);
+  await request(app).post(reviewPath).set(ah).send({reason:'short'}).expect(400);
+  await request(app).post(reviewPath).set(ah).send({reason:'Reviewed payment evidence'}).expect(409);
   const customers=(await request(app).get('/api/admin/flupflap/customers').set(ah).expect(200)).body.customers;
   expect(customers.map((c:{id:string})=>c.id)).toEqual([flup.user.id]);
   expect(JSON.stringify(customers)).not.toContain('passwordHash');

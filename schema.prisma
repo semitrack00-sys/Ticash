@@ -1184,6 +1184,9 @@ model FlupFlapStoreEntry {
 
 // Minimal server-sourced evidence; never store PAN/CVC or client claims.
 model RechargeFraudAssessment {
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
   transactionId String @id
   customerId String
   fingerprint String?

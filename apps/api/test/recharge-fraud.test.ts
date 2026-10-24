@@ -4,7 +4,7 @@ import { approveRechargeReview, createRechargeFraudGate } from '../src/topup/fra
 import { MobileTopUpService } from '../src/topup/service.js';
 
 const now = new Date('2026-10-24T12:00:00Z');
-const safe: PaymentEvidence = { chargeId: 'ch_test', fingerprint: 'card', risk: 'normal', authentication: 'authenticated', paymentType: 'card', review: false, disputed: false, refunded: false };
+const safe: PaymentEvidence = { postalCodeCheck:'pass', cvcCheck:'pass', chargeId: 'ch_test', fingerprint: 'card', risk: 'normal', authentication: 'authenticated', paymentType: 'card', review: false, disputed: false, refunded: false };
 describe('recharge purchase limits', () => {
   it('limits new buyers before collecting money', () => {
     expect(() => assertPurchaseLimits(25, [], now, true)).not.toThrow();
@@ -22,8 +22,9 @@ describe('payment risk decision', () => {
   it.each([{postalCodeCheck:'fail'}, {cvcCheck:'fail'}, {postalCodeCheck:'fail', cvcCheck:'fail'}])('holds failed issuer checks despite authenticated normal risk %j', patch => {
     expect(paymentReviewReason({...safe, ...patch})).toBe('PAYMENT_CARD_CHECK_FAILED');
   });
-  it.each(['pass', 'unavailable', 'unchecked', 'not_provided', undefined])('does not mistake %s for an explicit verification failure', check => {
-    expect(paymentReviewReason({...safe, postalCodeCheck:check, cvcCheck:check})).toBeUndefined();
+  it.each(['unavailable', 'unchecked', 'not_provided', undefined, '', 'unknown'])('requires both checks to pass, refusing %s independently', check => {
+    expect(paymentReviewReason({...safe, postalCodeCheck:check})).toBe('PAYMENT_CARD_CHECK_FAILED');
+    expect(paymentReviewReason({...safe, cvcCheck:check})).toBe('PAYMENT_CARD_CHECK_FAILED');
   });
   it.each([{risk:'elevated'}, {risk:'highest'}, {risk:'unknown'}, {review:true}, {disputed:true}, {refunded:true}, {authentication:'attempt_acknowledged'}, {fingerprint:undefined}, {paymentType:'link'}])('holds uncertain evidence %j', patch => {
     expect(paymentReviewReason({...safe, ...patch})).toBeTruthy();
@@ -77,7 +78,7 @@ describe('staff review safeguards', () => {
     tx.flupFlapCustomer.findFirst.mockResolvedValue({id:'other-buyer'} as never);
     expect(await gate(record as never)).toBe('LINKED_ACCOUNT_REVIEW');
   });
-  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true},{postalCodeCheck:'fail'},{cvcCheck:'fail'}])('rejects unsafe release %j',async patch=>{
+  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true},{postalCodeCheck:'fail'},{cvcCheck:'fail'},{postalCodeCheck:undefined},{cvcCheck:'unavailable'}])('rejects unsafe release %j',async patch=>{
     const {db,stripe,tx}=fixture({...safe,...patch});
     await expect(approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed payment evidence')).rejects.toMatchObject({code:'FRAUD_REVIEW_NOT_CLEAR'});
     expect(tx.rechargeFraudAssessment.upsert).not.toHaveBeenCalled();

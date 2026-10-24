@@ -47,6 +47,7 @@ describe('FlupFlap recurring recharge payment foundation', () => {
       resumeToken: 'A'.repeat(43),
     });
     const body = bodyOf(transport);
+    expect(body.get('billing_address_collection')).toBe('required');
     expect(body.has('customer_creation')).toBe(false);
     expect(body.has('payment_intent_data[setup_future_usage]')).toBe(false);
     expect(body.has('payment_intent_data[metadata][recurringEligible]')).toBe(false);
@@ -67,6 +68,7 @@ describe('FlupFlap recurring recharge payment foundation', () => {
       saveForRecurring: true,
     });
     const body = bodyOf(transport);
+    expect(body.get('billing_address_collection')).toBe('required');
     expect(body.get('customer_creation')).toBe('always');
     expect(body.get('payment_intent_data[setup_future_usage]')).toBe('off_session');
     expect(body.get('payment_intent_data[metadata][recurringEligible]')).toBe('true');

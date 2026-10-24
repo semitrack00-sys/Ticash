@@ -29,6 +29,11 @@ describe('issuer verification results from Stripe to fulfillment', () => {
   it.each([
     {address_postal_code_check:'fail', cvc_check:'pass'},
     {address_postal_code_check:'pass', cvc_check:'fail'},
+    {address_postal_code_check:'unavailable', cvc_check:'pass'},
+    {address_postal_code_check:'pass', cvc_check:'unchecked'},
+    {address_postal_code_check:null, cvc_check:'pass'},
+    {address_postal_code_check:'pass'},
+    {},
   ])('persists a hold and never calls the supplier for %j', async checks => {
     const {stripe, transport} = fixture(checks);
     let record = {id:'tx', userId:`flupflap:${customerId}`, paymentProvider:'STRIPE', paymentProviderTransactionId:'pi_fixture',

@@ -55,7 +55,7 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
   it('holds all but the first concurrent account using the same card',async()=>{
     const buyers=await Promise.all(clients.map(()=>customer()));
     const fingerprint=randomUUID();
-    const stripe={fraudEvidence:async()=>({chargeId:'ch_fixture',fingerprint,risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})};
+    const stripe={fraudEvidence:async()=>({chargeId:'ch_fixture',fingerprint,postalCodeCheck:'pass',cvcCheck:'pass',risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})};
     const results=await Promise.all(buyers.map((c,i)=>createRechargeFraudGate(clients[i]!,stripe as never)({
       id:randomUUID(),userId:'flupflap:'+c.id,paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_fixture',
     } as never)));

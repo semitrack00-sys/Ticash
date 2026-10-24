@@ -22,7 +22,7 @@ export function loadFlupFlapConfig(env: NodeJS.ProcessEnv = process.env): FlupFl
 }
 export function publicFlupFlapCustomer(c: FlupFlapCustomer) {
   return { id: c.id, domain: 'FLUPFLAP', email: c.email, firstName: c.firstName, lastName: c.lastName, phone: c.phone, countryCode: c.countryCode, guest: Boolean(c.guestExpiresAt),
-    status: c.status, emailVerified: Boolean(c.emailVerifiedAt), createdAt: c.createdAt.toISOString() };
+    status: c.status, emailVerified: Boolean(c.emailVerifiedAt), phoneVerified: Boolean(c.phoneVerifiedAt), createdAt: c.createdAt.toISOString() };
 }
 type AuthRequest = Request & { userId?: string; flupFlapCustomer?: FlupFlapCustomer; flupFlapSessionId?: string };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');

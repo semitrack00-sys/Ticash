@@ -34,3 +34,32 @@ Device/IP controls and repeated failed attempts within one Checkout Session requ
 - No device fingerprinting, IP bans, external alert delivery or mandatory SMS rollout is enabled by this change. Mandatory contact verification must remain staged until every supported checkout client and both delivery channels pass end-to-end testing.
 
 No production deployment is performed by this branch. Prices and existing supplier protocols are unchanged. Test the migration and row-lock concurrency against a real PostgreSQL instance before merge.
+
+### Installation controls and operational alerts
+
+Production retail checkout associates a random first-party installation identifier
+with a customer before payment. The API stores only its SHA-256 digest and deletes
+associations after 30 days without a purchase attempt. A browser uses an HttpOnly,
+Secure, SameSite=None cookie; updated native apps use secure app storage. Two
+accounts may use one installation in 30 days; a third is rejected before payment.
+A link to a restricted/inactive account is also rejected. This is an evadable risk
+signal, not hardware identification or evidence of fraud. Existing native versions,
+blocked cookies, storage resets and new devices are not covered by this signal.
+Account, card and recipient protections remain independent. No geolocation, IP
+fingerprinting or advertising identifiers are collected by this feature.
+
+Set FLUPFLAP_FRAUD_ALERT_EMAIL to the owner's authorized address to activate the
+Resend worker using existing RESEND_API_KEY and FLUPFLAP_VERIFICATION_EMAIL_FROM.
+It queues current held production recharges and sends only a transaction reference
+and the admin link, without customer contact or card data. Claims prevent parallel
+sends; stable Resend idempotency keys cover ambiguous retries. Automatic retries
+stop after 10 attempts or 23 hours (inside Resend's idempotency window). Inspect
+FlupFlapFraudAlert.lastError/sentAt and FRAUD_ALERT_* logs if delivery fails. A hold
+is a risk signal, not a fraud verdict; always inspect current payment status.
+
+SMS verification now requires an unchecked explicit consent box and records the
+consent version in the audit log before sending. Email remains independent. The
+Telnyx 2FA campaign must be approved, its sender assigned, START/STOP/HELP responses
+verified, and a real code delivered/confirmed before phone verification is required.
+Do not enable FLUPFLAP_REQUIRE_VERIFIED_CONTACTS merely because this code deploys.
+The worker deletes expired verification challenges after seven days.

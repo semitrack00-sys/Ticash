@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -34,11 +35,11 @@ class BrowserSessionStorage implements SessionStorage {
 
 /// Own client, token namespace and session. No TiCash ApiClient or auth provider.
 class FlupFlapSession extends ChangeNotifier {
-  FlupFlapSession({required this.dio, required this.storage, this.browserSession = false}) {
+  FlupFlapSession({required this.dio, required this.storage, this.browserSession = false, this.deviceIdProvider}) {
     final trustedBaseUrl = dio.options.baseUrl;
     dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (options, handler) {
+        onRequest: (options, handler) async {
           if (options.extra['expectedSessionEpoch'] != null &&
               options.extra['expectedSessionEpoch'] != _epoch) {
             handler.reject(DioException(requestOptions: options,
@@ -67,6 +68,19 @@ class FlupFlapSession extends ChangeNotifier {
             return;
           }
           options.extra['sessionEpoch'] = _epoch;
+          if (deviceIdProvider != null) {
+            try {
+              options.headers['X-FlupFlap-Device'] = await (_deviceIdentifier ??= deviceIdProvider!());
+            } catch (_) {
+              _deviceIdentifier = null;
+              // Existing payment controls remain active if secure storage fails.
+            }
+          }
+          if (options.extra['sessionEpoch'] != _epoch) {
+            handler.reject(DioException(requestOptions: options,
+              type: DioExceptionType.cancel, message: 'Session changed'));
+            return;
+          }
           for (final key in options.headers.keys
               .where((key) => key.toLowerCase() == 'authorization').toList()) {
             options.headers.remove(key);
@@ -99,6 +113,8 @@ class FlupFlapSession extends ChangeNotifier {
       ),
     );
   }
+  Future<String>? _deviceIdentifier;
+  final Future<String> Function()? deviceIdProvider;
   final Dio dio;
   final SessionStorage storage;
   final bool browserSession;
@@ -267,3 +283,14 @@ class FlupFlapSession extends ChangeNotifier {
   }
 }
 
+
+Future<String> loadDeviceIdentifier() async {
+    const secure = FlutterSecureStorage();
+    const deviceKey = 'flupflap.security.device.v1';
+    final saved = await secure.read(key: deviceKey);
+    if (saved != null && RegExp(r'^[a-f0-9]{64}$').hasMatch(saved)) return saved;
+    final random = Random.secure();
+    final value = List.generate(32, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    await secure.write(key: deviceKey, value: value);
+    return value;
+  }

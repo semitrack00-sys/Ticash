@@ -14,6 +14,7 @@ class _VerificationCardState extends State<VerificationCard> {
   Map<String, dynamic>? availability;
   String? channel, challengeId, message;
   bool busy = false;
+  bool smsConsent = false;
   final code = TextEditingController();
   final verified = <String>{};
   @override
@@ -32,7 +33,7 @@ class _VerificationCardState extends State<VerificationCard> {
   Future<void> send(String value) async {
     setState(() { busy = true; message = null; });
     try {
-      final response = await widget.session.dio.post('/flupflap/verification/send', data: {'channel': value});
+      final response = await widget.session.dio.post('/flupflap/verification/send', data: {'channel': value, if (value == 'phone') 'smsConsent': smsConsent});
       if (mounted) {
         setState(() {
           channel = value; challengeId = response.data['challengeId'] as String;
@@ -65,10 +66,20 @@ class _VerificationCardState extends State<VerificationCard> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(context.ft('verifyContacts'), style: Theme.of(context).textTheme.titleMedium),
+        if (availability?['phone'] == true) ...[
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: smsConsent,
+            onChanged: busy ? null : (value) => setState(() => smsConsent = value ?? false),
+            title: const Text('I agree to receive FlupFlap verification texts at my account phone number when I request a code.'),
+            subtitle: const Text('Message frequency varies with your requests. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase. Support: contact@ticash-app.com.'),
+          ),
+          const SelectableText('Privacy: https://www.flupflap.com/legal/privacy\nTerms: https://www.flupflap.com/legal/terms'),
+        ],
         for (final value in ['email', 'phone'])
           if (availability?[value] == true)
             TextButton(
-              onPressed: busy || verified.contains(value) || widget.session.user?['${value}Verified'] == true
+              onPressed: busy || (value == 'phone' && !smsConsent) || verified.contains(value) || widget.session.user?['${value}Verified'] == true
                   ? null : () => send(value),
               child: Text(context.ft(verified.contains(value) || widget.session.user?['${value}Verified'] == true
                   ? 'verificationComplete' : value == 'email' ? 'verifyEmail' : 'verifyPhone')),

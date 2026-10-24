@@ -1215,3 +1215,22 @@ model FlupFlapVerificationChallenge {
   consumedAt DateTime?
   @@index([customerId, channel, createdAt])
 }
+
+model FlupFlapDevice {
+  deviceHash String
+  customerId String
+  lastSeenAt DateTime @default(now())
+  @@id([deviceHash, customerId])
+  @@index([lastSeenAt])
+  @@index([customerId])
+}
+
+model FlupFlapFraudAlert {
+  transactionId String @id
+  createdAt DateTime @default(now())
+  claimedAt DateTime?
+  attempts Int @default(0)
+  sentAt DateTime?
+  lastError String?
+  @@index([sentAt, createdAt])
+}

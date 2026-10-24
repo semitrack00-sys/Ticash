@@ -1,3 +1,4 @@
+import { checkRechargeDevice } from '../src/flupflap/device-security.js';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { randomUUID } from 'node:crypto';
@@ -67,6 +68,13 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     expect((await clients[0]!.mobileTopUpQuote.findUniqueOrThrow({where:{id:record.quoteId}})).consumedAt).toBeNull();
     await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{emailVerifiedAt:new Date(),phoneVerifiedAt:new Date()}});
     expect((await repo.reserveTransaction(record)).created).toBe(true);
+  });
+  it('limits concurrent accounts sharing one installation',async()=>{
+    const buyers=await Promise.all(clients.map(()=>customer()));
+    const device=randomUUID().replaceAll('-','').repeat(2);
+    const results=await Promise.allSettled(buyers.map((c,i)=>checkRechargeDevice(clients[i]!,c.id,device)));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(2);
+    for(const r of results)if(r.status==='rejected')expect(r.reason).toMatchObject({code:'DEVICE_ACCOUNT_LIMIT'});
   });
   it('accepts a verification code once across workers',async()=>{
     const c=await customer();

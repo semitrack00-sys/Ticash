@@ -64,6 +64,7 @@ void main() {
     ),
     storage: kIsWeb ? BrowserSessionStorage() : SecureSessionStorage(),
     browserSession: kIsWeb,
+    deviceIdProvider: kIsWeb ? null : loadDeviceIdentifier,
   );
   if (kIsWeb) configureBrowserTransport(session.dio);
   runApp(FlupFlapApp(session: session));

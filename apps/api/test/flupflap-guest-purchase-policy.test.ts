@@ -24,6 +24,7 @@ function fixture(guest: boolean, allowGuestPurchases = false) {
     allowGuestPurchases,
   }));
   const errors: ErrorRequestHandler = (error, _req, res, _next) => {
+    void _next;
     res.status(error instanceof MobileTopUpError ? 403 : 500).json({ code: error.code });
   };
   app.use(errors);

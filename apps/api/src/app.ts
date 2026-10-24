@@ -1346,6 +1346,7 @@ export function createApp(options: CreateAppOptions = {}) {
     service: recurringRechargeService,
   }));
   app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
+    allowGuestPurchases: false,
     authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,
     service: mobileTopUpService, isGuest: flupFlap.isGuest, billingCountryForUser: flupFlap.billingCountryForUser,
     supportedCountriesPath: '/api/flupflap/mobile-topups/countries',

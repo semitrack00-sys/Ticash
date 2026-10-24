@@ -668,6 +668,7 @@ model MobileTopUpTransaction {
   @@index([userId, createdAt])
   @@index([status, updatedAt])
   @@index([flupFlapCustomerId, customerHiddenAt, createdAt])
+  @@index([recipientPhone, createdAt])
   flupFlapCustomerId String?
   flupFlapCustomer FlupFlapCustomer? @relation(fields: [flupFlapCustomerId], references: [id], onDelete: Restrict)
   @@index([flupFlapCustomerId, createdAt])

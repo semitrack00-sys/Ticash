@@ -1,3 +1,4 @@
+import 'identity_card.dart';
 import 'verification_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -132,6 +133,7 @@ class _AccountParityState extends State<AccountParity> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       if (registered) VerificationCard(key: ValueKey(owner), session: widget.session),
+      if (registered) IdentityCard(key: ValueKey('identity:$owner'), session: widget.session),
       DropdownButtonFormField<AppLanguage>(
         initialValue: widget.language,
         isExpanded: true,

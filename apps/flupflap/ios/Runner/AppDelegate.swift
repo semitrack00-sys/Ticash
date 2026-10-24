@@ -20,6 +20,16 @@ import UIKit
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self = self else { return }
       switch call.method {
+      case "identity":
+        guard let raw = call.arguments as? String, !raw.contains("\\"),
+              raw.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              let parts = URLComponents(string: raw), parts.scheme == "https", parts.host == "verify.didit.me",
+              parts.user == nil, parts.password == nil, parts.port == nil || parts.port == 443,
+              parts.path.contains("/session/"), let url = parts.url else {
+          result(FlutterError(code: "INVALID_IDENTITY", message: "Invalid verification address", details: nil))
+          return
+        }
+        self.open(url, result: result)
       case "checkout":
         guard let raw = call.arguments as? String,
               let url = CustomerActionPolicy.checkoutURL(raw) else {

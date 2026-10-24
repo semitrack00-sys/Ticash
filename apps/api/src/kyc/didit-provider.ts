@@ -5,11 +5,16 @@ import { KycError } from './types.js';
 const sessionResponseSchema = z.object({
   session_id: z.string().uuid(),
   session_token: z.string().min(1),
+  url: z.string().url().optional(),
   status: z.string().min(1),
 });
 
+const checkResults = z.array(z.object({status:z.string()})).nullish();
 const decisionResponseSchema = z.object({
-  session_id: z.string().uuid().optional(),
+  vendor_data:z.string().nullable().optional(),
+  workflow_id:z.string().optional(),
+  id_verifications:checkResults, liveness_checks:checkResults, face_matches:checkResults,
+  session_id: z.string().uuid(),
   status: z.string().min(1),
 });
 
@@ -68,6 +73,7 @@ export class DiditRestProvider implements DiditProvider {
     return {
       sessionId: body.session_id,
       sessionToken: body.session_token,
+      hostedUrl: body.url,
       status: body.status,
     };
   }
@@ -76,6 +82,9 @@ export class DiditRestProvider implements DiditProvider {
     const body = decisionResponseSchema.parse(
       await this.request(`/v3/session/${encodeURIComponent(sessionId)}/decision/`),
     );
-    return { sessionId: body.session_id ?? sessionId, status: body.status };
+    return { sessionId: body.session_id, status: body.status,
+      vendorData: body.vendor_data ?? undefined, workflowId: body.workflow_id,
+      identityChecksPassed: [body.id_verifications,body.liveness_checks,body.face_matches]
+        .every(checks => Boolean(checks?.length) && checks!.every(c => c.status === 'Approved')) };
   }
 }

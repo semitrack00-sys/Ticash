@@ -79,6 +79,7 @@ export async function eraseFlupFlapAccountData(tx: Prisma.TransactionClient, cus
     await tx.flupFlapSession.deleteMany({ where: { customerId: customerId } });
     await tx.flupFlapPasswordResetToken.deleteMany({ where: { customerId: customerId } });
     await tx.flupFlapVerificationChallenge.deleteMany({ where: { customerId } });
+    await tx.flupFlapIdentity.deleteMany({ where: { customerId } });
     // Deleting schedules removes saved Stripe bindings and prevents future recurring charges.
     await tx.flupFlapRecurringRecharge.deleteMany({ where: { customerId: customerId } });
     await tx.mobileTopUpRecipient.deleteMany({ where: owner });

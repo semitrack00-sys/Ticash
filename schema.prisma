@@ -815,6 +815,7 @@ model IdempotencyKey {
 
 // SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
 model FlupFlapCustomer {
+  identity FlupFlapIdentity?
   verificationChallenges FlupFlapVerificationChallenge[]
   stores FlupFlapStore[]
   deletionRequest FlupFlapDeletionRequest?
@@ -1233,4 +1234,15 @@ model FlupFlapFraudAlert {
   sentAt DateTime?
   lastError String?
   @@index([sentAt, createdAt])
+}
+
+model FlupFlapIdentity {
+  customerId String @id
+  customer FlupFlapCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sessionId String @unique
+  hostedUrl String?
+  status String @default("PENDING")
+  checkedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -1,3 +1,4 @@
+import { FlupFlapIdentity } from '../src/flupflap/identity.js';
 import { checkRechargeDevice } from '../src/flupflap/device-security.js';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -85,4 +86,15 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
     expect(await clients[0]!.auditLog.count({where:{flupFlapCustomerId:c.id,action:'FLUPFLAP_CONTACT_VERIFIED'}})).toBe(1);
   });
+  it('creates only one identity session across parallel workers',async()=>{
+    const c=await customer();
+    await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{emailVerifiedAt:new Date(),phoneVerifiedAt:new Date()}});
+    const provider={createSession:vi.fn().mockResolvedValue({sessionId:randomUUID(),sessionToken:'fixture',hostedUrl:'https://verify.didit.me/en/session/fixture',status:'Not Started'}),getDecision:vi.fn()};
+    const workflow=randomUUID();
+    const results=await Promise.all(clients.map(db=>new FlupFlapIdentity(db,provider,workflow,true).start(c.id,true)));
+    expect(provider.createSession).toHaveBeenCalledOnce();
+    expect(results.every(r=>r.status==='PENDING')).toBe(true);
+    expect(await clients[0]!.flupFlapIdentity.count({where:{customerId:c.id}})).toBe(1);
+  });
+
 });

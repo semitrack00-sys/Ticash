@@ -82,3 +82,58 @@ Telnyx 2FA campaign must be approved, its sender assigned, START/STOP/HELP respo
 verified, and a real code delivered/confirmed before phone verification is required.
 Do not enable FLUPFLAP_REQUIRE_VERIFIED_CONTACTS merely because this code deploys.
 The worker deletes expired verification challenges after seven days.
+
+## FlupFlap identity verification (staged rollout)
+
+The dedicated FlupFlap flow uses a separate `FlupFlapIdentity` relation and
+`FLUPFLAP_DIDIT_WORKFLOW_ID`; TiCash identities are not reused. Apply migration
+`20261024060000_flupflap_identity`. `FLUPFLAP_IDENTITY_ENABLED=true` exposes the
+Account card and authenticated session/status endpoints. It requires the existing
+Didit provider configuration and a published dedicated workflow with document ID,
+liveness and face match. Starting a session requires verified email and phone plus
+explicit consent; a customer cannot submit another account ID or approve themselves.
+Parallel starts reuse the active session; unsuccessful retries are limited to one
+new session per day. A provider session can be orphaned if the DB commit fails;
+reconcile these in Didit before retrying.
+
+`FLUPFLAP_REQUIRE_IDENTITY=true` additionally requires mandatory verified contacts
+and enforces identity before a new production retail recharge above $25 total,
+when proposed total plus prior 24-hour reservations exceeds $50, or following a
+fraud-assessment reason within 30 days. Declined or in-review identity also blocks
+lower-value purchases. All existing reservation limits remain. Checks run under
+the customer lock; pending/failed/refunded reservations count. Thresholds are a
+conservative operational policy, not a legal KYC threshold.
+
+Identity approval requires a fresh server-side Didit decision bound to the exact
+session, FlupFlap customer and configured workflow, with overall approval and
+nonempty, wholly approved ID, liveness and face-match results. Missing results,
+provider errors, expired evidence and mismatched bindings never grant approval.
+Every checkout/fulfillment/release refreshes existing identity evidence, even if
+previously approved; the locked check accepts results no older than two minutes.
+This integration polls decisions on authenticated use rather than trusting callback
+query strings or reusing the TiCash webhook. There is no background status monitor.
+The Account card refreshes when returning to the app; web users return to Account.
+
+Mandatory contacts also apply to fulfillment and staff release of older checkouts.
+Neither identity nor staff approval overrides Stripe risk, ZIP/CVC, authentication,
+restricted-account or recipient controls. Held orders still require explicit staff
+review after verification; verification alone never delivers a held recharge.
+
+No document numbers, document images, selfies or raw decisions are stored in the
+FlupFlap database. It stores opaque session ID, status, timestamps and a temporary
+hosted URL (a sensitive capability restricted to the authenticated owner). The URL
+is cleared on terminal results; account deletion erases this local identity record.
+Didit's separate document/biometric retention and deletion settings must be reviewed
+in the provider console before activation; deleting the local record does not delete
+the provider's records. Never log hosted URLs or provider payloads.
+
+### Activation blockers
+
+Keep purchases paused and both identity flags disabled until the production Didit
+credentials and dedicated workflow are configured, provider retention/privacy
+settings are reviewed, approved/declined/missing-step scenarios pass sandbox tests,
+and the Account flow is available in every supported checkout client. Mandatory
+phone verification still requires an approved Telnyx sender/campaign and real
+send/confirm testing; email requires the same delivery test. Complete Android/iOS
+store rollout for the new Account action before requiring it for those clients.
+Deploying this code is not activation and does not establish legal KYC compliance.

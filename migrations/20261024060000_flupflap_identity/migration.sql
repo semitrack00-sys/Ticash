@@ -1,0 +1,6 @@
+CREATE TABLE "FlupFlapIdentity" (
+ "customerId" TEXT PRIMARY KEY REFERENCES "FlupFlapCustomer"("id") ON DELETE CASCADE,
+ "sessionId" TEXT NOT NULL UNIQUE, "hostedUrl" TEXT, "status" TEXT NOT NULL DEFAULT 'PENDING',
+ "checkedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ "updatedAt" TIMESTAMP(3) NOT NULL
+);

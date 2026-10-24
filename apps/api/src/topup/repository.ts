@@ -1,3 +1,4 @@
+import { assertIdentity, type IdentityGate } from '../flupflap/identity-policy.js';
 import { assertPurchaseLimits } from './fraud-policy.js';
 import type { ReceiverQuote } from './receiver-value.js';
 import { notificationFor, retryableNotification, type ReceiverNotification, type ReceiverNotificationStore } from './receiver-notification.js';
@@ -468,7 +469,7 @@ function transactionFromDb(record: {
 }
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
-  constructor(private readonly prisma: PrismaClient, private readonly requireVerifiedContacts = false) {}
+  constructor(private readonly prisma: PrismaClient, private readonly requireVerifiedContacts = false, private readonly identity?: IdentityGate) {}
 
   async getCountryCatalogCache(key: string) {
     const record = await this.prisma.mobileTopUpCountryCatalogCache.findUnique({ where: { key } });
@@ -665,6 +666,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async reserveTransaction(input: MobileTopUpTransactionRecord) {
+    if (this.identity && input.userId.startsWith('flupflap:') && !input.testMode) await this.identity.refresh(input.userId.slice('flupflap:'.length));
     const existing = await this.prisma.mobileTopUpTransaction.findUnique({
       where: transactionOwnerKey(input.userId, input.idempotencyKey),
     });
@@ -684,6 +686,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           }
           const replay = await tx.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
           if (replay) return replay;
+          await assertIdentity(this.identity, tx, customerId, input.totalChargeUsd);
           // A new account must not reset limits for the same recipient. The
           // phone is normalized to E.164 before the quote is created. Serialize
           // this shared budget across customers and API workers.

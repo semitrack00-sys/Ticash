@@ -31,6 +31,16 @@ class MainActivity: FlutterActivity() {
                             result.success(null)
                         }
                     }
+                    "identity" -> {
+                        val uri = Uri.parse(call.arguments as? String ?: "")
+                        if (uri.scheme != "https" || uri.host != "verify.didit.me" || uri.userInfo != null ||
+                            (uri.port != -1 && uri.port != 443) || uri.path?.contains("/session/") != true) {
+                            result.error("INVALID_IDENTITY", "Invalid verification address", null)
+                        } else {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+                            result.success(null)
+                        }
+                    }
                     "checkout" -> {
                         val uri = Uri.parse(call.arguments as? String ?: "")
                         if (uri.scheme != "https" || uri.host != "checkout.stripe.com" || uri.userInfo != null || (uri.port != -1 && uri.port != 443)) {

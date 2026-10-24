@@ -1,3 +1,4 @@
+import { FlupFlapIdentity, createFlupFlapIdentityRouter } from './flupflap/identity.js';
 import { rechargeDeviceGuard } from './flupflap/device-security.js';
 import { fraudAlertConfig, FlupFlapFraudAlerts } from './flupflap/fraud-alerts.js';
 import { createVerificationRouter, FlupFlapVerification, verificationDelivery } from './flupflap/verification.js';
@@ -979,8 +980,18 @@ export function createApp(options: CreateAppOptions = {}) {
     return { error: 'Guest recharge is available only in an enabled sandbox payment mode', code: 'GUEST_SANDBOX_REQUIRED' };
   };
   app.locals.guestAuthError = guestAuthError;
+  const requireContacts = process.env.FLUPFLAP_REQUIRE_VERIFIED_CONTACTS === 'true';
+  const identityEnabled = process.env.FLUPFLAP_IDENTITY_ENABLED === 'true';
+  const identityEnforced = process.env.FLUPFLAP_REQUIRE_IDENTITY === 'true';
+  const identityWorkflow = process.env.FLUPFLAP_DIDIT_WORKFLOW_ID?.trim();
+  if (identityEnabled && (!databaseEnabled || !diditProvider || !identityWorkflow || !z.string().uuid().safeParse(identityWorkflow).success)) {
+    throw new Error('FlupFlap identity requires database, enabled Didit and a dedicated workflow UUID');
+  }
+  if (identityEnforced && (!identityEnabled || !requireContacts)) throw new Error('Identity enforcement requires identity and verified contacts');
+  const flupFlapIdentity = identityEnabled ? new FlupFlapIdentity(prisma,diditProvider!,identityWorkflow!,requireContacts) : undefined;
+  const identityGate = identityEnforced ? flupFlapIdentity : undefined;
   const mobileTopUpRepository = options.mobileTopUpRepository ?? (
-    databaseEnabled ? new PrismaMobileTopUpRepository(prisma, process.env.FLUPFLAP_REQUIRE_VERIFIED_CONTACTS === 'true') : new MemoryMobileTopUpRepository()
+    databaseEnabled ? new PrismaMobileTopUpRepository(prisma, requireContacts, identityGate) : new MemoryMobileTopUpRepository()
   );
   const mobileTopUpProvider = options.mobileTopUpProvider ?? new GlobalRechargeProviderRouter(mobileTopUpConfig.enabled ? [
     ['RELOADLY', mobileTopUpConfig.environment === 'production'
@@ -1044,8 +1055,8 @@ export function createApp(options: CreateAppOptions = {}) {
     },
     recurringRechargeActive,
     storeBalance,
-    databaseEnabled ? createRechargeFraudGate(prisma, mobileTopUpStripeProvider) : undefined,
-    databaseEnabled ? (record, actor, note) => approveRechargeReview(prisma, mobileTopUpStripeProvider, record, actor, note) : undefined,
+    databaseEnabled ? createRechargeFraudGate(prisma, mobileTopUpStripeProvider, identityGate, requireContacts) : undefined,
+    databaseEnabled ? (record, actor, note) => approveRechargeReview(prisma, mobileTopUpStripeProvider, record, actor, note, identityGate, requireContacts) : undefined,
   );
 
   const alertConfig = fraudAlertConfig();
@@ -1345,6 +1356,7 @@ export function createApp(options: CreateAppOptions = {}) {
     }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
+  app.use('/api/flupflap/identity', createFlupFlapIdentityRouter(flupFlap.authenticate, flupFlapIdentity));
   app.use('/api/flupflap/verification', createVerificationRouter(flupFlap.authenticate,
     databaseEnabled && process.env.FLUPFLAP_VERIFICATION_ENABLED === 'true'
       ? new FlupFlapVerification(prisma, (options.flupFlapConfig ?? loadFlupFlapConfig()).accessSecret!, verificationDelivery(receiverSmsProvider))

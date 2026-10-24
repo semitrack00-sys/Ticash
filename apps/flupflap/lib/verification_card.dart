@@ -72,7 +72,7 @@ class _VerificationCardState extends State<VerificationCard> {
             value: smsConsent,
             onChanged: busy ? null : (value) => setState(() => smsConsent = value ?? false),
             title: const Text('I agree to receive FlupFlap verification texts at my account phone number when I request a code.'),
-            subtitle: const Text('Message frequency varies with your requests. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase. Support: contact@ticash-app.com.'),
+            subtitle: const Text('Message frequency varies with your requests. Message and data rates may apply. Reply STOP to opt out or HELP for help. These texts contain only the verification code you request, not marketing. Support: contact@ticash-app.com.'),
           ),
           const SelectableText('Privacy: https://www.flupflap.com/legal/privacy\nTerms: https://www.flupflap.com/legal/terms'),
         ],

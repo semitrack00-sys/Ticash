@@ -13,6 +13,14 @@ class NativeActions {
     if (kIsWeb) return browser.privacyAction(action);
     return channel.invokeMethod<void>('privacy', action);
   }
+  static Future<void> identity(Uri uri) async {
+    if (uri.scheme != 'https' || uri.host != 'verify.didit.me' || uri.userInfo.isNotEmpty ||
+        uri.port != 443 || !uri.path.contains('/session/')) {
+      throw const FormatException('Invalid identity verification address');
+    }
+    if (kIsWeb) { await browser.checkout(uri); return; }
+    await channel.invokeMethod<void>('identity', uri.toString());
+  }
   static Future<void> checkout(Uri uri) async {
     if (!HostedSession.safeUrl(uri.toString())) {
       throw const FormatException('Invalid checkout');

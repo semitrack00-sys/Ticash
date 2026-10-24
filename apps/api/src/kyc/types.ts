@@ -31,11 +31,15 @@ export interface KycUserRecord {
 export interface DiditSession {
   sessionId: string;
   sessionToken: string;
+  hostedUrl?: string;
   status: string;
 }
 
 export interface DiditDecision {
   sessionId: string;
+  vendorData?: string;
+  workflowId?: string;
+  identityChecksPassed?: boolean;
   status: string;
 }
 

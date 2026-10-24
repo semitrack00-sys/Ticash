@@ -116,10 +116,13 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     const details = charge.payment_method_details as Record<string, unknown> | undefined;
     const card = details?.card as Record<string, unknown> | undefined;
     const auth = card?.three_d_secure as Record<string, unknown> | undefined;
+    const checks = card?.checks as Record<string, unknown> | undefined;
     return { chargeId: charge.id, fingerprint: typeof card?.fingerprint === 'string' ? card.fingerprint : undefined,
       risk: typeof outcome?.risk_level === 'string' ? outcome.risk_level : 'unknown',
       authentication: typeof auth?.result === 'string' ? auth.result : undefined,
       cardNetwork: typeof card?.network === 'string' ? card.network : undefined,
+      postalCodeCheck: typeof checks?.address_postal_code_check === 'string' ? checks.address_postal_code_check : undefined,
+      cvcCheck: typeof checks?.cvc_check === 'string' ? checks.cvc_check : undefined,
       responseEci: typeof card?.electronic_commerce_indicator === 'string' ? card.electronic_commerce_indicator : undefined,
       paymentType: typeof details?.type === 'string' ? details.type : 'unknown',
       review: Boolean(data.review || charge.review), disputed: charge.disputed === true, refunded: Number(charge.amount_refunded ?? 0) > 0 };

@@ -19,6 +19,12 @@ describe('recharge purchase limits', () => {
 });
 describe('payment risk decision', () => {
   it('allows only authenticated normal-risk cards', () => expect(paymentReviewReason(safe)).toBeUndefined());
+  it.each([{postalCodeCheck:'fail'}, {cvcCheck:'fail'}, {postalCodeCheck:'fail', cvcCheck:'fail'}])('holds failed issuer checks despite authenticated normal risk %j', patch => {
+    expect(paymentReviewReason({...safe, ...patch})).toBe('PAYMENT_CARD_CHECK_FAILED');
+  });
+  it.each(['pass', 'unavailable', 'unchecked', 'not_provided', undefined])('does not mistake %s for an explicit verification failure', check => {
+    expect(paymentReviewReason({...safe, postalCodeCheck:check, cvcCheck:check})).toBeUndefined();
+  });
   it.each([{risk:'elevated'}, {risk:'highest'}, {risk:'unknown'}, {review:true}, {disputed:true}, {refunded:true}, {authentication:'attempt_acknowledged'}, {fingerprint:undefined}, {paymentType:'link'}])('holds uncertain evidence %j', patch => {
     expect(paymentReviewReason({...safe, ...patch})).toBeTruthy();
   });
@@ -71,7 +77,7 @@ describe('staff review safeguards', () => {
     tx.flupFlapCustomer.findFirst.mockResolvedValue({id:'other-buyer'} as never);
     expect(await gate(record as never)).toBe('LINKED_ACCOUNT_REVIEW');
   });
-  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true}])('rejects unsafe release %j',async patch=>{
+  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true},{postalCodeCheck:'fail'},{cvcCheck:'fail'}])('rejects unsafe release %j',async patch=>{
     const {db,stripe,tx}=fixture({...safe,...patch});
     await expect(approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed payment evidence')).rejects.toMatchObject({code:'FRAUD_REVIEW_NOT_CLEAR'});
     expect(tx.rechargeFraudAssessment.upsert).not.toHaveBeenCalled();

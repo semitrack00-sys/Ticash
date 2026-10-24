@@ -13,6 +13,25 @@ This change is not a declaration that any buyer committed fraud. It adds conserv
 - Evidence is durable in RechargeFraudAssessment. Fingerprints are hashed. No card numbers or CVCs are stored. Transaction IDs join existing recipient and supplier-delivery evidence.
 - Held orders remain PENDING/CAPTURED with FRAUD_REVIEW_REQUIRED and an internal reason. Webhook retries/reconciliation cannot automatically release them. Existing admin pending-failures view exposes the held records. No automatic refunds or fraud accusations.
 
+## Failed card verification checks
+
+Fresh Stripe evidence includes `card.checks.address_postal_code_check` and
+`card.checks.cvc_check`. An explicit `fail` on either check prevents production
+FlupFlap Stripe fulfillment with `PAYMENT_CARD_CHECK_FAILED`, even with normal
+risk and authenticated 3DS. Staff review uses the same policy and cannot override
+the failure. Retries retain the existing durable hold. Only check result strings
+are read; no CVC values are collected or stored by this check.
+
+The matching permanent Radar block is `:address_zip_check: = 'fail' or
+:cvc_check: = 'fail'` at 100% traffic. It has no normal-risk exemption. Missing,
+unavailable, unchecked and not-provided results are not explicit failures; all
+other fraud checks continue to apply. This is not a requirement that every issuer
+support AVS, nor proof that a card is legitimate.
+
+Keep the emergency purchase pause (`MOBILE_TOPUP_ENABLED=false`) and temporary
+Radar recharge block `!(is_missing(::transactionId::))` in place during deployment.
+This change does not reopen purchases or refund previously captured payments.
+
 ## Deployment and operations
 
 Apply migrations 20261024010000_recharge_fraud_assessment and 20261024020000_recharge_fraud_review and generate Prisma before deploying. Missing database/provider evidence fails closed into a hold. Review held payments promptly in Stripe and the admin dashboard. Investigate the supplier state before refunds. Authorized staff with recharge.reconciliation permission can POST /api/admin/flupflap/transactions/:id/fraud-review/release with a reason of 20–500 characters. Release requires fresh normal-risk, authenticated, captured, undisputed, unrefunded Stripe evidence and an active unrestricted customer. Approval is audited and bound to the charge and hashed card fingerprint; fulfillment checks evidence again. This permits reviewed card-velocity exceptions, never risk or authentication overrides. The mobile receipt and checkout resume response identify held payments and tell customers not to pay again. The staff transaction screen includes a reason-entry review action. Flutter validation remains outstanding. Do not clear the failure code directly as an operational workaround.

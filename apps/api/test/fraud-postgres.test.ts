@@ -20,7 +20,7 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     const repo=new PrismaMobileTopUpRepository(clients[0]!);
     const quote=await repo.createQuote({userId:'flupflap:'+customerId,countryCode:'HT',recipientPhone:'+50937123456',
       operatorId:173,operatorName:'Fixture',productId:'fixture',productName:'Fixture',kind:'AIRTIME',providerAmount:5,
-      providerCurrency:'USD',feeUsd:0,totalChargeUsd:5,testMode:false,expiresAt:new Date(Date.now()+300000).toISOString()});
+      providerCurrency:'USD',deliveredCurrency:'HTG',feeUsd:0,totalChargeUsd:5,testMode:false,expiresAt:new Date(Date.now()+300000).toISOString()});
     return {...quote,id:randomUUID(),quoteId:quote.id,idempotencyKey:randomUUID(),requestHash:'fixture',
       customIdentifier:randomUUID(),status:'PENDING' as const,paymentStatus:'PENDING' as const,updatedAt:new Date().toISOString()};
   }

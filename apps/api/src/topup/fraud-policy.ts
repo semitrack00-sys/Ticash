@@ -14,6 +14,7 @@ export function assertPurchaseLimits(amount: number, history: PurchaseHistory[],
 
 export type PaymentEvidence = {
   chargeId: string; fingerprint?: string; risk: string; authentication?: string;
+  cardNetwork?: string; responseEci?: string;
   paymentType: string; review: boolean; disputed: boolean; refunded: boolean;
 };
 export function paymentReviewReason(e: PaymentEvidence): string | undefined {
@@ -21,5 +22,9 @@ export function paymentReviewReason(e: PaymentEvidence): string | undefined {
   if (e.review || e.risk !== 'normal') return 'PAYMENT_RISK_REVIEW';
   if (e.paymentType !== 'card') return 'PAYMENT_METHOD_REVIEW';
   if (!e.fingerprint || e.authentication !== 'authenticated') return 'PAYMENT_AUTHENTICATION_REVIEW';
+  // Use the network response, not the provisional 3DS ECI. Authentication
+  // can be downgraded during authorization. This is not a liability guarantee.
+  if (e.responseEci && ((e.cardNetwork === 'visa' && e.responseEci !== '05') ||
+      (e.cardNetwork === 'mastercard' && e.responseEci !== '02'))) return 'PAYMENT_AUTHENTICATION_REVIEW';
   return undefined;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { assertPurchaseLimits, paymentReviewReason, type PaymentEvidence } from '../src/topup/fraud-policy.js';
-import { createRechargeFraudGate } from '../src/topup/fraud-gate.js';
+import { approveRechargeReview, createRechargeFraudGate } from '../src/topup/fraud-gate.js';
 import { MobileTopUpService } from '../src/topup/service.js';
 
 const now = new Date('2026-10-24T12:00:00Z');
@@ -41,5 +41,40 @@ describe('payment risk decision', () => {
     vi.spyOn(service as never,'assertTransactionEnvironment' as never).mockImplementation(()=>undefined);
     await service.fulfillPaidRecharge('tx'); await service.fulfillPaidRecharge('tx');
     expect(gate).toHaveBeenCalledOnce(); expect(submit).not.toHaveBeenCalled(); expect(claim).not.toHaveBeenCalled();
+  });
+});
+
+describe('staff review safeguards', () => {
+  const record = {id:'tx',userId:'flupflap:11111111-1111-4111-8111-111111111111',paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_test',testMode:false};
+  function fixture(evidence = safe) {
+    const assessment = {findUnique:vi.fn().mockResolvedValue(null),findMany:vi.fn().mockResolvedValue([{fingerprint:'one'},{fingerprint:'two'}]),upsert:vi.fn()};
+    const tx = {$queryRaw:vi.fn(),flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'})},
+      mobileTopUpTransaction:{findUnique:vi.fn().mockResolvedValue({flupFlapCustomerId:record.userId.slice(9),status:'PENDING',paymentStatus:'CAPTURED',failureCode:'FRAUD_REVIEW_REQUIRED'})},
+      rechargeFraudAssessment:assessment,auditLog:{create:vi.fn()}};
+    return {tx,db:{...tx,$transaction:async(fn:(t:typeof tx)=>unknown)=>fn(tx)},stripe:{fraudEvidence:vi.fn().mockResolvedValue(evidence)}};
+  }
+  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true}])('rejects unsafe release %j',async patch=>{
+    const {db,stripe,tx}=fixture({...safe,...patch});
+    await expect(approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed payment evidence')).rejects.toMatchObject({code:'FRAUD_REVIEW_NOT_CLEAR'});
+    expect(tx.rechargeFraudAssessment.upsert).not.toHaveBeenCalled();
+  });
+  it('rejects a restricted account even when payment evidence passes',async()=>{
+    const {db,stripe,tx}=fixture();
+    tx.flupFlapCustomer.findUnique.mockResolvedValue({status:'ACTIVE',rechargeRestricted:true} as never);
+    await expect(approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed payment evidence')).rejects.toMatchObject({code:'FRAUD_REVIEW_CONFLICT'});
+  });
+  it('records the staff reason and a charge-bound approval',async()=>{
+    const {db,stripe,tx}=fixture();
+    await approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed payment evidence');
+    const approved=tx.rechargeFraudAssessment.upsert.mock.calls[0][0].create;
+    expect(approved).toMatchObject({chargeId:'ch_test',reason:null,reviewedBy:'staff'});
+    expect(approved.fingerprint).not.toBe('card');
+    expect(tx.auditLog.create).toHaveBeenCalledOnce();
+    tx.rechargeFraudAssessment.findUnique.mockResolvedValue(approved);
+    expect(await createRechargeFraudGate(db as never,stripe as never)(record as never)).toBeUndefined();
+    stripe.fraudEvidence.mockResolvedValue({...safe,chargeId:'ch_changed'});
+    expect(await createRechargeFraudGate(db as never,stripe as never)(record as never)).toBe('CARD_SWITCHING_REVIEW');
+    stripe.fraudEvidence.mockResolvedValue({...safe,disputed:true});
+    expect(await createRechargeFraudGate(db as never,stripe as never)(record as never)).toBeTruthy();
   });
 });

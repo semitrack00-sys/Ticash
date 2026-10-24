@@ -165,9 +165,11 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
       )));
       setState(load);
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Release was not confirmed. Refresh the order before trying again.')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Release was not confirmed. Refresh the order before trying again.')),
+        );
+      }
     } finally {
       if (mounted) setState(() => reviewing.remove(id));
     }

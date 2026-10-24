@@ -84,6 +84,7 @@ export class MobileTopUpService {
     recurringRechargeEnabled = false,
     private readonly storeBalance?: StoreBalancePayment,
     private readonly fraudGate?: (record: MobileTopUpTransactionRecord) => Promise<string | undefined>,
+    private readonly approveFraudReview?: (record: MobileTopUpTransactionRecord, actor: string, note: string) => Promise<void>,
   ) {
     this.config = config;
     this.provider = provider;
@@ -863,6 +864,7 @@ export class MobileTopUpService {
       status: record.status,
       paymentStatus: record.paymentStatus,
       failureReason: record.status === 'FAILED' ? failureReason : null,
+      reviewRequired: record.failureCode === 'FRAUD_REVIEW_REQUIRED',
       countryCode: record.countryCode,
       receiverQuote: record.receiverQuote ?? null,
       deliveredValue: record.status === 'DELIVERED' ? record.deliveredValue ?? null : null,
@@ -925,6 +927,17 @@ export class MobileTopUpService {
       await this.audit(userId, 'MOBILE_TOPUP_PAYMENT_AUTHORIZED', 'MobileTopUpTransaction', transaction.id, { provider: 'MOCK' });
     }
     return this.fulfillPaidRecharge(transaction.id);
+  }
+
+  async reviewHeldRecharge(id: string, actor: string, note: string) {
+    const record = await this.repository.getTransactionById(id);
+    if (!record || record.failureCode !== 'FRAUD_REVIEW_REQUIRED' || record.status !== 'PENDING' || record.paymentStatus !== 'CAPTURED' || !this.approveFraudReview) {
+      throw new MobileTopUpError('FRAUD_REVIEW_CONFLICT', 'This order cannot be released.', 409);
+    }
+    await this.approveFraudReview(record, actor, note);
+    // The durable approval is charge-bound; fulfillment still runs a fresh risk check.
+    await this.repository.updateTransaction(id, { failureCode: 'FRAUD_REVIEW_APPROVED', paymentRecoveryCode: 'REVIEW_APPROVED' });
+    return this.fulfillPaidRecharge(id);
   }
 
   async fulfillPaidRecharge(id: string) {

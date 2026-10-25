@@ -693,6 +693,7 @@ export class MobileTopUpService {
           currency: 'USD',
           billingCountry: country,
           resumeToken,
+          ...(flupFlapCustomerId(userId) ? { automaticThreeDS: true } : {}),
           ...(androidReturn ? { androidReturn: true } : {}),
           ...(pwaReturn ? { pwaReturn: true } : {}),
           ...(recurringIntervalDays !== undefined ? { saveForRecurring: true } : {}),

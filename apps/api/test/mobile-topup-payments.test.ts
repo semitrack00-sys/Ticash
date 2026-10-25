@@ -865,6 +865,8 @@ describe('Stripe sandbox flow',()=>{
     const body = { quoteId: quote.id, billingCountry: 'US', returnTarget: 'FLUPFLAP_ANDROID' };
     const session = await f.session(guest.accessToken, body, 'android-checkout-test').expect(201);
     const payload = new URLSearchParams(transportRequest(f.transport).body);
+    expect(payload.get('payment_method_options[card][request_three_d_secure]')).toBe('automatic');
+    expect(payload.get('billing_address_collection')).toBe('required');
     const success = new URL(payload.get('success_url')!);
     expect(success.origin + success.pathname).toBe('https://ticash-api.onrender.com/api/flupflap/mobile-topups/checkout-return');
     expect(payload.get('cancel_url')).toBe(success.toString());
@@ -894,6 +896,8 @@ describe('Stripe sandbox flow',()=>{
     const session = await f.session(guest.accessToken,
       { quoteId: quote.id, billingCountry: 'US', returnTarget: 'FLUPFLAP_PWA' }, 'pwa-checkout-test').expect(201);
     const payload = new URLSearchParams(transportRequest(f.transport).body);
+    expect(payload.get('payment_method_options[card][request_three_d_secure]')).toBe('automatic');
+    expect(payload.get('billing_address_collection')).toBe('required');
     const success = new URL(payload.get('success_url')!);
     expect(success.origin + success.pathname).toBe('https://www.flupflap.com/app/');
     expect(success.search).toBe('');
@@ -1054,6 +1058,8 @@ describe('Stripe sandbox flow',()=>{
     expect(new URLSearchParams(request.body).get('payment_intent_data[metadata][billingCountry]')).toBe('US');
     expect(request.body).toContain('metadata%5BbillingCountry%5D=US');
     const params = new URLSearchParams(request.body);
+    expect(params.get('payment_method_options[card][request_three_d_secure]')).toBe('challenge');
+    expect(params.get('billing_address_collection')).toBe('required');
     const resumeToken = new URL(params.get('success_url')!).searchParams.get('checkoutResumeToken')!;
     expect(resumeToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(new URL(params.get('cancel_url')!).searchParams.get('checkoutResumeToken')).toBe(resumeToken);

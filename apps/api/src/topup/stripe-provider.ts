@@ -71,14 +71,14 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return url.toString();
   }
 
-  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean; pwaReturn?: boolean; saveForRecurring?: boolean }) {
+  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean; pwaReturn?: boolean; saveForRecurring?: boolean; automaticThreeDS?: boolean }) {
     if (input.currency !== 'USD' || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0 || !/^[A-Za-z0-9_-]{43,512}$/.test(input.resumeToken) || !/^[A-Z]{2}$/.test(input.billingCountry ?? '')) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Server-verified billing country and USD amount are required', 400);
     }
     const { data } = await this.request('/v1/checkout/sessions', 'POST', {
       mode: 'payment',
       billing_address_collection: 'required',
-      payment_method_options: { card: { request_three_d_secure: 'challenge' } },
+      payment_method_options: { card: { request_three_d_secure: input.automaticThreeDS ? 'automatic' : 'challenge' } },
       success_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.successUrl!, input.resumeToken),
       cancel_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.failureUrl!, input.resumeToken),
       client_reference_id: input.transactionId,
@@ -120,7 +120,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     const checks = card?.checks as Record<string, unknown> | undefined;
     return { chargeId: charge.id, fingerprint: typeof card?.fingerprint === 'string' ? card.fingerprint : undefined,
       risk: typeof outcome?.risk_level === 'string' ? outcome.risk_level : 'unknown',
-      authentication: typeof auth?.result === 'string' ? auth.result : undefined,
+      authentication: typeof auth?.result === 'string' ? auth.result : auth == null ? undefined : 'unknown',
       cardNetwork: typeof card?.network === 'string' ? card.network : undefined,
       postalCodeCheck: typeof checks?.address_postal_code_check === 'string' ? checks.address_postal_code_check : undefined,
       streetCheck: typeof checks?.address_line1_check === 'string' ? checks.address_line1_check : undefined,

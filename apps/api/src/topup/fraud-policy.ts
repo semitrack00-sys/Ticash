@@ -26,10 +26,15 @@ export function paymentReviewReason(e: PaymentEvidence): string | undefined {
   // authentication must never override missing, unavailable or non-passing verification.
   if (e.postalCodeCheck !== 'pass' || e.cvcCheck !== 'pass') return 'PAYMENT_CARD_CHECK_FAILED';
   if (e.streetCheck === 'fail') return 'PAYMENT_STREET_CHECK_FAILED';
-  if (!e.fingerprint || e.authentication !== 'authenticated') return 'PAYMENT_AUTHENTICATION_REVIEW';
+  if (!e.fingerprint) return 'PAYMENT_AUTHENTICATION_REVIEW';
+  // Automatic 3DS can legitimately complete without authentication. Stripe's
+  // succeeded/captured payment check still enforces issuer-required actions.
+  // Explicit failed, incomplete or unknown authentication stays held.
+  if (e.authentication !== undefined &&
+      !['authenticated', 'exempted', 'not_supported'].includes(e.authentication)) return 'PAYMENT_AUTHENTICATION_REVIEW';
   // Use the network response, not the provisional 3DS ECI. Authentication
   // can be downgraded during authorization. This is not a liability guarantee.
-  if (e.responseEci && ((e.cardNetwork === 'visa' && e.responseEci !== '05') ||
+  if (e.authentication === 'authenticated' && e.responseEci && ((e.cardNetwork === 'visa' && e.responseEci !== '05') ||
       (e.cardNetwork === 'mastercard' && e.responseEci !== '02'))) return 'PAYMENT_AUTHENTICATION_REVIEW';
   return undefined;
 }

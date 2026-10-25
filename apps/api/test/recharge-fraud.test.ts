@@ -6,10 +6,20 @@ import { MobileTopUpService } from '../src/topup/service.js';
 const now = new Date('2026-10-24T12:00:00Z');
 const safe: PaymentEvidence = { postalCodeCheck:'pass', cvcCheck:'pass', chargeId: 'ch_test', fingerprint: 'card', risk: 'normal', authentication: 'authenticated', paymentType: 'card', review: false, disputed: false, refunded: false };
 describe('recharge purchase limits', () => {
-  it('limits new buyers before collecting money', () => {
-    expect(() => assertPurchaseLimits(25, [], now, true)).not.toThrow();
-    expect(() => assertPurchaseLimits(25.01, [], now, true)).toThrowError(expect.objectContaining({ code: 'RECHARGE_LIMIT_REACHED' }));
-    expect(() => assertPurchaseLimits(20, [{ createdAt: now.toISOString(), totalChargeUsd: 35, paymentStatus: 'FAILED' }], now, true)).toThrow();
+  it.each([true, false])('enforces $100 per order and $200 per rolling day (new account: %s)', newAccount => {
+    const earlier = [{ createdAt: '2026-10-24T10:00:00Z', totalChargeUsd: 100, paymentStatus: 'CAPTURED' }];
+    expect(() => assertPurchaseLimits(100, [], now, newAccount)).not.toThrow();
+    expect(() => assertPurchaseLimits(100.01, [], now, newAccount)).toThrowError(expect.objectContaining({ code: 'RECHARGE_LIMIT_REACHED' }));
+    expect(() => assertPurchaseLimits(100, earlier, now, newAccount)).not.toThrow();
+    expect(() => assertPurchaseLimits(100, [{ ...earlier[0]!, totalChargeUsd: 100.01 }], now, newAccount)).toThrow();
+    expect(() => assertPurchaseLimits(75, [{ ...earlier[0]!, totalChargeUsd: 125, paymentStatus: 'FAILED' }], now, newAccount)).not.toThrow();
+    expect(() => assertPurchaseLimits(75.01, [{ ...earlier[0]!, totalChargeUsd: 125, paymentStatus: 'FAILED' }], now, newAccount)).toThrow();
+  });
+  it.each([true, false])('keeps hourly and daily attempt limits (new account: %s)', newAccount => {
+    const hour = Array.from({length: 3}, () => ({ createdAt: now.toISOString(), totalChargeUsd: 1, paymentStatus: 'FAILED' }));
+    const day = Array.from({length: 10}, () => ({ createdAt: '2026-10-24T10:00:00Z', totalChargeUsd: 1, paymentStatus: 'CAPTURED' }));
+    expect(() => assertPurchaseLimits(1, hour, now, newAccount)).toThrow();
+    expect(() => assertPurchaseLimits(1, day, now, newAccount)).toThrow();
   });
   it('counts failed reservations against velocity and excludes old orders', () => {
     const history = Array.from({length: 3}, () => ({ createdAt: now.toISOString(), totalChargeUsd: 5, paymentStatus: 'FAILED' }));

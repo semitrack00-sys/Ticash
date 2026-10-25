@@ -198,7 +198,9 @@ class RechargeJourney extends ChangeNotifier {
     final data = e is DioException ? e.response?.data : null;
     final code = data is Map ? data['code'] : null;
     return switch (code) {
-      'TOPUP_QUOTE_EXPIRED' || 'TOPUP_QUOTE_ALREADY_USED' => 'quoteExpired',
+      'TOPUP_QUOTE_EXPIRED' ||
+      'TOPUP_QUOTE_ALREADY_USED' ||
+      'TOPUP_QUOTE_NOT_FOUND' => 'quoteExpired',
       'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
       'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
       'EMAIL_VERIFICATION_REQUIRED' => 'emailVerificationRequired',
@@ -349,8 +351,9 @@ class RechargeJourney extends ChangeNotifier {
         } catch (e) {
           final reason = safeError(e);
           if (reason == 'emailVerificationRequired' ||
-              reason == 'rechargeRestricted')
+              reason == 'rechargeRestricted') {
             error = reason;
+          }
           // Keep status/cancellation available when checkout cannot be resumed.
         }
       }

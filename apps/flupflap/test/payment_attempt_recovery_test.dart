@@ -17,9 +17,27 @@ void main() {
     a.transactionStatus = 'DELIVERED';
     a.paymentStatus = 'CAPTURED';
     final payment = j.pay();
-    await Future<void>.delayed(Duration.zero);
+    for (
+      var i = 0;
+      i < 50 && !a.requests.any((r) => r.path.endsWith('/payment-sessions'));
+      i++
+    ) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(a.requests.any((r) => r.path.endsWith('/payment-sessions')), true);
     final lookup = j.refresh();
-    await Future<void>.delayed(Duration.zero);
+    for (
+      var i = 0;
+      i < 50 &&
+          !a.requests.any((r) => r.path.endsWith('/payment-attempt-status'));
+      i++
+    ) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(
+      a.requests.any((r) => r.path.endsWith('/payment-attempt-status')),
+      true,
+    );
     paymentGate.complete();
     await payment;
     expect(j.locked, false);

@@ -48,6 +48,8 @@ class AdminFixture implements HttpClientAdapter {
 
 void main() {
   testWidgets('admin reset requires review reason and reports the scoped result', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final adapter = AdminFixture();
     final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = adapter;
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(
@@ -59,6 +61,7 @@ void main() {
     await tester.tap(find.text('FlupFlap Customers'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Reset purchase-attempt limit'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Reset purchase-attempt limit'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Reset attempt count'));

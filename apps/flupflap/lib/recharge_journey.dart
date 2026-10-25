@@ -322,7 +322,8 @@ class RechargeJourney extends ChangeNotifier {
       step = RechargeStep.recovery;
       error = recoveryError;
       hosted = null;
-      if (blocker.id != null && blocker.status == 'PENDING' &&
+      if (blocker.id != null &&
+          blocker.status == 'PENDING' &&
           ['SESSION_CREATED', 'PENDING'].contains(blocker.paymentStatus)) {
         try {
           final recovered = await client.recoverCheckout(blocker);
@@ -489,8 +490,9 @@ class RechargeJourney extends ChangeNotifier {
   Future<void> continueDestination() => _run((v) async {
     if (country == null ||
         !countries.any((c) => c.code == country) ||
-        !RegExp(r'^\+[1-9][0-9]{6,14}$')
-            .hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
+        !RegExp(
+          r'^\+[1-9][0-9]{6,14}$',
+        ).hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
       throw const FormatException('Invalid destination');
     }
     phone = phone.replaceAll(RegExp(r'[\s().-]'), '');
@@ -741,8 +743,32 @@ class RechargeJourney extends ChangeNotifier {
     }
   }
 
+  bool get canContinueCheckout =>
+      hosted != null &&
+      (result == null ||
+          (result!.status == 'PENDING' &&
+              ['SESSION_CREATED', 'PENDING'].contains(result!.paymentStatus)));
+
+  // Reopening checkout only reads the existing order/session. Never create a
+  // payment here, and never reopen a stale link after capture or a failed check.
+  Future<Uri?> checkoutForContinuation() async {
+    if (_disposed || busy || _cancelling || hosted == null) {
+      return null;
+    }
+    final revision = _revision;
+    await refresh();
+    if (!_current(revision) || error != null || !canContinueCheckout) {
+      return null;
+    }
+    return hosted!.url;
+  }
+
   Future<void> refresh() {
-    if (_disposed || _cancelling || _checkingHistory) return Future.value();
+    if (_disposed || _cancelling) return Future.value();
+    // A foreground return must await an in-flight poll, including history
+    // recovery, instead of reporting completion while that check is running.
+    if (_refreshFlight != null) return _refreshFlight!;
+    if (_checkingHistory) return Future.value();
     return _refreshFlight ??= _refresh().whenComplete(
       () => _refreshFlight = null,
     );

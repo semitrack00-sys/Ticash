@@ -17,7 +17,6 @@ void main() {
           'serverTime': '2026-10-25T12:00:00Z', 'retryAt': '2026-10-25T13:00:00Z'}}));
     expect(journey.safeError(error), 'rechargeLimitReached');
     expect(journey.purchaseAccess?.retryAt, DateTime.utc(2026, 10, 25, 13));
-    journey.dispose();
   });
   test('rejects malformed estimates instead of inventing a reset time', () {
     expect(PurchaseAccessInfo.parse({'mode': 'TEMPORARY_LIMIT', 'serverTime': 'bad'}), isNull);

@@ -181,6 +181,8 @@ enum MobileTopUpEnvironment {
 }
 
 model User {
+  adminMfa AdminMfa?
+  adminMfaGrants AdminMfaGrant[]
   promotionAudits PromotionAuditEvent[]
   id                  String                    @id @default(uuid())
   email               String                    @unique
@@ -815,6 +817,7 @@ model IdempotencyKey {
 
 // SQL migration additionally enforces credential shape, status and exactly-one recharge owner.
 model FlupFlapCustomer {
+  trustedDevices FlupFlapTrustedDevice[]
   verificationChallenges FlupFlapVerificationChallenge[]
   stores FlupFlapStore[]
   deletionRequest FlupFlapDeletionRequest?
@@ -1233,4 +1236,51 @@ model FlupFlapFraudAlert {
   sentAt DateTime?
   lastError String?
   @@index([sentAt, createdAt])
+}
+
+model SecurityChallenge {
+  id String @id @default(uuid())
+  ownerId String
+  purpose String
+  destination String
+  binding String
+  codeHash String
+  expiresAt DateTime
+  sentAt DateTime?
+  consumedAt DateTime?
+  attempts Int @default(0)
+  createdAt DateTime @default(now())
+  @@index([ownerId, purpose, createdAt])
+  @@index([expiresAt])
+}
+model FlupFlapTrustedDevice {
+  tokenHash String @id
+  customerId String
+  authVersion Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  customer FlupFlapCustomer @relation(fields:[customerId], references:[id], onDelete:Cascade)
+  @@index([customerId])
+}
+model AdminMfa {
+  userId String @id
+  secretEncrypted String?
+  pendingEncrypted String?
+  pendingUntil DateTime?
+  enabledAt DateTime?
+  lastCounter Int @default(-1)
+  recoveryHashes Json @default("[]")
+  failures Int @default(0)
+  lockedUntil DateTime?
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+}
+model AdminMfaGrant {
+  tokenHash String @id
+  userId String
+  accessHash String
+  passwordBinding String
+  expiresAt DateTime
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  @@index([userId])
+  @@index([expiresAt])
 }

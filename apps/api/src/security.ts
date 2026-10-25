@@ -236,7 +236,7 @@ export function assessRisk(config: SecurityConfig, context: RiskContext): string
 
 export function redactAuditMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!metadata) return undefined;
-  const blocked = /password|secret|token|authorization|cookie|account(number)?|routing(number)?|ssn|document|selfie|api.?key|card.?number|cvv|cvc/i;
+  const blocked = /password|secret|token|authorization|cookie|proof|recovery.?codes?|security.?codes?|authenticator|account(number)?|routing(number)?|ssn|document|selfie|api.?key|card.?number|cvv|cvc/i;
   const ancestors = new WeakSet<object>();
   const redact = (value: unknown, depth: number): unknown => {
     if (typeof value === 'string') return value.length > 500 ? `${value.slice(0, 500)}…` : value;

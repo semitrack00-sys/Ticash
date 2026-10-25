@@ -1,0 +1,22 @@
+# Account security rollout
+
+This change requires the additive migration `20261025010000_account_security` before any API instance runs the new code. It creates four security tables and their indexes, without resetting or rewriting customer or payment data. Run the repository's reviewed `prisma migrate deploy` procedure against the confirmed production database. Do not use schema resets.
+
+Deploy the compatible customer app and admin web interface before enforcing this API version for existing clients. A verified customer signing in on an unfamiliar device must enter the email code; old clients cannot complete that new response. Password recovery remains available. Release 14 prepared earlier does not contain these new screens; build a later unused Play version code after checking the Console.
+
+In production, every staff permission boundary requires a short-lived MFA proof bound to the current primary access token, staff identity, password and enrolled factor. Development/test can exercise this with `ADMIN_MFA_REQUIRED=true`. A staff password alone exposes only the enrollment/status endpoints, never customer, payment, audit or administrative data. The setup requires the current password, proof from the saved staff inbox, and a valid authenticator code. The account owner must complete enrollment personally. An agent must not read, collect or save real authenticator keys or recovery codes.
+
+Authenticator secrets use AES-256-GCM with account-bound authenticated data. A dedicated stable `ADMIN_MFA_ENCRYPTION_SECRET` can be configured. If blank, the implementation derives an independent key from `JWT_ACCESS_SECRET` using HKDF. Keep the effective key stable and backed up securely; changing the underlying key without migrating ciphertext makes enrolled factors unreadable. Never reset an enrolled factor or replace its key silently. Recovery codes are shown once, stored only as digests, and consumed atomically. Save them privately during enrollment. Recovery does not disable MFA. Password recovery alone does not bypass an enrolled factor.
+
+The existing Resend key and approved verification sender deliver security codes and change notifications. Codes expire after ten minutes, allow five guesses, are bound to one owner/purpose/credential version/target, and are rate limited. Delivery failure invalidates a challenge. Consumed and expired challenges never authorize a change. Old challenge contact data is cleaned opportunistically after expiry plus one day. Account deletion removes all trusted-device tokens and challenge contacts. Verification secrets, proofs, recovery codes and passwords must not be logged or included in support screenshots.
+
+Customer controls:
+
+- Sign out all devices: recheck the current password, increment the credential version and revoke every access/refresh session and trusted-device token for that customer only.
+- Password change: require the current password and a code delivered to the verified current email; revoke sessions/devices after the change.
+- Email change: require current password, proof from the verified old inbox, then proof from the proposed new inbox. Only then atomically replace the unique normalized email and revoke sessions/devices. Notify the previous and new inboxes. Notification delivery errors are audited without pretending delivery succeeded.
+- Unfamiliar sign-in: require inbox proof after valid password authentication. Device trust is a random, server-issued capability stored as a digest, bound to one customer and credential version, and expiring after 30 days. An installation ID or user-agent string is never an authentication factor. Browser trust uses a Secure HttpOnly cookie; native trust uses secure storage. Sign-out-all/password recovery revoke trust.
+
+Restricting a customer also revokes all their sessions. Staff can revoke sessions independently with an audit reason. Email/phone verification and purchase restrictions are labeled in the admin; profile names remain customer-supplied and are never presented as verified legal or cardholder identity.
+
+Validate enrollment, recovery-code use and primary-token refresh with a designated staff account before completing the live handoff. Keep the reported account restricted until its rightful owner completes recovery and the profile is reviewed. Do not release held payments, remove CVC/ZIP requirements, disable existing risk rules or fabricate successful payment states during this rollout.

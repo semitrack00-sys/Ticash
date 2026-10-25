@@ -77,7 +77,9 @@ export class FlupFlapIdentityRepository {
       if (!customer || customer.status !== 'ACTIVE' || customer.guestExpiresAt) return false;
       if ((await tx.flupFlapPasswordResetToken.deleteMany({ where: { id: row.id, tokenHash } })).count !== 1) return false;
       await tx.flupFlapCustomer.update({ where: { id: row.customerId }, data: { passwordHash, authVersion: { increment: 1 }, failedLoginAttempts: 0, loginLockedUntil: null } });
-      await tx.flupFlapSession.deleteMany({ where: { customerId: row.customerId } }); return true;
+      await tx.flupFlapSession.deleteMany({ where: { customerId: row.customerId } });
+      await tx.flupFlapTrustedDevice.deleteMany({where:{customerId:row.customerId}});
+      await tx.securityChallenge.deleteMany({where:{ownerId:row.customerId}});return true;
     });
     const row = [...this.resets.values()].find(r => r.tokenHash === tokenHash);
     const customer = row ? this.customers.get(row.customerId) : undefined;
@@ -88,5 +90,21 @@ export class FlupFlapIdentityRepository {
   }
   async listCustomers() {
     return this.db ? this.db.flupFlapCustomer.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }) : [...this.customers.values()].slice(0,100);
+  }
+  async revokeAll(id: string) {
+    if (this.db) return this.db.$transaction(async tx => {
+      await tx.flupFlapCustomer.update({where:{id},data:{authVersion:{increment:1}}});
+      await tx.flupFlapSession.deleteMany({where:{customerId:id}});
+      await tx.flupFlapTrustedDevice.deleteMany({where:{customerId:id}});
+      await tx.securityChallenge.deleteMany({where:{ownerId:id}});
+    });
+    const c=this.customers.get(id); if (!c) throw new Error('Customer unavailable');
+    this.customers.set(id,{...c,authVersion:c.authVersion+1});
+    for(const [key,s] of this.sessions) if(s.customerId===id)this.sessions.delete(key);
+  }
+  async listSessions(customerId:string) {
+    return this.db ? this.db.flupFlapSession.findMany({where:{customerId,expiresAt:{gt:new Date()}},
+      select:{id:true,createdAt:true,expiresAt:true},orderBy:{createdAt:'desc'},take:100}) :
+      [...this.sessions.values()].filter(s=>s.customerId===customerId&&s.expiresAt>new Date()).map(({id,createdAt,expiresAt})=>({id,createdAt,expiresAt}));
   }
 }

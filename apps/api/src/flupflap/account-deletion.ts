@@ -112,4 +112,6 @@ export async function eraseFlupFlapAccountData(tx: Prisma.TransactionClient, cus
       phone: null, countryCode: null, emailVerifiedAt: null, phoneVerifiedAt: null,
       guestExpiresAt: null, lastLoginAt: null, failedLoginAttempts: 0, loginLockedUntil: null,
     } });
+    await tx.flupFlapTrustedDevice.deleteMany({where:{customerId}});
+    await tx.securityChallenge.deleteMany({where:{ownerId:customerId}});
 }

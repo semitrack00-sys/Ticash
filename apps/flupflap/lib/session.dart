@@ -1,4 +1,5 @@
 import 'dart:math';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -11,14 +12,17 @@ abstract interface class SessionStorage {
 }
 
 class SecureSessionStorage implements SessionStorage {
+  SecureSessionStorage({this.storageKey = key});
   final FlutterSecureStorage storage = const FlutterSecureStorage();
   static const key = 'flupflap.refresh.v1';
+  final String storageKey;
   @override
-  Future<String?> read() => storage.read(key: key);
+  Future<String?> read() => storage.read(key: storageKey);
   @override
-  Future<void> write(String value) => storage.write(key: key, value: value);
+  Future<void> write(String value) =>
+      storage.write(key: storageKey, value: value);
   @override
-  Future<void> clear() => storage.delete(key: key);
+  Future<void> clear() => storage.delete(key: storageKey);
 }
 
 /// Browser credentials are memory-only, matching the existing FlupFlap website.
@@ -28,22 +32,38 @@ class BrowserSessionStorage implements SessionStorage {
   @override
   Future<String?> read() async => _refreshToken;
   @override
-  Future<void> write(String value) async { _refreshToken = value; }
+  Future<void> write(String value) async {
+    _refreshToken = value;
+  }
+
   @override
-  Future<void> clear() async { _refreshToken = null; }
+  Future<void> clear() async {
+    _refreshToken = null;
+  }
 }
 
 /// Own client, token namespace and session. No TiCash ApiClient or auth provider.
 class FlupFlapSession extends ChangeNotifier {
-  FlupFlapSession({required this.dio, required this.storage, this.browserSession = false, this.deviceIdProvider}) {
+  FlupFlapSession({
+    required this.dio,
+    required this.storage,
+    this.browserSession = false,
+    this.deviceIdProvider,
+    this.trustedDeviceStorage,
+  }) {
     final trustedBaseUrl = dio.options.baseUrl;
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           if (options.extra['expectedSessionEpoch'] != null &&
               options.extra['expectedSessionEpoch'] != _epoch) {
-            handler.reject(DioException(requestOptions: options,
-              type: DioExceptionType.cancel, message: 'Session changed'));
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.cancel,
+                message: 'Session changed',
+              ),
+            );
             return;
           }
           // Fail closed if a reused screen attempts a TiCash API or absolute URL.
@@ -63,26 +83,58 @@ class FlupFlapSession extends ChangeNotifier {
           options.followRedirects = false;
           if (options.extra['retried'] == true &&
               options.extra['sessionEpoch'] != _epoch) {
-            handler.reject(DioException(requestOptions: options,
-              type: DioExceptionType.cancel, message: 'Session changed'));
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.cancel,
+                message: 'Session changed',
+              ),
+            );
             return;
           }
           options.extra['sessionEpoch'] = _epoch;
+          for (final key
+              in options.headers.keys
+                  .where(
+                    (key) => key.toLowerCase() == 'x-flupflap-trusted-device',
+                  )
+                  .toList()) {
+            options.headers.remove(key);
+          }
+          if (options.path.startsWith('/flupflap/auth/login')) {
+            String? trusted = _trustedDeviceToken;
+            try {
+              trusted ??= await trustedDeviceStorage?.read();
+            } catch (_) {
+              /* Require inbox proof if device storage is unavailable. */
+            }
+            if (trusted != null) {
+              options.headers['X-FlupFlap-Trusted-Device'] = trusted;
+            }
+          }
           if (deviceIdProvider != null) {
             try {
-              options.headers['X-FlupFlap-Device'] = await (_deviceIdentifier ??= deviceIdProvider!());
+              options.headers['X-FlupFlap-Device'] =
+                  await (_deviceIdentifier ??= deviceIdProvider!());
             } catch (_) {
               _deviceIdentifier = null;
               // Existing payment controls remain active if secure storage fails.
             }
           }
           if (options.extra['sessionEpoch'] != _epoch) {
-            handler.reject(DioException(requestOptions: options,
-              type: DioExceptionType.cancel, message: 'Session changed'));
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.cancel,
+                message: 'Session changed',
+              ),
+            );
             return;
           }
-          for (final key in options.headers.keys
-              .where((key) => key.toLowerCase() == 'authorization').toList()) {
+          for (final key
+              in options.headers.keys
+                  .where((key) => key.toLowerCase() == 'authorization')
+                  .toList()) {
             options.headers.remove(key);
           }
           if (_accessToken != null) {
@@ -117,6 +169,9 @@ class FlupFlapSession extends ChangeNotifier {
   final Future<String> Function()? deviceIdProvider;
   final Dio dio;
   final SessionStorage storage;
+  final SessionStorage? trustedDeviceStorage;
+  String? _trustedDeviceToken;
+  String? loginChallengeId, loginEmail, securityNotice;
   final bool browserSession;
   Map<String, dynamic>? user;
   String? _accessToken;
@@ -155,7 +210,8 @@ class FlupFlapSession extends ChangeNotifier {
     final data = Map<String, dynamic>.from(value as Map);
     final customer = Map<String, dynamic>.from(data['user'] as Map);
     if (customer['domain'] != 'FLUPFLAP' ||
-        customer['guest'] == true || data['guest'] == true ||
+        customer['guest'] == true ||
+        data['guest'] == true ||
         data['accessToken'] is! String ||
         data['refreshToken'] is! String) {
       throw const FormatException('Invalid FlupFlap session');
@@ -163,10 +219,18 @@ class FlupFlapSession extends ChangeNotifier {
     await _queueStorage(() async {
       if (epoch == _epoch && !_loggingOut) {
         await storage.write(data['refreshToken'] as String);
+        if (data['trustedDeviceToken'] is String) {
+          await trustedDeviceStorage?.write(
+            data['trustedDeviceToken'] as String,
+          );
+          _trustedDeviceToken = data['trustedDeviceToken'] as String;
+        }
       }
     });
     if (epoch != _epoch || _loggingOut) throw StateError('Session changed');
     user = customer;
+    loginChallengeId = null;
+    loginEmail = null;
     deletionNotice = null;
     _accessToken = data['accessToken'] as String;
     notifyListeners();
@@ -174,10 +238,58 @@ class FlupFlapSession extends ChangeNotifier {
 
   Future<void> _authenticate(String route, Map<String, dynamic> body) async {
     final epoch = ++_epoch;
-    await _accept(
-      (await dio.post('/flupflap/auth/$route', data: body)).data,
-      epoch,
+    final data = (await dio.post('/flupflap/auth/$route', data: body)).data;
+    if (epoch != _epoch) throw StateError('Session changed');
+    if (route == 'login' &&
+        data is Map &&
+        data['code'] == 'LOGIN_VERIFICATION_REQUIRED' &&
+        data['challengeId'] is String) {
+      await _queueStorage(storage.clear);
+      if (epoch != _epoch) throw StateError('Session changed');
+      loginChallengeId = data['challengeId'] as String;
+      loginEmail = body['email'] as String;
+      user = null;
+      _accessToken = null;
+      notifyListeners();
+      return;
+    }
+    await _accept(data, epoch);
+  }
+
+  Future<void> confirmLogin(String code) async {
+    if (loginChallengeId == null || loginEmail == null) {
+      throw StateError('Sign in again');
+    }
+    await _authenticate('login/confirm', {
+      'email': loginEmail,
+      'challengeId': loginChallengeId,
+      'code': code,
+    });
+  }
+
+  void cancelLoginChallenge() {
+    _epoch++;
+    loginChallengeId = null;
+    loginEmail = null;
+    notifyListeners();
+  }
+
+  Future<void> signOutAll(String password) async {
+    await dio.post(
+      '/flupflap/auth/sessions/revoke-all',
+      data: {'password': password},
     );
+    await trustedDeviceStorage?.clear();
+    _trustedDeviceToken = null;
+    securityNotice = 'signedOutAll';
+    await clear();
+  }
+
+  Future<void> securityChanged(String notice) async {
+    await trustedDeviceStorage?.clear();
+    _trustedDeviceToken = null;
+    securityNotice = notice;
+    await clear();
   }
 
   Future<void> login(String email, String password) =>
@@ -209,7 +321,9 @@ class FlupFlapSession extends ChangeNotifier {
     await _accept(
       (await dio.post(
         '/flupflap/auth/refresh',
-        data: value == null && browserSession ? <String, dynamic>{} : {'refreshToken': value},
+        data: value == null && browserSession
+            ? <String, dynamic>{}
+            : {'refreshToken': value},
       )).data,
       epoch,
     );
@@ -250,16 +364,21 @@ class FlupFlapSession extends ChangeNotifier {
   }
 
   Future<String> deleteAccount(String password) async {
-    if (!authenticated || guest) throw StateError('Registered account required');
+    if (!authenticated || guest) {
+      throw StateError('Registered account required');
+    }
     final epoch = _epoch;
     // Refresh is not password verification. The server separately verifies the
     // supplied password and binds deletion to this authenticated customer only.
     await refresh();
-    if (epoch != _epoch || !authenticated || guest) throw StateError('Session changed');
-    final response = await dio.post('/flupflap/auth/account-deletion', data: {
-      'password': password,
-      'confirm': 'DELETE_ACCOUNT',
-    }, options: Options(extra: {'expectedSessionEpoch': epoch}));
+    if (epoch != _epoch || !authenticated || guest) {
+      throw StateError('Session changed');
+    }
+    final response = await dio.post(
+      '/flupflap/auth/account-deletion',
+      data: {'password': password, 'confirm': 'DELETE_ACCOUNT'},
+      options: Options(extra: {'expectedSessionEpoch': epoch}),
+    );
     final data = Map<String, dynamic>.from(response.data as Map);
     final status = data['status'];
     if (data['requestId'] is! String ||
@@ -278,19 +397,23 @@ class FlupFlapSession extends ChangeNotifier {
     _epoch++;
     _accessToken = null;
     user = null;
+    loginChallengeId = null;
+    loginEmail = null;
     notifyListeners();
     await _queueStorage(storage.clear);
   }
 }
 
-
 Future<String> loadDeviceIdentifier() async {
-    const secure = FlutterSecureStorage();
-    const deviceKey = 'flupflap.security.device.v1';
-    final saved = await secure.read(key: deviceKey);
-    if (saved != null && RegExp(r'^[a-f0-9]{64}$').hasMatch(saved)) return saved;
-    final random = Random.secure();
-    final value = List.generate(32, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
-    await secure.write(key: deviceKey, value: value);
-    return value;
-  }
+  const secure = FlutterSecureStorage();
+  const deviceKey = 'flupflap.security.device.v1';
+  final saved = await secure.read(key: deviceKey);
+  if (saved != null && RegExp(r'^[a-f0-9]{64}$').hasMatch(saved)) return saved;
+  final random = Random.secure();
+  final value = List.generate(
+    32,
+    (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
+  await secure.write(key: deviceKey, value: value);
+  return value;
+}

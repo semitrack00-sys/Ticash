@@ -1,4 +1,7 @@
 import { rechargeDeviceGuard } from './flupflap/device-security.js';
+import { AdminMfaService, createAdminMfaRouter } from './admin-mfa.js';
+import { SecurityChallenges, securityMail } from './security-challenges.js';
+import { FlupFlapAccountSecurity } from './flupflap/account-security.js';
 import { fraudAlertConfig, FlupFlapFraudAlerts } from './flupflap/fraud-alerts.js';
 import { createVerificationRouter, FlupFlapVerification, verificationDelivery } from './flupflap/verification.js';
 import { createRechargeFraudGate, approveRechargeReview } from './topup/fraud-gate.js';
@@ -698,7 +701,14 @@ export function createApp(options: CreateAppOptions = {}) {
       : users.get(userId);
     return user?.guestExpiresAt ? 'CUSTOMER' : user?.role;
   };
-  const permission = (value: AdminPermission) => requirePermission(value, resolveRole);
+  const adminMfaRequired = process.env.NODE_ENV === 'production' || process.env.ADMIN_MFA_REQUIRED === 'true';
+  const adminMfa = databaseEnabled ? new AdminMfaService(prisma,new SecurityChallenges(prisma,accessSecret,securityMail()),
+    process.env.ADMIN_MFA_ENCRYPTION_SECRET?.trim() || accessSecret) : undefined;
+  const permission = (value: AdminPermission) => requirePermission(value, resolveRole, adminMfaRequired || adminMfa ? async req => {
+    if(!adminMfa)return false;
+    const status=await adminMfa.status(req.userId!,req.header('authorization')??'',req.header('X-Admin-MFA'));
+    return (!adminMfaRequired&&!status.enabled)||status.verified;
+  } : undefined);
   const loginState = {
     async assertAllowed(identityHash: string) {
       if (!databaseEnabled) return loginProtector.assertAllowed(identityHash);
@@ -1224,7 +1234,7 @@ export function createApp(options: CreateAppOptions = {}) {
       callback(new SecurityError('CORS_ORIGIN_DENIED', 'Origin is not allowed by CORS', 403));
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-FlupFlap-Device'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-FlupFlap-Device', 'X-FlupFlap-Trusted-Device', 'X-Admin-MFA'],
     credentials: true,
     optionsSuccessStatus: 204,
   }));
@@ -1344,6 +1354,8 @@ export function createApp(options: CreateAppOptions = {}) {
     mobileTopUpConfig.approvedForLiveUse === true && mobileTopUpConfig.liveRechargeEnabled === true &&
     securityConfig.approvedForLiveUse === true && securityConfig.liveMoneyEnabled === true;
   const flupFlap = createFlupFlapIdentity({
+    security: databaseEnabled && flupFlapIdentityConfig.enabled ? new FlupFlapAccountSecurity(prisma,
+      new SecurityChallenges(prisma,flupFlapIdentityConfig.accessSecret!,securityMail())) : undefined,
     deletion: databaseEnabled ? new FlupFlapSelfServiceDeletion(prisma) : undefined,
     config: flupFlapIdentityConfig, repository: flupFlapRepository,
     // Production FlupFlap is account-only, including previously issued guest
@@ -1356,6 +1368,7 @@ export function createApp(options: CreateAppOptions = {}) {
       mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&
       securityConfig.approvedForLiveUse === false && securityConfig.liveMoneyEnabled === false) || flupFlapProductionAllowed(),
   });
+  app.use('/api/admin/security',createAdminMfaRouter({authenticate,resolveRole,service:adminMfa,required:adminMfaRequired}));
   app.use('/api/admin/flupflap', createFlupFlapAdmin({
     authenticate, permission, identities:flupFlapRepository, recharge:mobileTopUpRepository,
     service:mobileTopUpService, audit:recordAudit,

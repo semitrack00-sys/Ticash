@@ -24,7 +24,14 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
   const id=z.uuid().parse(req.params.id);const input=z.object({rechargeRestricted:z.boolean(),reason:z.string().trim().min(5).max(300)}).strict().parse(req.body);
   if(!await options.identities.customer(id)){res.status(404).json({code:'CUSTOMER_NOT_FOUND'});return;}
   await options.identities.update(id,{rechargeRestricted:input.rechargeRestricted});
+  if(input.rechargeRestricted)await options.identities.revokeAll(id);
   await options.audit(req.userId,'FLUPFLAP_RESTRICTION_UPDATED','FlupFlapCustomer',id,{restricted:input.rechargeRestricted,reason:input.reason});res.status(204).end();
+ });
+ router.post('/customers/:id/revoke-sessions',protect('recharge.operations'),async(req:AdminRequest,res)=>{
+  const id=z.uuid().parse(req.params.id),input=z.object({reason:z.string().trim().min(5).max(300)}).strict().parse(req.body);
+  if(!await options.identities.customer(id)){res.status(404).json({code:'CUSTOMER_NOT_FOUND'});return;}
+  await options.identities.revokeAll(id);
+  await options.audit(req.userId,'FLUPFLAP_ALL_SESSIONS_REVOKED_BY_STAFF','FlupFlapCustomer',id,{reason:input.reason});res.status(204).end();
  });
  for(const [path,permission] of [['transactions','recharge.transactions.view'],['pending-failures','recharge.transactions.view'],['refunds','recharge.refunds'],['financials','recharge.reports'],['reports','recharge.reports']] as const){
   router.get('/'+path,protect(permission),async(req:AdminRequest,res)=>{

@@ -57,6 +57,7 @@ class ParityAdapter implements HttpClientAdapter {
   bool failStatus = false, failHistory = false;
   bool attemptFound = false;
   String? paymentErrorCode;
+  int paymentErrorStatus = 403;
   Map<String, dynamic>? attemptResponse;
   Future<void>? paymentGate;
   List<Map<String, dynamic>>? historyRows;
@@ -193,7 +194,7 @@ class ParityAdapter implements HttpClientAdapter {
     } else if (o.path.endsWith('/payment-sessions')) {
       await paymentGate;
       if (paymentErrorCode != null) {
-        return ResponseBody.fromString(jsonEncode({'code': paymentErrorCode}), 403,
+        return ResponseBody.fromString(jsonEncode({'code': paymentErrorCode}), paymentErrorStatus,
           headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
       }
       if (failPayment) {

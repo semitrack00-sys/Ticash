@@ -6,6 +6,52 @@ import 'package:flupflap/recharge_journey.dart';
 import 'checkout_parity_test.dart' show fixture, reviewed, quoteId, txnId;
 
 void main() {
+
+  test('initial purchase-limit 429 returns to review without a false payment lock', () async {
+    final (a, _, j) = fixture(guest: false);
+    await reviewed(j);
+    a.paymentErrorCode = 'RECHARGE_LIMIT_REACHED';
+    a.paymentErrorStatus = 429;
+    await j.pay();
+    expect(j.locked, false);
+    expect(j.step, RechargeStep.review);
+    expect(j.reviewed, false);
+    expect(j.error, 'rechargeLimitReached');
+    expect(j.canRetryPayment, false);
+    await j.retryPayment();
+    expect(a.requests.where((r) => r.path.endsWith('/payment-sessions')).length, 1);
+  });
+
+  test('purchase-limit 429 after a lost response retains the original payment key', () async {
+    final (a, _, j) = fixture();
+    await reviewed(j);
+    a.failPayment = true;
+    await j.pay();
+    a.failPayment = false;
+    a.paymentErrorCode = 'RECHARGE_LIMIT_REACHED';
+    a.paymentErrorStatus = 429;
+    await j.retryPayment();
+    expect(j.locked, true);
+    expect(j.error, 'rechargeLimitReached');
+    final calls = a.requests.where((r) => r.path.endsWith('/payment-sessions')).toList();
+    expect(calls.length, 2);
+    expect(calls[0].headers['Idempotency-Key'], calls[1].headers['Idempotency-Key']);
+    await j.refresh();
+    expect(j.locked, true);
+    expect(j.error, 'paymentOutcomeUnknown');
+  });
+
+  test('an unrecognized 429 never proves that an uncertain payment was not created', () async {
+    final (a, _, j) = fixture();
+    await reviewed(j);
+    a.paymentErrorCode = 'UNRECOGNIZED_RATE_LIMIT';
+    a.paymentErrorStatus = 429;
+    await j.pay();
+    expect(j.locked, true);
+    expect(j.canRetryPayment, true);
+    expect(j.error, 'paymentOutcomeUnknown');
+  });
+
   test('a status lookup finishing after a confirmed rejection cannot resurrect that attempt', () async {
     final (a, _, j) = fixture();
     await reviewed(j);

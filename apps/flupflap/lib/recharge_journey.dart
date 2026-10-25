@@ -210,6 +210,7 @@ class RechargeJourney extends ChangeNotifier {
       'DEVICE_ACCOUNT_LIMIT' => 'deviceAccountLimit',
       'PAYMENT_ATTEMPT_LIMIT' => 'paymentAttemptLimit',
       'PAYMENT_CARD_LIMIT' => 'paymentCardLimit',
+      'RECHARGE_LIMIT_REACHED' => 'rechargeLimitReached',
       'PAYMENT_SESSION_IN_PROGRESS' ||
       'PAYMENT_SESSION_CREATION_UNKNOWN' => 'paymentOutcomeUnknown',
       'GUEST_ACCESS_DISABLED' => 'accountRequired',
@@ -786,6 +787,7 @@ class RechargeJourney extends ChangeNotifier {
             'DEVICE_ACCOUNT_LIMIT',
             'PAYMENT_ATTEMPT_LIMIT',
             'PAYMENT_CARD_LIMIT',
+            'RECHARGE_LIMIT_REACHED',
             'BILLING_COUNTRY_REQUIRED',
             'TOPUP_QUOTE_EXPIRED',
             'TOPUP_QUOTE_NOT_FOUND',

@@ -199,6 +199,7 @@ class RechargeJourney extends ChangeNotifier {
       'TOPUP_QUOTE_EXPIRED' || 'TOPUP_QUOTE_ALREADY_USED' => 'quoteExpired',
       'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
       'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
+      'EMAIL_VERIFICATION_REQUIRED' => 'emailVerificationRequired',
       'RECURRING_PAYMENT_METHOD_UNAVAILABLE' ||
       'RECURRING_SOURCE_NOT_ELIGIBLE' => 'recurringPaymentUnavailable',
       'TOPUP_NOT_CANCELLABLE' ||

@@ -85,6 +85,7 @@ export class MobileTopUpService {
     private readonly storeBalance?: StoreBalancePayment,
     private readonly fraudGate?: (record: MobileTopUpTransactionRecord) => Promise<string | undefined>,
     private readonly approveFraudReview?: (record: MobileTopUpTransactionRecord, actor: string, note: string) => Promise<void>,
+    private readonly assertPurchaseIdentity?: (userId: string) => Promise<void>,
   ) {
     this.config = config;
     this.provider = provider;
@@ -474,6 +475,7 @@ export class MobileTopUpService {
 
   private async reservePayment(userId: string, input: { quoteId: string; recipientId?: string }, idempotencyKey: string, storeBalance = false) {
     this.assertEnabled();
+    await this.assertPurchaseIdentity?.(userId);
     if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
       throw new MobileTopUpError('INVALID_IDEMPOTENCY_KEY', 'A valid Idempotency-Key header is required', 400);
     }
@@ -1491,6 +1493,7 @@ export class MobileTopUpService {
 
   async recoverHostedCheckout(userId: string, id: string) {
     const record = await this.getTransaction(userId, id);
+    await this.assertPurchaseIdentity?.(userId);
     this.assertTransactionEnvironment(record);
     if (!this.stripeProvider || record.paymentProvider !== 'STRIPE' || !record.paymentSessionId ||
         record.status !== 'PENDING' || !['SESSION_CREATED', 'PENDING'].includes(record.paymentStatus)) {

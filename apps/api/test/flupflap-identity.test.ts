@@ -37,6 +37,34 @@ const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:
 
 describe('FlupFlap identity and shared recharge isolation',()=>{
  beforeEach(resetStore);
+ afterEach(() => vi.unstubAllEnvs());
+ it('rejects duplicate emails after trimming and case normalization without changing the original identity', async () => {
+  const {app,identities}=setup(); const original=await signup(app);
+  const duplicate=await request(app).post(root+'/auth/register').send({firstName:'John',lastName:'Doe',phone:'+15550009999',
+   email:'  A@EXAMPLE.TEST  ',password:'different-password-42'}).expect(409);
+  expect(duplicate.body.code).toBe('REGISTRATION_UNAVAILABLE');
+  expect(await identities.byEmail('a@example.test')).toMatchObject({id:original.user.id,firstName:'Test',lastName:'A'});
+ });
+ it('requires saved email ownership for purchases and replays while preserving quotes, history and account access', async () => {
+  vi.stubEnv('FLUPFLAP_REQUIRE_VERIFIED_EMAIL','true');
+  const {app,identities,provider}=setup(); const customer=await signup(app); const auth=headers(customer.accessToken);
+  const quote=(await request(app).post(root+'/mobile-topups/quotes').set(auth).send(quoteInput).expect(201)).body.quote;
+  for(const path of ['/mobile-topups/transactions','/mobile-topups/payment-sessions']) {
+   const result=await request(app).post(root+path).set(auth).set('Idempotency-Key','email-ownership-test').send({quoteId:quote.id}).expect(403);
+   expect(result.body.code).toBe('EMAIL_VERIFICATION_REQUIRED');
+  }
+  expect(provider.submitTopUp).not.toHaveBeenCalled();
+  expect((await request(app).get(root+'/mobile-topups/transactions').set(auth).expect(200)).body.transactions).toEqual([]);
+  await request(app).get(root+'/auth/me').set(auth).expect(200);
+  // Simulate the verification service committing proof of inbox ownership.
+  const saved=(await identities.customer(customer.user.id))!; saved.emailVerifiedAt=new Date();
+  await request(app).post(root+'/mobile-topups/transactions').set(auth).set('Idempotency-Key','email-ownership-test').send({quoteId:quote.id}).expect(201);
+  expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
+  saved.emailVerifiedAt=null;
+  await request(app).post(root+'/mobile-topups/transactions').set(auth).set('Idempotency-Key','email-ownership-test').send({quoteId:quote.id}).expect(403);
+  await request(app).get(root+'/mobile-topups/transactions').set(auth).expect(200);
+  expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
+ });
  it('ignores malformed unrelated cookie escapes without breaking native refresh', async () => {
   const {app}=setup();const customer=await signup(app);
   await request(app).post(root+'/auth/refresh').set('Cookie','unrelated=%E0%A4%A')

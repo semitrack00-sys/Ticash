@@ -114,6 +114,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       nickname = TextEditingController();
   RechargeJourney get j => widget.journey;
   String? uiError;
+  bool _openingCheckout = false;
   Timer? _previewTimer;
   int? _scheduledQuoteRevision;
 
@@ -263,13 +264,40 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     super.dispose();
   }
 
-  Future<void> openCheckout() async {
+  Future<void> openCheckout({bool recheck = true}) async {
+    if (_openingCheckout || !mounted) return;
+    setState(() {
+      _openingCheckout = true;
+      uiError = null;
+    });
     try {
-      await NativeActions.checkout(j.hosted!.url);
+      final uri = recheck ? await j.checkoutForContinuation() : j.hosted?.url;
+      if (!mounted || uri == null) return;
+      await NativeActions.checkout(uri);
     } catch (_) {
       if (mounted) setState(() => uiError = 'requestFailed');
+    } finally {
+      if (mounted) setState(() => _openingCheckout = false);
     }
   }
+
+  Widget continuePayment() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(context.ft('bankVerificationHelp')),
+      button(
+        _openingCheckout ? 'openingPayment' : 'openCheckout',
+        j.busy || _openingCheckout ? null : openCheckout,
+      ),
+      const SizedBox(height: 8),
+      Text(context.ft('paymentReturnHelp')),
+    ],
+  );
+
+  Widget refreshPayment() => TextButton(
+    onPressed: j.busy || _openingCheckout ? null : j.refresh,
+    child: Text(context.ft('refresh')),
+  );
 
   Widget card(List<Widget> children) => Card(
     child: Padding(
@@ -766,6 +794,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
             : (v) => j.confirmReview(v ?? false),
         title: Text(context.ft('reviewCheck')),
       ),
+      if (j.payments?.mode != CheckoutMode.mock)
+        Text(context.ft('bankVerificationHelp')),
       button(
         j.payments?.mode == CheckoutMode.mock
             ? 'mockPay'
@@ -775,7 +805,7 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         j.canPay
             ? () async {
                 await j.pay();
-                if (j.hosted != null) await openCheckout();
+                if (j.hosted != null) await openCheckout(recheck: false);
               }
             : null,
       ),
@@ -793,15 +823,17 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
       context.ft('pendingPayment'),
       style: Theme.of(context).textTheme.headlineSmall,
     ),
-    Text(context.ft('pendingRecoveryHelp')),
-    if (j.hosted != null) button('openCheckout', j.busy ? null : openCheckout),
+    if (j.canContinueCheckout)
+      continuePayment()
+    else
+      Text(context.ft('pendingRecoveryHelp')),
     if (j.hosted == null && j.result == null)
       button('retrySame', j.busy ? null : j.retryPayment),
-    button('refresh', j.busy ? null : j.refresh),
+    refreshPayment(),
     if (!widget.returnOnly && j.canCancel)
       button(
         'cancelPending',
-        j.busy
+        j.busy || _openingCheckout
             ? null
             : () async {
                 await j.cancelPending();
@@ -842,12 +874,14 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     };
     return card([
       Text(
-        (d['reviewRequired'] == true || d['failureCode'] == 'FRAUD_REVIEW_REQUIRED')
+        (d['reviewRequired'] == true ||
+                d['failureCode'] == 'FRAUD_REVIEW_REQUIRED')
             ? context.ft('paymentUnderReview')
             : context.ft(state),
         style: Theme.of(context).textTheme.headlineSmall,
       ),
-      if (d['reviewRequired'] == true || d['failureCode'] == 'FRAUD_REVIEW_REQUIRED')
+      if (d['reviewRequired'] == true ||
+          d['failureCode'] == 'FRAUD_REVIEW_REQUIRED')
         Text(context.ft('paymentUnderReviewHelp')),
       if (d['countryCode'] is String)
         Row(
@@ -961,9 +995,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
         ],
       ],
       if (!r.terminal) Text(context.ft('pendingNotice')),
-      if (!historical) button('refresh', j.busy ? null : j.refresh),
-      if (!historical && !r.terminal && j.hosted != null)
-        button('openCheckout', j.busy ? null : openCheckout),
+      if (!historical && !r.terminal && j.canContinueCheckout)
+        continuePayment(),
+      if (!historical) refreshPayment(),
       if (historical && r.terminal && r.id != null)
         TextButton.icon(
           key: ValueKey('receipt-delete-${r.id}'),

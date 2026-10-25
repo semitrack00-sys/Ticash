@@ -161,6 +161,35 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   expect(cancellation.status).toBe(409);
   expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
  });
+ it('recovers a lost purchase response by the authenticated owner and original key without another purchase',async()=>{
+  const {app,identities,provider}=setup();const a=await signup(app),b=await signup(app,'b');const ah=headers(a.accessToken);
+  const quote=(await request(app).post(root+'/mobile-topups/quotes').set(ah).send(quoteInput).expect(201)).body.quote;
+  const key='lost-response-recovery-key';
+  const order=(await request(app).post(root+'/mobile-topups/transactions').set(ah).set('Idempotency-Key',key).send({quoteId:quote.id}).expect(201)).body.transaction;
+  await identities.update(a.user.id,{rechargeRestricted:true});
+  const endpoint=root+'/mobile-topups/payment-attempt-status';
+  const recovered=await request(app).post(endpoint).set(ah).send({idempotencyKey:key,quoteId:quote.id}).expect(200);
+  expect(recovered.body.transaction.id).toBe(order.id);
+  expect(recovered.headers['cache-control']).toBe('no-store');
+  const other=await request(app).post(endpoint).set(headers(b.accessToken)).send({idempotencyKey:key,quoteId:quote.id}).expect(200);
+  expect(other.body.transaction).toBeNull();
+  const mismatch=await request(app).post(endpoint).set(ah).send({idempotencyKey:key,quoteId:'00000000-0000-4000-8000-000000000001'}).expect(409);
+  expect(mismatch.body.code).toBe('IDEMPOTENCY_CONFLICT');
+  await request(app).post(endpoint).send({idempotencyKey:key,quoteId:quote.id}).expect(401);
+  expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
+ });
+ it('does not create a reservation, consume a quote or submit a payment when an attempt lookup is absent',async()=>{
+  const {app,recharge,provider}=setup();const a=await signup(app);const ah=headers(a.accessToken);
+  const quote=(await request(app).post(root+'/mobile-topups/quotes').set(ah).send(quoteInput).expect(201)).body.quote;
+  const endpoint=root+'/mobile-topups/payment-attempt-status';
+  const absent=await request(app).post(endpoint).set(ah).send({idempotencyKey:'never-submitted-key',quoteId:quote.id}).expect(200);
+  expect(absent.body.transaction).toBeNull();
+  expect((await recharge.getQuote(flupFlapOwner(a.user.id),quote.id))?.consumedAt).toBeUndefined();
+  expect(await recharge.listTransactions(flupFlapOwner(a.user.id))).toEqual([]);
+  expect(provider.submitTopUp).not.toHaveBeenCalled();
+  await request(app).post(endpoint).set(ah).send({idempotencyKey:'short',quoteId:quote.id}).expect(400);
+  await request(app).post(endpoint).set(ah).send({idempotencyKey:'never-submitted-key',quoteId:quote.id,userId:btoa('other')}).expect(400);
+ });
  it('staff permissions protect the dedicated admin without mixing customer domains',async()=>{
   const {app}=setup();const flup=await signup(app);
   await request(app).get('/api/admin/flupflap/customers').set(headers(flup.accessToken)).expect(401);

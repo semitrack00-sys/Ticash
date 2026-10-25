@@ -77,6 +77,14 @@ export function createMobileTopUpRouter(options: {
   const protectedRoute = [options.authenticate, options.requireFundingAllowed];
   const recoveryRoute = options.allowRestrictedRecovery ? [options.authenticate] : protectedRoute;
 
+  // A lost create response must be recoverable without another purchase or
+  // knowing its transaction UUID. The owner comes only from authentication.
+  if (options.allowRestrictedRecovery) router.post('/payment-attempt-status', checkoutResumeLimit, ...recoveryRoute, asyncRoute(async (req, res) => {
+    const input = z.object({ idempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,200}$/), quoteId: z.uuid() }).strict().parse(req.body);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ transaction: await options.service.getPaymentAttempt(req.userId!, input.idempotencyKey, input.quoteId) });
+  }));
+
   router.post('/checkout-resume', checkoutResumeLimit, asyncRoute(async (req, res) => {
     const { resumeToken } = checkoutResumeSchema.parse(req.body);
     res.json({ transaction: await options.service.resumeCheckout(resumeToken) });

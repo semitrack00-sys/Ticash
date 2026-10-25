@@ -55,6 +55,10 @@ class ParityAdapter implements HttpClientAdapter {
   String responseTransactionId = txnId;
   String? cancelCode, failureCode;
   bool failStatus = false, failHistory = false;
+  bool attemptFound = false;
+  String? paymentErrorCode;
+  Map<String, dynamic>? attemptResponse;
+  Future<void>? paymentGate;
   List<Map<String, dynamic>>? historyRows;
   final transactionById = <String, Map<String, dynamic>>{};
   Future<void>? statusGate;
@@ -97,6 +101,7 @@ class ParityAdapter implements HttpClientAdapter {
   ];
   Map<String, dynamic> get transaction => {
     'id': responseTransactionId,
+    'quoteId': quoteId,
     'countryCode': 'HT',
     'recipientPhone': '+50937000000',
     'operatorName': 'Catalog carrier',
@@ -182,7 +187,15 @@ class ParityAdapter implements HttpClientAdapter {
     } else if (o.path.endsWith('/quotes') || o.path.endsWith('/repeat')) {
       quoteCount++;
       data = {'quote': quote(o.data is Map ? o.data as Map : {})};
+    } else if (o.path.endsWith('/payment-attempt-status')) {
+      await statusGate;
+      data = attemptResponse ?? {'transaction': attemptFound ? transaction : null};
     } else if (o.path.endsWith('/payment-sessions')) {
+      await paymentGate;
+      if (paymentErrorCode != null) {
+        return ResponseBody.fromString(jsonEncode({'code': paymentErrorCode}), 403,
+          headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+      }
       if (failPayment) {
         throw DioException(
           requestOptions: o,

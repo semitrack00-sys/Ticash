@@ -822,14 +822,14 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
     if (j.error == 'emailVerificationRequired' || j.error == 'rechargeRestricted')
       TextButton(onPressed:()=>context.go('/account'),child:Text(context.ft('openAccount'))),
     Text(
-      context.ft('pendingPayment'),
+      context.ft(j.hosted == null && j.result == null ? 'paymentStatusUnknown' : 'pendingPayment'),
       style: Theme.of(context).textTheme.headlineSmall,
     ),
     if (j.canContinueCheckout)
       continuePayment()
     else
-      Text(context.ft('pendingRecoveryHelp')),
-    if (j.hosted == null && j.result == null)
+      Text(context.ft(j.hosted == null && j.result == null ? 'paymentUnknownHelp' : 'pendingRecoveryHelp')),
+    if (j.hosted == null && j.result == null && j.canRetryPayment)
       button('retrySame', j.busy ? null : j.retryPayment),
     refreshPayment(),
     if (!widget.returnOnly && j.canCancel)
@@ -1132,6 +1132,9 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                       semanticsLabel: context.ft(j.error ?? uiError!),
                     ),
                   ),
+                if ((j.error == 'emailVerificationRequired' || j.error == 'rechargeRestricted') &&
+                    j.step != RechargeStep.payment && j.step != RechargeStep.recovery)
+                  TextButton(onPressed: () => context.go('/account'), child: Text(context.ft('openAccount'))),
                 if (j.notice != null &&
                     !(j.notice == 'promotionApplied' &&
                         j.step == RechargeStep.product))

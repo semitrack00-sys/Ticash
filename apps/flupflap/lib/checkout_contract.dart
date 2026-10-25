@@ -385,6 +385,29 @@ class FlupFlapClient {
       )['transaction'],
     ),
   );
+  Future<RechargeResult?> paymentAttemptStatus(
+    String key,
+    String quoteId,
+  ) async {
+    final data = object(
+      (await dio.post(
+        '$base/payment-attempt-status',
+        data: {'idempotencyKey': key, 'quoteId': quoteId},
+      )).data,
+    );
+    if (!data.containsKey('transaction')) {
+      throw const FormatException('Missing payment attempt status');
+    }
+    if (data['transaction'] == null) return null;
+    final result = RechargeResult(object(data['transaction']));
+    if (result.id == null ||
+        !_uuid.hasMatch(result.id!) ||
+        result.data['quoteId'] != quoteId) {
+      throw const FormatException('Payment attempt binding mismatch');
+    }
+    return result;
+  }
+
   Future<RechargeResult> cancelTransaction(
     String id, {
     bool onlyIfAbandoned = false,

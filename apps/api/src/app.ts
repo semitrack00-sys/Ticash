@@ -1241,6 +1241,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.get(['/api/health', '/api/v1/health'], (_req, res) => {
     res.json({
       status: 'healthy',
+      buildRevision: /^[a-f0-9]{40}$/.test(process.env.RENDER_GIT_COMMIT ?? '') ? process.env.RENDER_GIT_COMMIT : undefined,
       mode: databaseEnabled ? 'postgresql' : 'memory',
       payments: 'mock',
       funding: fundingService.availability(),

@@ -1,3 +1,4 @@
+import { paymentAttemptReviewReason } from '../topup/payment-attempt-controls.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import type { RequestHandler } from 'express';
@@ -17,6 +18,8 @@ export async function checkRechargeDevice(db: PrismaClient, customerId: string, 
     }, select: { id: true } }) : null;
     // Do not retain rejected new associations: they cannot exhaust the limit for others.
     if (restricted || linked.length >= 2) return restricted ? 'DEVICE_RESTRICTED_LINK' : 'DEVICE_ACCOUNT_LIMIT';
+    const attemptReason = await paymentAttemptReviewReason(tx, customerId, new Date(), undefined, linked.map(row => row.customerId));
+    if (attemptReason) return attemptReason;
     await tx.flupFlapDevice.upsert({ where: { deviceHash_customerId: { deviceHash, customerId } },
       create: { deviceHash, customerId }, update: { lastSeenAt: new Date() } });
     return undefined;

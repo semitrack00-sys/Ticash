@@ -1,3 +1,4 @@
+import { paymentAttemptReviewReason } from './payment-attempt-controls.js';
 import { MobileTopUpError } from './types.js';
 import type { PrismaClient } from '@prisma/client';
 import { createHash } from 'node:crypto';
@@ -39,7 +40,14 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
       const restrictedLink = linked.length > 0 && await tx.flupFlapCustomer.findFirst({ where: {
         id: { in: linked.map(r => r.customerId) }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
       }, select: { id: true } });
-      const reason = paymentReviewReason(evidence) ?? (restrictedLink ? 'LINKED_ACCOUNT_REVIEW' : undefined) ??
+      const attemptReason = await paymentAttemptReviewReason(tx, customerId, new Date(), fingerprint ?? undefined, [], true);
+      const recipientOrders = record.recipientPhone ? await tx.mobileTopUpTransaction.findMany({ where: {
+        recipientPhone: record.recipientPhone, testMode: false, flupFlapCustomerId: { not: null },
+        id: { not: record.id }, createdAt: { gte: new Date(Date.now() - 3600000) },
+      }, select: { flupFlapCustomerId: true } }) : [];
+      const recipientBuyers = new Set([customerId, ...recipientOrders.map(r => r.flupFlapCustomerId!)]);
+      const reason = paymentReviewReason(evidence) ?? attemptReason ??
+        (!reviewed && recipientBuyers.size >= 3 ? 'SHARED_RECIPIENT_REVIEW' : undefined) ?? (restrictedLink ? 'LINKED_ACCOUNT_REVIEW' : undefined) ??
         (!reviewed && linked.length > 0 ? 'SHARED_CARD_REVIEW' : undefined) ??
         (!reviewed && cards.size > 2 ? 'CARD_SWITCHING_REVIEW' : undefined);
       const data = { customerId, fingerprint, chargeId: evidence.chargeId, risk: evidence.risk,
@@ -64,6 +72,8 @@ export async function approveRechargeReview(db: PrismaClient, stripe: StripeHost
   await db.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM "FlupFlapCustomer" WHERE id = ${customerId} FOR UPDATE`;
     const customer = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
+    const attemptReason = await paymentAttemptReviewReason(tx, customerId, new Date(), fingerprint, [], true);
+    if (attemptReason) throw new MobileTopUpError('FRAUD_REVIEW_NOT_CLEAR', 'Payment attempt limits do not permit release.', 409);
     const current = await tx.mobileTopUpTransaction.findUnique({ where: { id: record.id } });
     if (!customer || customer.status !== 'ACTIVE' || customer.guestExpiresAt || customer.rechargeRestricted ||
         !current || current.flupFlapCustomerId !== customerId || current.status !== 'PENDING' || current.paymentStatus !== 'CAPTURED' ||

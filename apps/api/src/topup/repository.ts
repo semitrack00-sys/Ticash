@@ -1,9 +1,11 @@
+import { paymentAttemptReviewReason } from './payment-attempt-controls.js';
+import type { VerifiedStripeEvent } from './stripe-webhook.js';
 import { assertPurchaseLimits } from './fraud-policy.js';
 import type { ReceiverQuote } from './receiver-value.js';
 import { notificationFor, retryableNotification, type ReceiverNotification, type ReceiverNotificationStore } from './receiver-notification.js';
 import { ownerData, ownerWhere, ownerFromDb, recipientOwnerKey, transactionOwnerKey } from '../flupflap/owner.js';
 import { decodeOperatorId } from './provider-identity.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { marketingEnabled, sandboxBenefitsEnabled } from '../flupflap/marketing.js';
 import { reconcilePromotion, reserveQuotePromotion } from '../flupflap/marketing-recharge.js';
 import { Prisma, type PrismaClient } from '@prisma/client';
@@ -113,7 +115,8 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment): Promise<MobileTopUpTransactionRecord[]>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
-  registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string): Promise<boolean>;
+  registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string, attempt?: VerifiedStripeEvent['attempt']): Promise<boolean>;
+  paymentAttemptReviewReason?(customerId: string): Promise<string | undefined>;
   completePaymentEvent(eventId: string): Promise<void>;
   getTransactionByIdempotency(userId: string, key: string): Promise<MobileTopUpTransactionRecord | undefined>;
   getTransaction(userId: string, id: string): Promise<MobileTopUpTransactionRecord | undefined>;
@@ -581,13 +584,32 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     return marketingEnabled() ? this.prisma.$transaction(transition) : transition(this.prisma);
   }
 
-  async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
+  async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string, attempt?: VerifiedStripeEvent['attempt']) {
+    const key = { provider_eventId: { provider: 'STRIPE' as const, eventId } };
     const record = await this.prisma.mobileTopUpPaymentEvent.upsert({
-      where: { provider_eventId: { provider: 'STRIPE', eventId } },
-      create: { provider: 'STRIPE', eventId, payloadHash, transactionId }, update: {},
+      where: key, create: { provider: 'STRIPE', eventId, payloadHash, transactionId }, update: {},
+    }).catch(async error => {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+      return this.prisma.mobileTopUpPaymentEvent.findUniqueOrThrow({ where: key });
     });
     assertSameEvent(record, payloadHash, transactionId);
+    if (attempt && !record.processedAt) {
+      const transaction = await this.prisma.mobileTopUpTransaction.findUnique({ where: { id: transactionId } });
+      if (transaction?.flupFlapCustomerId && !transaction.testMode) {
+        // One audit row per Stripe charge, even if Stripe sends multiple events.
+        // Both this write and event registration are idempotent across retries.
+        const id = 'stripe-attempt:' + createHash('sha256').update(transactionId + ':' + attempt.attemptId).digest('hex');
+        await this.prisma.auditLog.createMany({ skipDuplicates: true, data: {
+          id, flupFlapCustomerId: transaction.flupFlapCustomerId, action: 'FLUPFLAP_PAYMENT_ATTEMPT_FAILED',
+          entity: 'MobileTopUpTransaction', entityId: transactionId, createdAt: attempt.occurredAt,
+          metadata: { attemptId: attempt.attemptId, fingerprint: attempt.fingerprint ?? null },
+        } });
+      }
+    }
     return !record.processedAt;
+  }
+  async paymentAttemptReviewReason(customerId: string) {
+    return paymentAttemptReviewReason(this.prisma, customerId);
   }
   async completePaymentEvent(eventId: string) {
     await this.prisma.mobileTopUpPaymentEvent.update({ where: { provider_eventId: { provider: 'STRIPE', eventId } }, data: { processedAt: new Date() } });
@@ -684,6 +706,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           }
           const replay = await tx.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
           if (replay) return replay;
+          const attemptReason = await paymentAttemptReviewReason(tx, customerId);
+          if (attemptReason) throw new MobileTopUpError(attemptReason, 'Too many payment attempts. Try again later or contact support.', 429);
           // A new account must not reset limits for the same recipient. The
           // phone is normalized to E.164 before the quote is created. Serialize
           // this shared budget across customers and API workers.

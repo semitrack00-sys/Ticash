@@ -31,6 +31,7 @@ export interface VerifiedStripeEvent {
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required';
   failureReason?: 'INSUFFICIENT_FUNDS' | 'PAYMENT_DECLINED' | 'PAYMENT_CANCELLED' | 'PAYMENT_EXPIRED';
   payloadHash: string;
+  attempt?: { eventType: string; attemptId: string; fingerprint?: string; occurredAt: Date };
   amountMinor: number;
   currency: 'USD';
   type: StripeEventType;
@@ -66,6 +67,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
   const parsed = z.object({
     id: z.string().min(1).max(200),
     livemode: z.boolean(),
+    created: z.number().int().nonnegative().optional(),
     type: z.enum([
       'payment_intent.succeeded',
       'payment_intent.payment_failed',
@@ -87,7 +89,7 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
       currency: z.string().min(3).max(3).optional(),
       metadata: z.record(z.string(), z.string()).optional(),
       payment_intent: z.string().regex(/^pi_[A-Za-z0-9_]+$/).optional(),
-      last_payment_error: z.object({ decline_code: z.string().optional() }).passthrough().nullish(),
+      last_payment_error: z.object({ decline_code: z.string().optional(), charge: z.string().nullish(), payment_method: z.object({ card: z.object({ fingerprint: z.string().max(200).nullish() }).passthrough().nullish() }).passthrough().nullish() }).passthrough().nullish(),
       payment_status: z.enum(['paid', 'unpaid', 'no_payment_required']).optional(),
     }).passthrough() }).passthrough(),
   }).safeParse(body);
@@ -128,6 +130,12 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
     amountMinor,
     currency: 'USD',
     payloadHash: createHash('sha256').update(raw).digest('hex'),
+    ...(parsed.data.type === 'payment_intent.payment_failed' ? { attempt: {
+      eventType: parsed.data.type, attemptId: object.last_payment_error?.charge ?? parsed.data.id,
+      fingerprint: object.last_payment_error?.payment_method?.card?.fingerprint
+        ? createHash('sha256').update(object.last_payment_error.payment_method.card.fingerprint).digest('hex') : undefined,
+      occurredAt: new Date(Math.min(parsed.data.created ? parsed.data.created * 1000 : Date.now(), Date.now())),
+    } } : {}),
   };
 }
 

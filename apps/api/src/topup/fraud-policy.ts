@@ -15,7 +15,7 @@ export function assertPurchaseLimits(amount: number, history: PurchaseHistory[],
 export type PaymentEvidence = {
   chargeId: string; fingerprint?: string; risk: string; authentication?: string;
   cardNetwork?: string; responseEci?: string;
-  postalCodeCheck?: string; cvcCheck?: string;
+  postalCodeCheck?: string; cvcCheck?: string; streetCheck?: string;
   paymentType: string; review: boolean; disputed: boolean; refunded: boolean;
 };
 export function paymentReviewReason(e: PaymentEvidence): string | undefined {
@@ -25,6 +25,7 @@ export function paymentReviewReason(e: PaymentEvidence): string | undefined {
   // An issuer may authorize even when AVS/CVC fails. Normal risk and 3DS
   // authentication must never override missing, unavailable or non-passing verification.
   if (e.postalCodeCheck !== 'pass' || e.cvcCheck !== 'pass') return 'PAYMENT_CARD_CHECK_FAILED';
+  if (e.streetCheck === 'fail') return 'PAYMENT_STREET_CHECK_FAILED';
   if (!e.fingerprint || e.authentication !== 'authenticated') return 'PAYMENT_AUTHENTICATION_REVIEW';
   // Use the network response, not the provisional 3DS ECI. Authentication
   // can be downgraded during authorization. This is not a liability guarantee.

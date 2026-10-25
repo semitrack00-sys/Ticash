@@ -342,6 +342,23 @@ class FlupFlapClient {
     return HostedSession.parse(data, mode, moneyCents(quote.totalChargeUsd));
   }
 
+  Future<HostedSession> recoverCheckout(RechargeResult transaction) async {
+    final data = object((await dio.get(
+      '$base/transactions/${Uri.encodeComponent(transaction.id!)}/checkout',
+    )).data);
+    final session = HostedSession.parse(
+      data,
+      transaction.data['testMode'] == true
+          ? CheckoutMode.stripeSandbox
+          : CheckoutMode.stripeLive,
+      moneyCents(transaction.data['totalChargeUsd'] as num),
+    );
+    if (session.transactionId != transaction.id) {
+      throw const FormatException('Checkout transaction mismatch');
+    }
+    return session;
+  }
+
   Future<RechargeResult> resume(String token) async {
     if (!resumeTokenPattern.hasMatch(token)) {
       throw const FormatException('Invalid resume capability');

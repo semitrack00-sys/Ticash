@@ -321,6 +321,17 @@ class RechargeJourney extends ChangeNotifier {
       _transactionId = blocker.id;
       step = RechargeStep.recovery;
       error = recoveryError;
+      hosted = null;
+      if (blocker.id != null && blocker.status == 'PENDING' &&
+          ['SESSION_CREATED', 'PENDING'].contains(blocker.paymentStatus)) {
+        try {
+          final recovered = await client.recoverCheckout(blocker);
+          if (!_current(v)) return;
+          hosted = recovered;
+        } catch (_) {
+          // Keep status/cancellation available when checkout cannot be resumed.
+        }
+      }
       _schedule();
     } else if (hadRecovery) {
       _resetDestination();

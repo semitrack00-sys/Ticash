@@ -1488,6 +1488,30 @@ export class MobileTopUpService {
     return refresh ? this.refreshTransaction(record, !flupFlapCustomerId(userId)) : record;
   }
 
+  async recoverHostedCheckout(userId: string, id: string) {
+    const record = await this.getTransaction(userId, id);
+    this.assertTransactionEnvironment(record);
+    if (!this.stripeProvider || record.paymentProvider !== 'STRIPE' || !record.paymentSessionId ||
+        record.status !== 'PENDING' || !['SESSION_CREATED', 'PENDING'].includes(record.paymentStatus)) {
+      throw new MobileTopUpError('CHECKOUT_NOT_RESUMABLE', 'This payment cannot be reopened.', 409);
+    }
+    const state = await this.stripeProvider.getHostedCheckoutPaymentState(record.paymentSessionId);
+    if (state.status !== 'open' || state.paymentStatus !== 'unpaid') {
+      throw new MobileTopUpError('CHECKOUT_NOT_RESUMABLE', 'This checkout is no longer open.', 409);
+    }
+    const session = await this.stripeProvider.getHostedCheckoutSession(record.paymentSessionId);
+    const current = await this.getTransaction(userId, id);
+    if (current.paymentSessionId !== record.paymentSessionId || current.status !== 'PENDING' ||
+        !['SESSION_CREATED', 'PENDING'].includes(current.paymentStatus)) {
+      throw new MobileTopUpError('CHECKOUT_NOT_RESUMABLE', 'This payment changed. Refresh its status.', 409);
+    }
+    return {
+      ...this.stripeProvider.flowContract(current.id, session),
+      amountMinor: usdMinorUnits(current.totalChargeUsd), currency: 'USD',
+      paymentStatus: 'SESSION_CREATED',
+    };
+  }
+
   async reconcilePendingTransactions(limit = 25) {
     this.assertEnabled();
     const staleBefore = new Date(this.clock().getTime() - 15_000).toISOString();

@@ -190,6 +190,8 @@ class ParityAdapter implements HttpClientAdapter {
         );
       }
       data = {...session(), 'transactionId': responseTransactionId};
+    } else if (o.path.endsWith('/checkout')) {
+      data = session();
     } else if (o.path.endsWith('/checkout-resume')) {
       await statusGate;
       data = {'transaction': transaction};
@@ -705,6 +707,19 @@ void main() {
       },
     );
   }
+  test('startup recovery restores existing unpaid checkout', () async {
+    final (a, _, j) = fixture();
+    a.pendingHistory = true;
+    a.transactionStatus = 'PENDING';
+    a.paymentStatus = 'SESSION_CREATED';
+    await j.initialize();
+    expect(j.locked, true);
+    expect(j.hosted?.transactionId, txnId);
+    expect(j.hosted?.id, 'cs_test_fixture');
+    expect(a.requests.where((r) => r.path.endsWith('/payment-sessions')), isEmpty);
+    j.dispose();
+  });
+
   test(
     'Recharge entry rechecks history and clears a newly discovered orphan',
     () async {

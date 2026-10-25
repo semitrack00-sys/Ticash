@@ -187,6 +187,12 @@ export function createMobileTopUpRouter(options: {
     res.json({ transaction: await options.service.getTransaction(req.userId!, id, req.query.refresh === 'true') });
   }));
 
+  router.get('/transactions/:id/checkout', ...protectedRoute, asyncRoute(async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await options.service.recoverHostedCheckout(req.userId!, id));
+  }));
+
   router.post('/transactions/:id/cancel', ...protectedRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
     res.json({ transaction: await options.service.cancelTransaction(req.userId!, id) });

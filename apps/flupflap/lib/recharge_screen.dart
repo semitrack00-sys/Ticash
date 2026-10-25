@@ -14,6 +14,7 @@ import 'native_actions.dart';
 import 'parity_strings.dart';
 import 'phone_country_field.dart';
 import 'recharge_journey.dart';
+import 'purchase_access_notice.dart';
 
 export 'country_flag.dart';
 
@@ -1132,6 +1133,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
                       semanticsLabel: context.ft(j.error ?? uiError!),
                     ),
                   ),
+                if (const ['rechargeLimitReached', 'paymentAttemptLimit', 'paymentCardLimit', 'rechargeRestricted', 'deviceRestricted', 'deviceAccountLimit'].contains(j.error))
+                  PurchaseAccessNotice(info: j.purchaseAccess),
                 if ((j.error == 'emailVerificationRequired' || j.error == 'rechargeRestricted') &&
                     j.step != RechargeStep.payment && j.step != RechargeStep.recovery)
                   TextButton(onPressed: () => context.go('/account'), child: Text(context.ft('openAccount'))),

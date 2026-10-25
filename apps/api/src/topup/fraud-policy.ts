@@ -3,16 +3,35 @@ import { MobileTopUpError } from './types.js';
 export type PurchaseHistory = { createdAt: string; totalChargeUsd: number; paymentStatus: string; attemptExempt?: boolean };
 /** Count all reservations, including failed and hidden orders, to resist retries. */
 export function assertPurchaseLimits(amount: number, history: PurchaseHistory[], now: Date, newAccount: boolean) {
-  const day = history.filter(r => Date.parse(r.createdAt) >= now.getTime() - 86400000);
+  const blocked = (at: number) => {
+  const day = history.filter(r => Date.parse(r.createdAt) >= at - 86400000);
   const attempts = day.filter(r => !r.attemptExempt);
-  const hour = attempts.filter(r => Date.parse(r.createdAt) >= now.getTime() - 3600000);
+  const hour = attempts.filter(r => Date.parse(r.createdAt) >= at - 3600000);
   // Account age no longer lowers monetary limits; retain the argument for callers.
   void newAccount;
   const limit = 200;
-  if (amount > 100 || day.reduce((n, r) => n + Math.round(r.totalChargeUsd * 100), 0) + Math.round(amount * 100) > limit * 100 ||
-      hour.length >= 3 || attempts.length >= 10 || hour.filter(r => r.paymentStatus === 'FAILED').length >= 3) {
-    throw new MobileTopUpError('RECHARGE_LIMIT_REACHED', 'Purchase limit reached. Try again later or contact support.', 429);
+  return amount > 100 || day.reduce((n, r) => n + Math.round(r.totalChargeUsd * 100), 0) + Math.round(amount * 100) > limit * 100 ||
+      hour.length >= 3 || attempts.length >= 10 || hour.filter(r => r.paymentStatus === 'FAILED').length >= 3;
+  };
+  if (blocked(now.getTime())) {
+    const retryAt = amount > 100 ? undefined : [...new Set(history.flatMap(r => [3600000,86400000].map(window => Date.parse(r.createdAt)+window+1)))].sort((a,b)=>a-b)
+      .find(at=>at>now.getTime()&&!blocked(at));
+    throw new MobileTopUpError('RECHARGE_LIMIT_REACHED', 'Purchase limit reached. Try again later or contact support.', 429,
+      retryAt===undefined ? {mode:'CHANGE_AMOUNT',serverTime:now.toISOString()} : temporaryPurchaseAccess(retryAt,now));
   }
+}
+
+export function temporaryPurchaseAccess(retryAt:number,now:Date) {
+  return {mode:'TEMPORARY_LIMIT' as const,serverTime:now.toISOString(),retryAt:new Date(retryAt).toISOString(),retryAfterSeconds:Math.max(0,Math.ceil((retryAt-now.getTime())/1000))};
+}
+
+/** Report the latest applicable reset, not just whichever gate ran first. */
+export function throwPurchaseBlocks(blocks: MobileTopUpError[], now:Date) {
+  if(!blocks.length)return;
+  const permanent=blocks.find(b=>b.purchaseAccess?.mode==='CHANGE_AMOUNT');
+  const first=permanent??blocks[0]!;
+  const retryAt=Math.max(...blocks.map(b=>Date.parse(b.purchaseAccess?.retryAt??'')).filter(Number.isFinite));
+  throw new MobileTopUpError(first.code,first.message,first.statusCode,permanent?.purchaseAccess??(Number.isFinite(retryAt)?temporaryPurchaseAccess(retryAt,now):first.purchaseAccess));
 }
 
 export type PaymentEvidence = {

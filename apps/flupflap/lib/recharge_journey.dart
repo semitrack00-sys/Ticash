@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:ticash_recharge_core/models/mobile_top_up.dart';
 
 import 'checkout_contract.dart';
+import 'purchase_access.dart';
 
 enum RechargeStep { destination, product, review, payment, recovery, result }
 
@@ -42,6 +43,7 @@ class RechargeJourney extends ChangeNotifier {
   List<RechargeResult> history = [];
   List<RecurringRechargeSchedule> recurringSchedules = [];
   String? country, billingCountry, recipientId, error, notice;
+  PurchaseAccessInfo? purchaseAccess;
   String phone = '', amount = '', nickname = '';
   int? recurringIntervalDays;
   bool internet = false;
@@ -197,6 +199,7 @@ class RechargeJourney extends ChangeNotifier {
   String safeError(Object e) {
     final data = e is DioException ? e.response?.data : null;
     final code = data is Map ? data['code'] : null;
+    purchaseAccess = data is Map ? PurchaseAccessInfo.parse(data['purchaseAccess']) : null;
     return switch (code) {
       'TOPUP_QUOTE_EXPIRED' ||
       'TOPUP_QUOTE_ALREADY_USED' ||

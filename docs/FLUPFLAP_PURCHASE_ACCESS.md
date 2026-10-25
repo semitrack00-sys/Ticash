@@ -1,0 +1,11 @@
+# Purchase access estimates
+
+For a rejected new recharge purchase, the API includes `purchaseAccess` alongside the existing error code. Temporary limits return server UTC `serverTime`, UTC `retryAt` and rounded-up `retryAfterSeconds`, plus the standard `Retry-After` response header. Counts, card evidence, device associations and other customers' identities are not exposed.
+
+Reservation estimates simulate every hour/day expiry and choose the first instant at which the requested total (including fees) passes all active customer and recipient budgets. Failed/cancelled and hidden reservations still count. Audited failed-attempt exemptions only affect attempt counts, never spending. Existing inclusive rolling boundaries remain inclusive; reset is the first millisecond after expiry. Signed failure cooldowns and distinct-card evidence use their existing independent windows. Where several reservation/card limits are present, the latest applicable reset is reported. Device-account limits use their existing 30-day association window.
+
+The app displays the date and time in the device's local timezone with an explicit UTC offset and a running HH:MM:SS countdown. Countdown duration is based on the server clock and elapsed time, avoiding reliance on a correctly set device clock. Expiry invites the customer to retry; it never creates a payment or promises authorization. Estimates apply to airtime and internet bundles, depend on the requested amount and current activity, and can change if additional activity or account reviews occur. The server always rechecks access.
+
+Purchases above the permanent per-order cap return `CHANGE_AMOUNT`, not a fake timer. Restrictions requiring staff review display the support-review message without an invented unlock date. Existing CVC/ZIP checks, issuer authentication, fraud holds, payment reconciliation and idempotency remain enforced. No scheduled task clears restrictions.
+
+Validation covers hourly/day boundaries, sufficient spend expiry, reset-exempt failed attempts, combined gates, signed failure cooldown expiry, malformed timestamps, local date/time display, manual holds and the absence of automatic payment submission. The UI ships through a new Android release; the backend response is compatible with older clients.

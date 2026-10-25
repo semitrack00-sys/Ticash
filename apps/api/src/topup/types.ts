@@ -307,11 +307,13 @@ export type TransactionUpdate = Partial<Pick<MobileTopUpTransactionRecord,
   'paymentSessionId' | 'paymentProviderTransactionId' | 'paymentRecoveryCode' |
     'checkoutResumeTokenHash' | 'checkoutResumeTokenExpiresAt' | 'recurringIntervalDays'>>;
 
+export type PurchaseAccess = { mode: 'TEMPORARY_LIMIT' | 'CHANGE_AMOUNT' | 'ADMIN_REVIEW'; serverTime: string; retryAt?: string; retryAfterSeconds?: number };
 export class MobileTopUpError extends Error {
   constructor(
     public readonly code: string,
     message: string,
     public readonly statusCode: number,
+    public readonly purchaseAccess?: PurchaseAccess,
   ) {
     super(message);
   }

@@ -28,13 +28,20 @@ describe('recharge purchase limits', () => {
   });
 });
 describe('payment risk decision', () => {
-  it('holds pre-existing paid sessions with unverified email before Stripe or supplier access', async () => {
+  it('allows an unverified email through fulfillment while retaining independent card checks', async () => {
     const customer={status:'ACTIVE',email:'buyer@example.test',emailVerifiedAt:null};
-    const db={flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue(customer)}};
-    const stripe={fraudEvidence:vi.fn()};
-    const gate=createRechargeFraudGate(db as never,stripe as never,true);
-    expect(await gate({userId:'flupflap:buyer',paymentProvider:'STRIPE'} as never)).toBe('EMAIL_VERIFICATION_REQUIRED');
-    expect(stripe.fraudEvidence).not.toHaveBeenCalled();
+    const tx={ $queryRaw:vi.fn(), flupFlapDevice:{findMany:vi.fn().mockResolvedValue([])},
+      auditLog:{findMany:vi.fn().mockResolvedValue([])},
+      flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue(customer)},
+      rechargeFraudAssessment:{findUnique:vi.fn().mockResolvedValue(null),findMany:vi.fn().mockResolvedValue([]),upsert:vi.fn()} };
+    const db={...tx,$transaction:async(fn:(t:typeof tx)=>unknown)=>fn(tx)};
+    const stripe={fraudEvidence:vi.fn().mockResolvedValue(safe)};
+    const gate=createRechargeFraudGate(db as never,stripe as never);
+    const record={id:'tx',userId:'flupflap:buyer',paymentProvider:'STRIPE'} as never;
+    expect(await gate(record)).toBeUndefined();
+    stripe.fraudEvidence.mockResolvedValue({...safe,cvcCheck:'fail'});
+    expect(await gate(record)).toBe('PAYMENT_CARD_CHECK_FAILED');
+    expect(customer.emailVerifiedAt).toBeNull();
   });
   it('allows authenticated normal-risk cards', () => expect(paymentReviewReason(safe)).toBeUndefined());
   it.each([undefined, 'exempted', 'not_supported'])('allows automatic 3DS outcome %s only with the other checks passing', authentication => {

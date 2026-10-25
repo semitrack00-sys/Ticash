@@ -18,7 +18,19 @@ describe('recharge purchase limits', () => {
   });
 });
 describe('payment risk decision', () => {
-  it('allows only authenticated normal-risk cards', () => expect(paymentReviewReason(safe)).toBeUndefined());
+  it('allows authenticated normal-risk cards', () => expect(paymentReviewReason(safe)).toBeUndefined());
+  it.each([undefined, 'exempted', 'not_supported'])('allows automatic 3DS outcome %s only with the other checks passing', authentication => {
+    const evidence = {...safe, authentication, cardNetwork:'visa', responseEci:'07'};
+    expect(paymentReviewReason(evidence)).toBeUndefined();
+    expect(paymentReviewReason({...evidence, cvcCheck:'fail'})).toBe('PAYMENT_CARD_CHECK_FAILED');
+    expect(paymentReviewReason({...evidence, postalCodeCheck:undefined})).toBe('PAYMENT_CARD_CHECK_FAILED');
+    expect(paymentReviewReason({...evidence, risk:'elevated'})).toBe('PAYMENT_RISK_REVIEW');
+    expect(paymentReviewReason({...evidence, review:true})).toBe('PAYMENT_RISK_REVIEW');
+    expect(paymentReviewReason({...evidence, fingerprint:undefined})).toBe('PAYMENT_AUTHENTICATION_REVIEW');
+  });
+  it.each(['failed', 'processing', 'attempt_acknowledged', 'unknown', ''])('holds explicit incomplete or failed 3DS outcome %s', authentication => {
+    expect(paymentReviewReason({...safe, authentication})).toBe('PAYMENT_AUTHENTICATION_REVIEW');
+  });
   it.each([{postalCodeCheck:'fail'}, {cvcCheck:'fail'}, {postalCodeCheck:'fail', cvcCheck:'fail'}])('holds failed issuer checks despite authenticated normal risk %j', patch => {
     expect(paymentReviewReason({...safe, ...patch})).toBe('PAYMENT_CARD_CHECK_FAILED');
   });

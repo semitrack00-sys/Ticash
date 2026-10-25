@@ -28,11 +28,12 @@ class _AccountSecurityCardState extends State<AccountSecurityCard> {
     try {
       final r = await widget.session.dio.get('/flupflap/auth/security');
       final s = await widget.session.dio.get('/flupflap/auth/sessions');
-      if (mounted)
+      if (mounted) {
         setState(() {
           available = r.data['enabled'] == true;
           sessions = s.data['sessions'] as List<dynamic>;
         });
+      }
     } catch (_) {
       /* Account access remains available when a server is older. */
     }

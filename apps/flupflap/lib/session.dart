@@ -12,15 +12,17 @@ abstract interface class SessionStorage {
 }
 
 class SecureSessionStorage implements SessionStorage {
-  SecureSessionStorage({this.key = 'flupflap.refresh.v1'});
+  SecureSessionStorage({this.storageKey = key});
   final FlutterSecureStorage storage = const FlutterSecureStorage();
-  final String key;
+  static const key = 'flupflap.refresh.v1';
+  final String storageKey;
   @override
-  Future<String?> read() => storage.read(key: key);
+  Future<String?> read() => storage.read(key: storageKey);
   @override
-  Future<void> write(String value) => storage.write(key: key, value: value);
+  Future<void> write(String value) =>
+      storage.write(key: storageKey, value: value);
   @override
-  Future<void> clear() => storage.delete(key: key);
+  Future<void> clear() => storage.delete(key: storageKey);
 }
 
 /// Browser credentials are memory-only, matching the existing FlupFlap website.
@@ -100,10 +102,15 @@ class FlupFlapSession extends ChangeNotifier {
             options.headers.remove(key);
           }
           if (options.path.startsWith('/flupflap/auth/login')) {
-            final trusted =
-                _trustedDeviceToken ?? await trustedDeviceStorage?.read();
-            if (trusted != null)
+            String? trusted = _trustedDeviceToken;
+            try {
+              trusted ??= await trustedDeviceStorage?.read();
+            } catch (_) {
+              /* Require inbox proof if device storage is unavailable. */
+            }
+            if (trusted != null) {
               options.headers['X-FlupFlap-Trusted-Device'] = trusted;
+            }
           }
           if (deviceIdProvider != null) {
             try {
@@ -250,8 +257,9 @@ class FlupFlapSession extends ChangeNotifier {
   }
 
   Future<void> confirmLogin(String code) async {
-    if (loginChallengeId == null || loginEmail == null)
+    if (loginChallengeId == null || loginEmail == null) {
       throw StateError('Sign in again');
+    }
     await _authenticate('login/confirm', {
       'email': loginEmail,
       'challengeId': loginChallengeId,
@@ -356,14 +364,16 @@ class FlupFlapSession extends ChangeNotifier {
   }
 
   Future<String> deleteAccount(String password) async {
-    if (!authenticated || guest)
+    if (!authenticated || guest) {
       throw StateError('Registered account required');
+    }
     final epoch = _epoch;
     // Refresh is not password verification. The server separately verifies the
     // supplied password and binds deletion to this authenticated customer only.
     await refresh();
-    if (epoch != _epoch || !authenticated || guest)
+    if (epoch != _epoch || !authenticated || guest) {
       throw StateError('Session changed');
+    }
     final response = await dio.post(
       '/flupflap/auth/account-deletion',
       data: {'password': password, 'confirm': 'DELETE_ACCOUNT'},

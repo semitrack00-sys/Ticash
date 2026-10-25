@@ -34,11 +34,12 @@ class _AdminSecurityGateState extends State<AdminSecurityGate> {
         step = enabled ? 3 : 0;
       });
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => message =
               'Security setup is unavailable. Contact the account owner.',
         );
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -88,8 +89,9 @@ class _AdminSecurityGateState extends State<AdminSecurityGate> {
         });
       } else {
         final proof = r.data['proof'];
-        if (proof is! String)
+        if (proof is! String) {
           throw const FormatException('Invalid security response');
+        }
         client.options.headers['X-Admin-MFA'] = proof;
         password.clear();
         code.clear();
@@ -104,10 +106,11 @@ class _AdminSecurityGateState extends State<AdminSecurityGate> {
         }
       }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => message = 'Verification failed or expired. Check your details and try again.',
         );
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }

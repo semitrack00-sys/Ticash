@@ -66,7 +66,7 @@ void main() {
     storage: kIsWeb ? BrowserSessionStorage() : SecureSessionStorage(),
     trustedDeviceStorage: kIsWeb
         ? null
-        : SecureSessionStorage(key: 'flupflap.device-trust.v1'),
+        : SecureSessionStorage(storageKey: 'flupflap.device-trust.v1'),
     browserSession: kIsWeb,
     deviceIdProvider: kIsWeb ? null : loadDeviceIdentifier,
   );

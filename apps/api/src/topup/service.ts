@@ -1498,7 +1498,8 @@ export class MobileTopUpService {
     // still be running. The caller must retain its original idempotency key.
     if (!record) return null;
     if (record.quoteId !== quoteId) throw new MobileTopUpError('IDEMPOTENCY_CONFLICT', 'Payment attempt does not match this quote', 409);
-    return this.getTransaction(userId, record.id, true);
+    // Receipt visibility must not hide the canonical outcome of an owned key.
+    return this.refreshTransaction(record, !flupFlapCustomerId(userId));
   }
 
   async recoverHostedCheckout(userId: string, id: string) {

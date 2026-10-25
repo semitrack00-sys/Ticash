@@ -162,7 +162,7 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
  });
  it('recovers a lost purchase response by the authenticated owner and original key without another purchase',async()=>{
-  const {app,identities,provider}=setup();const a=await signup(app),b=await signup(app,'b');const ah=headers(a.accessToken);
+  const {app,identities,provider,recharge}=setup();const a=await signup(app),b=await signup(app,'b');const ah=headers(a.accessToken);
   const quote=(await request(app).post(root+'/mobile-topups/quotes').set(ah).send(quoteInput).expect(201)).body.quote;
   const key='lost-response-recovery-key';
   const order=(await request(app).post(root+'/mobile-topups/transactions').set(ah).set('Idempotency-Key',key).send({quoteId:quote.id}).expect(201)).body.transaction;
@@ -176,6 +176,11 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   const mismatch=await request(app).post(endpoint).set(ah).send({idempotencyKey:key,quoteId:'00000000-0000-4000-8000-000000000001'}).expect(409);
   expect(mismatch.body.code).toBe('IDEMPOTENCY_CONFLICT');
   await request(app).post(endpoint).send({idempotencyKey:key,quoteId:quote.id}).expect(401);
+  expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
+  await recharge.updateTransaction(order.id,{status:'FAILED',paymentStatus:'FAILED',failureCode:'CANCELLED_BY_CUSTOMER'});
+  await recharge.hideTransactionFromCustomer(flupFlapOwner(a.user.id),order.id,new Date().toISOString());
+  const hidden=await request(app).post(endpoint).set(ah).send({idempotencyKey:key,quoteId:quote.id}).expect(200);
+  expect(hidden.body.transaction).toMatchObject({id:order.id,status:'FAILED',paymentStatus:'FAILED'});
   expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
  });
  it('does not create a reservation, consume a quote or submit a payment when an attempt lookup is absent',async()=>{

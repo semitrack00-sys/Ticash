@@ -146,6 +146,21 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   expect(ownerFromDb({userId:'legacy'})).toBe('legacy');
   expect(()=>ownerFromDb({userId:null})).toThrow();expect(()=>ownerFromDb({userId:'legacy',flupFlapCustomerId:a.user.id})).toThrow();
  });
+ it('keeps owned payment history and status readable during a purchase restriction without reopening checkout',async()=>{
+  const {app,identities,provider}=setup();const a=await signup(app),b=await signup(app,'b');const ah=headers(a.accessToken);
+  const q=(await request(app).post(root+'/mobile-topups/quotes').set(ah).send(quoteInput).expect(201)).body.quote;
+  const order=(await request(app).post(root+'/mobile-topups/transactions').set(ah).set('Idempotency-Key','restricted-recovery-test').send({quoteId:q.id}).expect(201)).body.transaction;
+  await identities.update(a.user.id,{rechargeRestricted:true});
+  const history=await request(app).get(root+'/mobile-topups/transactions').set(ah).expect(200);
+  expect(history.body.transactions.some((t:{id:string})=>t.id===order.id)).toBe(true);
+  await request(app).get(root+'/mobile-topups/transactions/'+order.id+'?refresh=true').set(ah).expect(200);
+  await request(app).get(root+'/mobile-topups/transactions/'+order.id).set(headers(b.accessToken)).expect(404);
+  await request(app).get(root+'/mobile-topups/transactions/'+order.id+'/checkout').set(ah).expect(403);
+  await request(app).post(root+'/mobile-topups/payment-sessions').set(ah).set('Idempotency-Key','restricted-recovery-test').send({quoteId:q.id}).expect(403);
+  const cancellation=await request(app).post(root+'/mobile-topups/transactions/'+order.id+'/cancel-abandoned').set(ah).send({});
+  expect(cancellation.status).toBe(409);
+  expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
+ });
  it('staff permissions protect the dedicated admin without mixing customer domains',async()=>{
   const {app}=setup();const flup=await signup(app);
   await request(app).get('/api/admin/flupflap/customers').set(headers(flup.accessToken)).expect(401);

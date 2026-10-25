@@ -69,11 +69,13 @@ export function createMobileTopUpRouter(options: {
   allowAndroidReturn?: boolean;
   allowRecurring?: boolean;
   allowGuestPurchases?: boolean;
+  allowRestrictedRecovery?: boolean;
   billingCountryForUser: (userId: string) => Promise<string | undefined>;
 }) {
   const router = express.Router();
   if (options.allowAndroidReturn) router.get('/checkout-return', androidCheckoutReturn);
   const protectedRoute = [options.authenticate, options.requireFundingAllowed];
+  const recoveryRoute = options.allowRestrictedRecovery ? [options.authenticate] : protectedRoute;
 
   router.post('/checkout-resume', checkoutResumeLimit, asyncRoute(async (req, res) => {
     const { resumeToken } = checkoutResumeSchema.parse(req.body);
@@ -178,11 +180,11 @@ export function createMobileTopUpRouter(options: {
     res.status(201).json({ transaction });
   }));
 
-  router.get('/transactions', ...protectedRoute, asyncRoute(async (req, res) => {
+  router.get('/transactions', ...recoveryRoute, asyncRoute(async (req, res) => {
     res.json({ transactions: await options.service.listTransactions(req.userId!) });
   }));
 
-  router.get('/transactions/:id', ...protectedRoute, asyncRoute(async (req, res) => {
+  router.get('/transactions/:id', ...recoveryRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
     res.json({ transaction: await options.service.getTransaction(req.userId!, id, req.query.refresh === 'true') });
   }));
@@ -193,14 +195,14 @@ export function createMobileTopUpRouter(options: {
     res.json(await options.service.recoverHostedCheckout(req.userId!, id));
   }));
 
-  router.post('/transactions/:id/cancel', ...protectedRoute, asyncRoute(async (req, res) => {
+  router.post('/transactions/:id/cancel', ...recoveryRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
     res.json({ transaction: await options.service.cancelTransaction(req.userId!, id) });
   }));
 
   // Separate endpoint fails closed against older servers, which must never
   // interpret automatic cleanup as permission to expire a real checkout.
-  router.post('/transactions/:id/cancel-abandoned', ...protectedRoute, asyncRoute(async (req, res) => {
+  router.post('/transactions/:id/cancel-abandoned', ...recoveryRoute, asyncRoute(async (req, res) => {
     const id = z.uuid().parse(req.params.id);
     res.json({ transaction: await options.service.cancelTransaction(req.userId!, id, true) });
   }));

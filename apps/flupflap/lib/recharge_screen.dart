@@ -819,6 +819,8 @@ class _RechargeJourneyScreenState extends State<RechargeJourneyScreen>
 
   Widget payment() => card([
     const Icon(Icons.lock_outline, size: 40),
+    if (j.error == 'emailVerificationRequired' || j.error == 'rechargeRestricted')
+      TextButton(onPressed:()=>context.go('/account'),child:Text(context.ft('openAccount'))),
     Text(
       context.ft('pendingPayment'),
       style: Theme.of(context).textTheme.headlineSmall,

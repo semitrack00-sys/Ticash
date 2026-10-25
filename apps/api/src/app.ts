@@ -1397,6 +1397,7 @@ export function createApp(options: CreateAppOptions = {}) {
     service: recurringRechargeService,
   }));
   app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
+    allowRestrictedRecovery: true,
     purchaseGuard: databaseEnabled && flupFlapProductionAllowed() ? rechargeDeviceGuard(prisma) : undefined,
     // Guest checkout is retained only for sandbox regression/recovery testing.
     allowGuestPurchases: mobileTopUpConfig.environment === 'sandbox',

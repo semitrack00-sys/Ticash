@@ -200,6 +200,7 @@ class RechargeJourney extends ChangeNotifier {
       'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
       'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
       'EMAIL_VERIFICATION_REQUIRED' => 'emailVerificationRequired',
+      'RECHARGE_RESTRICTED' || 'REGISTERED_ACCOUNT_REQUIRED' => 'rechargeRestricted',
       'RECURRING_PAYMENT_METHOD_UNAVAILABLE' ||
       'RECURRING_SOURCE_NOT_ELIGIBLE' => 'recurringPaymentUnavailable',
       'TOPUP_NOT_CANCELLABLE' ||
@@ -330,7 +331,9 @@ class RechargeJourney extends ChangeNotifier {
           final recovered = await client.recoverCheckout(blocker);
           if (!_current(v)) return;
           hosted = recovered;
-        } catch (_) {
+        } catch (e) {
+          final reason=safeError(e);
+          if(reason=='emailVerificationRequired'||reason=='rechargeRestricted')error=reason;
           // Keep status/cancellation available when checkout cannot be resumed.
         }
       }

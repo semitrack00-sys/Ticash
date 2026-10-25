@@ -977,6 +977,7 @@ void main() {
     final (_, _, j) = fixture();
     for (final pair in [
       ('EMAIL_VERIFICATION_REQUIRED', 'emailVerificationRequired'),
+      ('RECHARGE_RESTRICTED', 'rechargeRestricted'),
       ('INSUFFICIENT_FUNDS', 'insufficientFunds'),
       ('PAYMENT_DECLINED', 'paymentDeclined'),
       ('GUEST_SCOPE_RESTRICTED', 'accountRequired'),

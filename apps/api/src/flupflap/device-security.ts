@@ -1,7 +1,8 @@
-import { paymentAttemptReviewReason } from '../topup/payment-attempt-controls.js';
+import { paymentAttemptAccess } from '../topup/payment-attempt-controls.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import type { RequestHandler } from 'express';
+import { temporaryPurchaseAccess } from '../topup/fraud-policy.js';
 import { MobileTopUpError } from '../topup/types.js';
 
 const devicePattern = /^[a-f0-9]{64}$/;
@@ -9,22 +10,27 @@ const devicePattern = /^[a-f0-9]{64}$/;
 export async function checkRechargeDevice(db: PrismaClient, customerId: string, deviceId: string) {
   if (!devicePattern.test(deviceId)) return;
   const deviceHash = createHash('sha256').update('flupflap-device:' + deviceId).digest('hex');
+  const now=new Date();
   const reason = await db.$transaction(async tx => {
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${deviceHash}, 0))`;
-    const cutoff = new Date(Date.now() - 30 * 86400000);
+    const cutoff = new Date(now.getTime() - 30 * 86400000);
     const linked = await tx.flupFlapDevice.findMany({ where: { deviceHash, lastSeenAt: { gte: cutoff }, customerId: { not: customerId } } });
     const restricted = linked.length ? await tx.flupFlapCustomer.findFirst({ where: {
       id: { in: linked.map(row => row.customerId) }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
     }, select: { id: true } }) : null;
     // Do not retain rejected new associations: they cannot exhaust the limit for others.
-    if (restricted || linked.length >= 2) return restricted ? 'DEVICE_RESTRICTED_LINK' : 'DEVICE_ACCOUNT_LIMIT';
-    const attemptReason = await paymentAttemptReviewReason(tx, customerId, new Date(), undefined, linked.map(row => row.customerId));
-    if (attemptReason) return attemptReason;
+    if (restricted) return new MobileTopUpError('DEVICE_RESTRICTED_LINK','This purchase needs support review.',403,{mode:'ADMIN_REVIEW',serverTime:now.toISOString()});
+    if (linked.length >= 2) {
+      const retry=linked.map(row=>row.lastSeenAt.getTime()).sort((a,b)=>a-b)[linked.length-2]!+30*86400000+1;
+      return new MobileTopUpError('DEVICE_ACCOUNT_LIMIT','This device has reached its account limit.',403,temporaryPurchaseAccess(retry,now));
+    }
+    const attempt = await paymentAttemptAccess(tx, customerId, now, undefined, linked.map(row => row.customerId));
+    if (attempt) return new MobileTopUpError(attempt.code,'Too many payment attempts.',429,attempt.purchaseAccess);
     await tx.flupFlapDevice.upsert({ where: { deviceHash_customerId: { deviceHash, customerId } },
       create: { deviceHash, customerId }, update: { lastSeenAt: new Date() } });
     return undefined;
   });
-  if (reason) throw new MobileTopUpError(reason, 'This purchase needs support review. Contact FlupFlap support.', 403);
+  if (reason) throw reason;
 }
 
 export function rechargeDeviceGuard(db: PrismaClient): RequestHandler {

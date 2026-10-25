@@ -1,7 +1,7 @@
-import { paymentAttemptReviewReason } from './payment-attempt-controls.js';
+import { paymentAttemptReviewReason, paymentAttemptAccess } from './payment-attempt-controls.js';
 import { resetPurchaseAttemptIds, resetPurchaseAttempts } from './purchase-attempt-reset.js';
 import type { VerifiedStripeEvent } from './stripe-webhook.js';
-import { assertPurchaseLimits } from './fraud-policy.js';
+import { assertPurchaseLimits, throwPurchaseBlocks } from './fraud-policy.js';
 import type { ReceiverQuote } from './receiver-value.js';
 import { notificationFor, retryableNotification, type ReceiverNotification, type ReceiverNotificationStore } from './receiver-notification.js';
 import { ownerData, ownerWhere, ownerFromDb, recipientOwnerKey, transactionOwnerKey } from '../flupflap/owner.js';
@@ -711,8 +711,14 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           }
           const replay = await tx.mobileTopUpTransaction.findUnique({ where: transactionOwnerKey(input.userId, input.idempotencyKey) });
           if (replay) return replay;
-          const attemptReason = await paymentAttemptReviewReason(tx, customerId);
-          if (attemptReason) throw new MobileTopUpError(attemptReason, 'Too many payment attempts. Try again later or contact support.', 429);
+          const limitNow=new Date(input.createdAt);
+          const blocks:MobileTopUpError[]=[];
+          const attempt=await paymentAttemptAccess(tx,customerId,limitNow);
+          if(attempt)blocks.push(new MobileTopUpError(attempt.code,'Too many payment attempts. Try again later or contact support.',429,attempt.purchaseAccess));
+          const checkLimits=(history:Parameters<typeof assertPurchaseLimits>[1])=>{
+            try {assertPurchaseLimits(input.totalChargeUsd,history,limitNow,false);}
+            catch(error){if(error instanceof MobileTopUpError)blocks.push(error);else throw error;}
+          };
           // A new account must not reset limits for the same recipient. The
           // phone is normalized to E.164 before the quote is created. Serialize
           // this shared budget across customers and API workers.
@@ -723,15 +729,15 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
             createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) },
           } });
           const resetIds = await resetPurchaseAttemptIds(tx, customerId, new Date(input.createdAt));
-          assertPurchaseLimits(input.totalChargeUsd, recipientHistory.map(r => ({
+          checkLimits(recipientHistory.map(r => ({
             createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus,
             attemptExempt: r.flupFlapCustomerId === customerId && r.status === 'FAILED' && r.paymentStatus === 'FAILED' && resetIds.has(r.id),
-          })), new Date(input.createdAt), false);
+          })));
           const recent = await tx.mobileTopUpTransaction.findMany({ where: { flupFlapCustomerId: customerId, testMode: false,
             createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) } } });
-          assertPurchaseLimits(input.totalChargeUsd, recent.map(r => ({ createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus,
-            attemptExempt: r.status === 'FAILED' && r.paymentStatus === 'FAILED' && resetIds.has(r.id) })),
-            new Date(input.createdAt), Date.parse(input.createdAt) - customer.createdAt.getTime() < 7 * 86400000);
+          checkLimits(recent.map(r => ({ createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus,
+            attemptExempt: r.status === 'FAILED' && r.paymentStatus === 'FAILED' && resetIds.has(r.id) })));
+          throwPurchaseBlocks(blocks,limitNow);
         }
         const claimed = await tx.mobileTopUpQuote.updateMany({
           where: { id: input.quoteId, ...ownerWhere(input.userId), consumedAt: null, expiresAt: { gt: new Date(input.createdAt) } },

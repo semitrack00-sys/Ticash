@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { pglitePrisma } from './helpers/pglite-prisma.js';
 import { PrismaMobileTopUpRepository } from '../src/topup/repository.js';
-import { paymentAttemptReviewReason } from '../src/topup/payment-attempt-controls.js';
+import { paymentAttemptReviewReason, paymentAttemptAccess } from '../src/topup/payment-attempt-controls.js';
 import { verifyStripeEvent } from '../src/topup/stripe-webhook.js';
 import { createRechargeFraudGate, approveRechargeReview } from '../src/topup/fraud-gate.js';
 import { checkRechargeDevice } from '../src/flupflap/device-security.js';
@@ -46,6 +46,9 @@ it('deduplicates charge attempts, blocks new reservations without consuming quot
   expect(await paymentAttemptReviewReason(prisma,c.id)).toBeUndefined();
   await save(event(r.id,'ch_third'));
   expect(await paymentAttemptReviewReason(prisma,c.id)).toBe('PAYMENT_ATTEMPT_LIMIT');
+  const access=await paymentAttemptAccess(prisma,c.id);
+  expect(access?.purchaseAccess).toMatchObject({mode:'TEMPORARY_LIMIT',retryAt:expect.any(String),retryAfterSeconds:expect.any(Number)});
+  expect(await paymentAttemptReviewReason(prisma,c.id,new Date(access!.purchaseAccess.retryAt))).toBeUndefined();
   const next=await input(c.id);
   await expect(repo.reserveTransaction(next)).rejects.toMatchObject({code:'PAYMENT_ATTEMPT_LIMIT'});
   expect((await prisma.mobileTopUpQuote.findUniqueOrThrow({where:{id:next.quoteId}})).consumedAt).toBeNull();

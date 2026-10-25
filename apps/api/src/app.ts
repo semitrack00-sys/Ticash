@@ -2908,7 +2908,8 @@ export function createApp(options: CreateAppOptions = {}) {
       return;
     }
     if (error instanceof MobileTopUpError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      if(error.purchaseAccess?.retryAfterSeconds!==undefined) res.setHeader('Retry-After',String(error.purchaseAccess.retryAfterSeconds));
+      res.status(error.statusCode).json({ error: error.message, code: error.code, ...(error.purchaseAccess?{purchaseAccess:error.purchaseAccess}:{}) });
       return;
     }
     if (error instanceof SecurityError) {

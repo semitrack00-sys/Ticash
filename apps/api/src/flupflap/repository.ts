@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient, FlupFlapCustomer, FlupFlapSession, FlupFlapPasswordResetToken } from '@prisma/client';
+import { customerPhoneCountry } from './customer-country.js';
 
 export class FlupFlapIdentityRepository {
   private customers = new Map<string, FlupFlapCustomer>();
@@ -10,10 +11,11 @@ export class FlupFlapIdentityRepository {
   async byGoogleSubject(subject: string) { return this.db ? this.db.flupFlapCustomer.findUnique({ where: { googleSubject: subject } }) : [...this.customers.values()].find(c => c.googleSubject === subject) ?? null; }
   async byEmail(email: string) { return this.db ? this.db.flupFlapCustomer.findUnique({ where: { email } }) : [...this.customers.values()].find(c => c.email === email) ?? null; }
   async create(input: { email?: string; passwordHash?: string; googleSubject?: string; firstName?: string; lastName?: string; phone?: string; countryCode?: string; guestExpiresAt?: Date }) {
-    if (this.db) return this.db.flupFlapCustomer.create({ data: input });
+    const phoneCountryCode = customerPhoneCountry(input.phone);
+    if (this.db) return this.db.flupFlapCustomer.create({ data: { ...input, phoneCountryCode } });
     if (input.email && [...this.customers.values()].some(c => c.email === input.email)) throw Object.assign(new Error('Duplicate identity'), { code: 'P2002' });
     const customer: FlupFlapCustomer = { id: randomUUID(), email: input.email ?? null, passwordHash: input.passwordHash ?? null, googleSubject: input.googleSubject ?? null,
-      firstName: input.firstName ?? null, lastName: input.lastName ?? null, countryCode: input.countryCode ?? null,
+      firstName: input.firstName ?? null, lastName: input.lastName ?? null, countryCode: input.countryCode ?? null, phoneCountryCode,
       guestExpiresAt: input.guestExpiresAt ?? null, emailVerifiedAt: null, phone: input.phone ?? null,
       phoneVerifiedAt: null, status: 'ACTIVE', rechargeRestricted: false, authVersion: 0, failedLoginAttempts: 0, loginLockedUntil: null,
       createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null };

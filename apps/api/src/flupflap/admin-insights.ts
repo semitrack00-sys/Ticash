@@ -2,7 +2,7 @@ import express, { type RequestHandler } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { analyticsWindow } from '../admin-analytics.js';
-import { adminCountry } from '../admin-country.js';
+import { adminCountry, adminClientCountry } from '../admin-country.js';
 import type { AdminPermission, AdminRequest } from '../admin-access.js';
 
 export const insightMetrics = ['clients.total','clients.active','clients.new','clients.today','clients.week','clients.month','clients.year',
@@ -35,7 +35,9 @@ export function insightQuery(request:InsightRequest, includeCustomerDetails:bool
     metric==='transactions.reversed'?Prisma.sql`r.outcome='REVERSED'`:Prisma.sql`true`;
   const pattern='%'+q.replace(/[\\%_]/g,'\\$&')+'%';
   const customerJson=Prisma.sql`jsonb_build_object('id',c.id,'firstName',c."firstName",'lastName',c."lastName",'email',c.email,'phone',c.phone,
-    'countryCode',c.country,'guest',c.guest,'status',c.status,'rechargeRestricted',c."rechargeRestricted",'createdAt',c.created,
+    'countryCode',c.country,'phoneCountryCode',NULLIF(${adminCountry(Prisma.sql`c."phoneCountryCode"`)},'UNKNOWN'),
+    'profileCountryCode',NULLIF(${adminCountry(Prisma.sql`c."countryCode"`)},'UNKNOWN'),
+    'countrySource',CASE WHEN ${adminCountry(Prisma.sql`c."phoneCountryCode"`)} <> 'UNKNOWN' THEN 'PHONE_NUMBER' WHEN c.country <> 'UNKNOWN' THEN 'SAVED_PROFILE' ELSE 'UNKNOWN' END,'guest',c.guest,'status',c.status,'rechargeRestricted',c."rechargeRestricted",'createdAt',c.created,
     'lastLoginAt',c."lastLoginAt",'emailVerified',c."emailVerifiedAt" IS NOT NULL,'phoneVerified',c."phoneVerifiedAt" IS NOT NULL)`;
   const selected=kind==='CLIENTS'?Prisma.sql`
     SELECT c.id,c.created,c.country,${customerJson} || jsonb_build_object(
@@ -56,7 +58,7 @@ export function insightQuery(request:InsightRequest, includeCustomerDetails:bool
     FROM records r LEFT JOIN customers c ON c.id=r.customer WHERE r.created>=${start} AND ${outcome}`;
   return Prisma.sql`WITH customers AS (
     SELECT c.*,c."createdAt" AS created,c."guestExpiresAt" IS NOT NULL AS guest,
-      ${adminCountry(Prisma.sql`c."countryCode"`)} AS country
+      ${adminClientCountry(Prisma.sql`c."phoneCountryCode"`, Prisma.sql`c."countryCode"`)} AS country
     FROM "FlupFlapCustomer" c WHERE c."createdAt"<${end}
   ),records AS (
     SELECT t.id,t."flupFlapCustomerId" AS customer,t."createdAt" AS created,t.status::text AS status,t."paymentStatus"::text AS payment,
@@ -87,9 +89,12 @@ export function insightQuery(request:InsightRequest, includeCustomerDetails:bool
 export async function readInsights(execute:(sql:Prisma.Sql)=>Promise<{data:Record<string,unknown>}[]>,request:InsightRequest,customerDetails:boolean) {
   const [row]=await execute(insightQuery(request,customerDetails)); if(!row)throw new Error('INSIGHTS_UNAVAILABLE');
   const names=new Intl.DisplayNames(['en'],{type:'region'});
-  const countries=(row.data.countries as {code:string;total:number}[]).map(c=>({...c,name:c.code==='UNKNOWN'?'Not provided':names.of(c.code)??c.code}));
+  const countries=(row.data.countries as {code:string;total:number}[]).map(c=>({...c,name:c.code==='UNKNOWN'?'Unknown / not recorded':names.of(c.code)??c.code}));
+  const countryName=(code:unknown)=>typeof code==='string' && code!=='UNKNOWN' ? names.of(code)??code : null;
+  const decorate=(c:Record<string,unknown>)=>({...c,countryName:countryName(c.countryCode),phoneCountryName:countryName(c.phoneCountryCode),profileCountryName:countryName(c.profileCountryCode)});
+  const rows=(row.data.rows as Record<string,unknown>[]).map(r=>request.kind==='CLIENTS'?decorate(r):({...r,customer:r.customer?decorate(r.customer as Record<string,unknown>):null}));
   const total=Number(row.data.total);
-  return {...row.data,countries,domain:'FLUPFLAP',kind:request.kind,metric:request.metric,mode:request.mode,
+  return {...row.data,rows,countries,domain:'FLUPFLAP',kind:request.kind,metric:request.metric,mode:request.mode,
     start:request.window.start.toISOString(),end:request.window.end.toISOString(),asOf:request.asOf??request.window.end.toISOString(),
     offset:request.offset,limit:25,nextOffset:request.offset+25<total?request.offset+25:null};
 }

@@ -396,7 +396,7 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
           _box(Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const Text('Clients by country', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: Color(0xFF142449))),
             Text('All countries · ${clients['total']} total clients', style: const TextStyle(fontWeight: FontWeight.w700)),
-            const Text('Client profile country · includes historical guests · missing countries are listed as Not provided', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+            const Text('Phone country, otherwise saved profile country · registered clients and historical guests included · Unknown means no country was recorded', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
             const SizedBox(height: 10),
             for (final country in data['clientCountries'] as List)
               ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.public, color: Color(0xFF142449)),

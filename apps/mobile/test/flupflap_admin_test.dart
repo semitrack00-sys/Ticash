@@ -32,7 +32,9 @@ class AdminFixture implements HttpClientAdapter {
                 'domain': 'FLUPFLAP',
                 'email': 'fixture@example.test',
                 'rechargeRestricted': false,
-                'firstName': 'Fixture', 'lastName': 'Customer', 'countryCode': 'US', 'status':'ACTIVE',
+                'firstName': 'Fixture', 'lastName': 'Customer', 'countryCode': 'DO', 'status':'ACTIVE',
+                'countryName': 'Dominican Republic', 'phoneCountryCode': 'DO', 'phoneCountryName': 'Dominican Republic',
+                'profileCountryCode': 'HT', 'profileCountryName': 'Haiti', 'countrySource': 'PHONE_NUMBER',
                 'createdAt': '2026-10-01T10:00:00Z',
               },
             ],
@@ -52,6 +54,21 @@ class AdminFixture implements HttpClientAdapter {
 }
 
 void main() {
+  testWidgets('client profile separates phone country from saved billing country', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = AdminFixture();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(dio: dio,
+      session: const AdminSession(role: 'READ_ONLY', permissions: {'recharge.view','recharge.customers.view'}, environment: 'PRODUCTION')))));
+    await tester.pumpAndSettle(); await tester.tap(find.text('FlupFlap Customers')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Fixture Customer')); await tester.pumpAndSettle();
+    expect(find.text('Phone country'), findsOneWidget);
+    expect(find.text('Saved profile / billing country'), findsOneWidget);
+    expect(find.text('Haiti'), findsOneWidget);
+    expect(find.text('Client phone number (not verified residence)'), findsOneWidget);
+    expect(find.text('Dominican Republic'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('directory preserves audited recharge restriction controls', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1000)); addTearDown(() => tester.binding.setSurfaceSize(null));
     final adapter = AdminFixture();

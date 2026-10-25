@@ -9,6 +9,7 @@ import { pglitePrisma } from './helpers/pglite-prisma.js';
 import { insightRequest, readInsights } from '../src/flupflap/admin-insights.js';
 import { analyticsWindow, readAdminAnalytics } from '../src/admin-analytics.js';
 import { createApp, resetStore } from '../src/app.js';
+import { backfillCustomerPhoneCountries } from '../src/flupflap/customer-country.js';
 
 const db=new PGlite();const prisma=new PrismaClient({adapter:pglitePrisma(db)});
 const now=new Date('2026-10-25T15:00:00Z');
@@ -59,6 +60,32 @@ it('groups unrecognized saved codes with missing countries without rewriting the
   const summary=await readAdminAnalytics(execute,'FLUPFLAP',analyticsWindow({period:'30d'},now));
   expect(summary.clientCountries).toEqual(expect.arrayContaining([expect.objectContaining({code:'UNKNOWN',total:2})]));
   expect((await prisma.flupFlapCustomer.findUniqueOrThrow({where:{id:invalid.id}})).countryCode).toBe('UC');
+});
+it('backfills phone countries and reconciles registered and guest country categories without changing billing or destinations',async()=>{
+  const dominican=await buyer('HT',{phone:'+18298691951'});
+  const guest=await buyer('HT',{email:null,passwordHash:null,phone:'+14165551234',guestExpiresAt:now});
+  await buyer('EG',{email:null,passwordHash:null,guestExpiresAt:now});
+  await buyer(null,{email:null,passwordHash:null,guestExpiresAt:now});
+  await transaction(dominican.id);
+  expect(await backfillCustomerPhoneCountries(prisma)).toEqual({updated:2});
+  expect(await backfillCustomerPhoneCountries(prisma)).toEqual({updated:0});
+  const directory=await read({country:'DO'});
+  expect(directory.total).toBe(1);
+  expect(directory.rows).toEqual([expect.objectContaining({id:dominican.id,countryCode:'DO',countryName:'Dominican Republic',
+    countrySource:'PHONE_NUMBER',profileCountryCode:'HT',phoneCountryCode:'DO'})]);
+  expect((await read({country:'CA',metric:'clients.guest'})).rows).toEqual([expect.objectContaining({id:guest.id,guest:true})]);
+  const summary=await readAdminAnalytics(execute,'FLUPFLAP',analyticsWindow({period:'30d'},now));
+  expect(summary.clients).toMatchObject({total:4,registered:1,guest:3});
+  expect(summary.clientCountries).toEqual(expect.arrayContaining([
+    expect.objectContaining({code:'DO',total:1,registered:1,guests:0}),
+    expect.objectContaining({code:'CA',total:1,registered:0,guests:1}),
+    expect.objectContaining({code:'EG',total:1,registered:0,guests:1}),
+    expect.objectContaining({code:'UNKNOWN',total:1,registered:0,guests:1}),
+  ]));
+  expect((summary.clientCountries as {total:number}[]).reduce((n,c)=>n+c.total,0)).toBe(4);
+  expect((await prisma.flupFlapCustomer.findUniqueOrThrow({where:{id:dominican.id}})).countryCode).toBe('HT');
+  const tx=await read({metric:'transactions.total'});
+  expect(tx.rows).toEqual([expect.objectContaining({countryCode:'HT',customer:expect.objectContaining({countryCode:'DO'})})]);
 });
 it('matches status and financial card contributions, excludes mixed/test records, and retains hidden history',async()=>{
   const c=await buyer();const delivered=await transaction(c.id);await transaction(c.id,'FAILED');await transaction(c.id,'PENDING');await transaction(c.id,'REFUNDED');await transaction(c.id,'DELIVERED',true);

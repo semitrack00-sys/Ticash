@@ -14,7 +14,7 @@ const read = (domain: AnalyticsDomain, query: Record<string, string> = { period:
 beforeAll(async () => {
   await db.exec(`
     CREATE TABLE "User" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp, role text, "countryCode" text);
-    CREATE TABLE "FlupFlapCustomer" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp, "countryCode" text);
+    CREATE TABLE "FlupFlapCustomer" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp, "countryCode" text, "phoneCountryCode" text);
     CREATE TABLE "FxQuote" (id text, "receiveCountry" text, "sourceCurrency" text);
     CREATE TABLE "Transfer" (id text, "senderUserId" text, "createdAt" timestamp, status text, "amountUsd" numeric,
       "ticashFeeUsd" numeric, "quoteId" text, provider text, "testMode" boolean);

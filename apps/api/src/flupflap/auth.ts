@@ -122,9 +122,9 @@ export function createFlupFlapIdentity(options: {
     }
   });
   router.post('/guest', guestLimited, async (req,res) => {
-    z.object({}).strict().parse(req.body ?? {});
+    const input = z.object({countryCode:z.string().regex(/^[A-Z]{2}$/).optional()}).strict().parse(req.body ?? {});
     const error = options.guestError(); if (error) {res.status(403).json(error);return;}
-    const session=await issue(await repo.create({guestExpiresAt:new Date(Date.now()+3600_000)})); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.status(201).json(session);
+    const session=await issue(await repo.create({guestExpiresAt:new Date(Date.now()+3600_000),countryCode:input.countryCode})); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.status(201).json(session);
   });
   router.post('/login', limited, async (req,res) => {
     const input = z.object({email,password}).strict().parse(req.body);

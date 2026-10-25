@@ -21,14 +21,19 @@ class AdminFixture implements HttpClientAdapter {
       return ResponseBody.fromString(jsonEncode({'resetCount': 3, 'otherLimitsStillApply': true}), 200,
         headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
     }
-    final data = options.path.endsWith('/customers')
+    final data = options.path.endsWith('/customer-directory')
         ? {
-            'customers': [
+            'domain': 'FLUPFLAP', 'kind': 'CLIENTS', 'mode': 'live', 'metric': 'clients.total',
+            'total': 1, 'overallTotal': 1, 'offset': 0, 'nextOffset': null,
+            'countries': [{'code': 'US', 'name': 'United States', 'total': 1}],
+            'rows': [
               {
                 'id': 'fixture-customer',
                 'domain': 'FLUPFLAP',
                 'email': 'fixture@example.test',
                 'rechargeRestricted': false,
+                'firstName': 'Fixture', 'lastName': 'Customer', 'countryCode': 'US',
+                'createdAt': '2026-10-01T10:00:00Z',
               },
             ],
           }

@@ -13,8 +13,8 @@ const read = (domain: AnalyticsDomain, query: Record<string, string> = { period:
 
 beforeAll(async () => {
   await db.exec(`
-    CREATE TABLE "User" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp, role text);
-    CREATE TABLE "FlupFlapCustomer" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp);
+    CREATE TABLE "User" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp, role text, "countryCode" text);
+    CREATE TABLE "FlupFlapCustomer" (id text, "createdAt" timestamp, "guestExpiresAt" timestamp, "countryCode" text);
     CREATE TABLE "FxQuote" (id text, "receiveCountry" text, "sourceCurrency" text);
     CREATE TABLE "Transfer" (id text, "senderUserId" text, "createdAt" timestamp, status text, "amountUsd" numeric,
       "ticashFeeUsd" numeric, "quoteId" text, provider text, "testMode" boolean);
@@ -26,8 +26,8 @@ beforeAll(async () => {
 afterAll(async () => db.close());
 beforeEach(async () => {
   await db.exec(`TRUNCATE "User", "FlupFlapCustomer", "FxQuote", "Transfer", "MobileTopUpTransaction";
-    INSERT INTO "User" VALUES ('u','2026-01-01',null,'CUSTOMER'),('staff','2026-01-01',null,'ADMIN');
-    INSERT INTO "FlupFlapCustomer" VALUES ('f','2026-09-24',null),('g','2026-09-25','2026-09-26');
+    INSERT INTO "User" (id,"createdAt","guestExpiresAt",role) VALUES ('u','2026-01-01',null,'CUSTOMER'),('staff','2026-01-01',null,'ADMIN');
+    INSERT INTO "FlupFlapCustomer" (id,"createdAt","guestExpiresAt") VALUES ('f','2026-09-24',null),('g','2026-09-25','2026-09-26');
     INSERT INTO "FxQuote" VALUES ('q','HT','USD');
     INSERT INTO "Transfer" VALUES ('t','u','2026-09-25','COMPLETED',100,2,'q','MONCASH',false);
     INSERT INTO "MobileTopUpTransaction" VALUES

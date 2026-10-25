@@ -6,6 +6,7 @@ import '../../services/api_client.dart';
 import '../../services/admin_service.dart';
 import '../../services/admin_analytics_service.dart';
 import '../../widgets/admin_analytics_panel.dart';
+import '../../widgets/flupflap_admin_records.dart';
 import '../../widgets/app_downloads_panel.dart';
 import '../../widgets/flupflap_promotions_panel.dart';
 import '../../widgets/flupflap_stores_panel.dart';
@@ -58,7 +59,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 
   void load() {
-    if (!widget.session.can('recharge.view') || ['promotions', 'stores'].contains(section)) {
+    if (!widget.session.can('recharge.view') || ['promotions', 'stores', 'customers'].contains(section)) {
       return;
     }
     final query = <String, dynamic>{'offset': offset};
@@ -366,7 +367,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
         ],
         const SizedBox(height: 16),
-        if (!['dashboard', 'promotions', 'stores', 'settings'].contains(section)) ...[
+        if (!['dashboard', 'promotions', 'stores', 'settings', 'customers'].contains(section)) ...[
           TextField(
             controller: search,
             onChanged: (_) => setState(() {}),
@@ -387,6 +388,9 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
           const SizedBox(height: 16),
         ],
+        if (section == 'customers')
+          FlupFlapRecordExplorer(key: const ValueKey('client-directory'), dio: client, title: 'FlupFlap clients', directory: true,
+            onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null),
         if (section == 'stores')
           FlupFlapStoresPanel(
             dio: client,
@@ -398,7 +402,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
             dio: client,
             canManage: widget.session.can('recharge.configuration.manage'),
           ),
-        if (result != null && !['promotions', 'stores'].contains(section))
+        if (result != null && !['promotions', 'stores', 'customers'].contains(section))
           FutureBuilder<Map<String, dynamic>>(
             future: result,
             builder: (context, snapshot) {
@@ -428,7 +432,8 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                   if (section == 'dashboard' && widget.session.can('recharge.reports')) ...[
                     AppDownloadsPanel(dio: widget.dio, canImport: widget.session.can('recharge.configuration.manage')),
                     const SizedBox(height: 18),
-                    AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio),
+                    AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio, permissions: widget.session.permissions,
+                      onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null),
                     const SizedBox(height: 18),
                   ],
                   if (section == 'dashboard')

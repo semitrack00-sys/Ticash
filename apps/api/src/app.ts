@@ -31,6 +31,7 @@ import type { PublicUser, Recipient, Transfer } from '@ticash/shared';
 import type { Prisma } from '@prisma/client';
 import { databaseEnabled, prisma } from './database.js';
 import { analyticsWindow, readAdminAnalytics } from './admin-analytics.js';
+import { createInsightsRouter } from './flupflap/admin-insights.js';
 import { loadPayoutConfig, payoutAdapterFor, publicPayoutMethods, PayoutError, type PayoutConfig } from './payout-adapters.js';
 import { loadFundingConfig } from './funding/config.js';
 import { DwollaRestFundingProvider } from './funding/dwolla-provider.js';
@@ -2223,6 +2224,9 @@ export function createApp(options: CreateAppOptions = {}) {
       }
     });
   }
+
+  app.use('/api/admin/flupflap', createInsightsRouter({authenticate,permission,
+    execute:databaseEnabled?query=>prisma.$queryRaw(query):undefined}));
 
   app.use('/api/admin/flupflap/downloads', createAppDownloadsRouter({ db: prisma, enabled: databaseEnabled, authenticate, permission }));
 

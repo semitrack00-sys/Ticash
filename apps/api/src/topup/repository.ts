@@ -1,4 +1,5 @@
 import { paymentAttemptReviewReason } from './payment-attempt-controls.js';
+import { resetPurchaseAttemptIds, resetPurchaseAttempts } from './purchase-attempt-reset.js';
 import type { VerifiedStripeEvent } from './stripe-webhook.js';
 import { assertPurchaseLimits } from './fraud-policy.js';
 import type { ReceiverQuote } from './receiver-value.js';
@@ -101,6 +102,7 @@ export interface MobileTopUpTransactionRecord extends Omit<MobileTopUpQuoteRecor
 }
 
 export interface MobileTopUpRepository extends ReceiverNotificationStore {
+  resetPurchaseAttempts?(customerId: string, actor: string, reason: string, requestId: string): Promise<{ resetCount: number }>;
   getCountryCatalogCache?(key: string): Promise<{ value: unknown; validatedAt: string; expiresAt: string } | undefined>;
   saveCountryCatalogCache?(key: string, value: unknown, validatedAt: string, expiresAt: string): Promise<void>;
   listRecipients(userId: string): Promise<SavedTopUpRecipientRecord[]>;
@@ -471,6 +473,9 @@ function transactionFromDb(record: {
 }
 
 export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
+  async resetPurchaseAttempts(customerId: string, actor: string, reason: string, requestId: string) {
+    return resetPurchaseAttempts(this.prisma, customerId, actor, reason, requestId);
+  }
   constructor(private readonly prisma: PrismaClient, private readonly requireVerifiedContacts = false) {}
 
   async getCountryCatalogCache(key: string) {
@@ -717,12 +722,15 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
             recipientPhone: input.recipientPhone, flupFlapCustomerId: { not: null }, testMode: false,
             createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) },
           } });
+          const resetIds = await resetPurchaseAttemptIds(tx, customerId, new Date(input.createdAt));
           assertPurchaseLimits(input.totalChargeUsd, recipientHistory.map(r => ({
             createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus,
+            attemptExempt: r.flupFlapCustomerId === customerId && r.status === 'FAILED' && r.paymentStatus === 'FAILED' && resetIds.has(r.id),
           })), new Date(input.createdAt), false);
           const recent = await tx.mobileTopUpTransaction.findMany({ where: { flupFlapCustomerId: customerId, testMode: false,
             createdAt: { gte: new Date(Date.parse(input.createdAt) - 86400000) } } });
-          assertPurchaseLimits(input.totalChargeUsd, recent.map(r => ({ createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus })),
+          assertPurchaseLimits(input.totalChargeUsd, recent.map(r => ({ createdAt: r.createdAt.toISOString(), totalChargeUsd: Number(r.totalChargeUsd), paymentStatus: r.paymentStatus,
+            attemptExempt: r.status === 'FAILED' && r.paymentStatus === 'FAILED' && resetIds.has(r.id) })),
             new Date(input.createdAt), Date.parse(input.createdAt) - customer.createdAt.getTime() < 7 * 86400000);
         }
         const claimed = await tx.mobileTopUpQuote.updateMany({

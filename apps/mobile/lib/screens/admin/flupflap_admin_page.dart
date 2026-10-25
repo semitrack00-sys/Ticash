@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../config/theme.dart';
@@ -127,6 +128,35 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 
   final Set<String> reviewing = {};
+  final Set<String> resettingAttempts = {};
+  Future<void> resetPurchaseAttempts(Map row) async {
+    final id = row['id'].toString();
+    if (!widget.session.can('recharge.attempts.reset') || resettingAttempts.contains(id)) return;
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (_) => const _PurchaseAttemptResetDialog(),
+    );
+    if (!mounted || reason == null) return;
+    final random = Random.secure();
+    final requestId = List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join();
+    setState(() => resettingAttempts.add(id));
+    try {
+      final response = await client.post('/admin/flupflap/customers/$id/purchase-attempts/reset',
+        data: {'reason': reason, 'requestId': requestId});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+        '${response.data['resetCount']} failed reservation counts reset. Other limits and security checks still apply.')));
+      setState(load);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(
+          'Reset was not confirmed. Review pending payments, restrictions and the audit history before trying again.')));
+      }
+    } finally {
+      if (mounted) setState(() => resettingAttempts.remove(id));
+    }
+  }
+
   Future<void> reviewPayment(Map row) async {
     final id = row['id'].toString();
     if (reviewing.contains(id)) return;
@@ -460,6 +490,12 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                                   child: const Text('Review held payment'),
                                 ),
                               if (section == 'customers' &&
+                                  widget.session.can('recharge.attempts.reset'))
+                                TextButton(
+                                  onPressed: resettingAttempts.contains(row['id'].toString()) ? null : () => resetPurchaseAttempts(row),
+                                  child: const Text('Reset purchase-attempt limit'),
+                                ),
+                              if (section == 'customers' &&
                                   widget.session.can('recharge.operations'))
                                 TextButton(
                                   onPressed: () => operate(row),
@@ -523,6 +559,36 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
 }
 
 
+
+class _PurchaseAttemptResetDialog extends StatefulWidget {
+  const _PurchaseAttemptResetDialog();
+  @override
+  State<_PurchaseAttemptResetDialog> createState() => _PurchaseAttemptResetDialogState();
+}
+
+class _PurchaseAttemptResetDialogState extends State<_PurchaseAttemptResetDialog> {
+  final input = TextEditingController();
+  @override
+  void dispose() {
+    input.dispose();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Reset purchase-attempt limit'),
+    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const Text('Review this customer’s payment history first. This clears failed or cancelled reservation counts only. Pending payments and fraud holds must be resolved separately. Dollar limits, card checks and bank authentication still apply.'),
+      TextField(controller: input, maxLength: 500, minLines: 2, maxLines: 4,
+        onChanged: (_) => setState(() {}),
+        decoration: const InputDecoration(labelText: 'Review reason (at least 20 characters)')),
+    ])),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      FilledButton(onPressed: input.text.trim().length < 20 ? null : () => Navigator.pop(context, input.text.trim()),
+        child: const Text('Reset attempt count')),
+    ],
+  );
+}
 
 class _FlupFlapAdminNavigation extends StatelessWidget {
   const _FlupFlapAdminNavigation({

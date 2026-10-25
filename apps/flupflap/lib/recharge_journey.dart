@@ -86,12 +86,14 @@ class RechargeJourney extends ChangeNotifier {
   Future<void>? _refreshFlight;
   bool _cancelling = false;
   bool _historyCheckRequired = false;
+  bool _attemptUncertain = false;
   bool _checkingHistory = false;
   bool get canCancel =>
       locked &&
       result?.terminal != true &&
       _transactionId != null &&
       _resumeToken == null;
+  bool get canRetryPayment => _attemptKey != null && result?.terminal != true;
   bool get locked =>
       _historyCheckRequired ||
       _attemptKey != null ||
@@ -196,11 +198,21 @@ class RechargeJourney extends ChangeNotifier {
     final data = e is DioException ? e.response?.data : null;
     final code = data is Map ? data['code'] : null;
     return switch (code) {
-      'TOPUP_QUOTE_EXPIRED' || 'TOPUP_QUOTE_ALREADY_USED' => 'quoteExpired',
+      'TOPUP_QUOTE_EXPIRED' ||
+      'TOPUP_QUOTE_ALREADY_USED' ||
+      'TOPUP_QUOTE_NOT_FOUND' => 'quoteExpired',
       'TOPUP_CATALOG_CHANGED' || 'TOPUP_QUOTE_CHANGED' => 'catalogChanged',
       'BILLING_COUNTRY_REQUIRED' => 'billingRequired',
       'EMAIL_VERIFICATION_REQUIRED' => 'emailVerificationRequired',
-      'RECHARGE_RESTRICTED' || 'REGISTERED_ACCOUNT_REQUIRED' => 'rechargeRestricted',
+      'RECHARGE_RESTRICTED' ||
+      'REGISTERED_ACCOUNT_REQUIRED' => 'rechargeRestricted',
+      'DEVICE_RESTRICTED_LINK' => 'deviceRestricted',
+      'DEVICE_ACCOUNT_LIMIT' => 'deviceAccountLimit',
+      'PAYMENT_ATTEMPT_LIMIT' => 'paymentAttemptLimit',
+      'PAYMENT_CARD_LIMIT' => 'paymentCardLimit',
+      'PAYMENT_SESSION_IN_PROGRESS' ||
+      'PAYMENT_SESSION_CREATION_UNKNOWN' => 'paymentOutcomeUnknown',
+      'GUEST_ACCESS_DISABLED' => 'accountRequired',
       'RECURRING_PAYMENT_METHOD_UNAVAILABLE' ||
       'RECURRING_SOURCE_NOT_ELIGIBLE' => 'recurringPaymentUnavailable',
       'TOPUP_NOT_CANCELLABLE' ||
@@ -224,6 +236,11 @@ class RechargeJourney extends ChangeNotifier {
     } catch (e) {
       if (version == _revision) {
         error = safeError(e);
+        if (_attemptKey != null &&
+            _transactionId == null &&
+            error == 'requestFailed') {
+          error = 'paymentOutcomeUnknown';
+        }
         if (_historyCheckRequired) step = RechargeStep.recovery;
       }
     } finally {
@@ -332,8 +349,11 @@ class RechargeJourney extends ChangeNotifier {
           if (!_current(v)) return;
           hosted = recovered;
         } catch (e) {
-          final reason=safeError(e);
-          if(reason=='emailVerificationRequired'||reason=='rechargeRestricted')error=reason;
+          final reason = safeError(e);
+          if (reason == 'emailVerificationRequired' ||
+              reason == 'rechargeRestricted') {
+            error = reason;
+          }
           // Keep status/cancellation available when checkout cannot be resumed.
         }
       }
@@ -494,9 +514,8 @@ class RechargeJourney extends ChangeNotifier {
   Future<void> continueDestination() => _run((v) async {
     if (country == null ||
         !countries.any((c) => c.code == country) ||
-        !RegExp(
-          r'^\+[1-9][0-9]{6,14}$',
-        ).hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
+        !RegExp(r'^\+[1-9][0-9]{6,14}$')
+            .hasMatch(phone.replaceAll(RegExp(r'[\s().-]'), ''))) {
       throw const FormatException('Invalid destination');
     }
     phone = phone.replaceAll(RegExp(r'[\s().-]'), '');
@@ -710,6 +729,7 @@ class RechargeJourney extends ChangeNotifier {
     _attemptCountry = billing;
     _attemptGuest = guest();
     _attemptMode = methods.mode;
+    _attemptUncertain = false;
     step = RechargeStep.payment;
     await _submit();
   });
@@ -719,31 +739,76 @@ class RechargeJourney extends ChangeNotifier {
   });
   Future<void> _submit() async {
     if (_disposed) return;
-    if (_attemptMode == CheckoutMode.mock) {
-      final t = await client.topups.purchase(
-        quoteId: _attemptQuote!,
-        idempotencyKey: _attemptKey!,
-        recipientId: _attemptRecipient,
-      );
-      // Read canonical server state; no local inference from HTTP success.
-      _transactionId = t.id;
-      await refresh();
-    } else {
-      final session = await client.payment(
-        quote: quote!,
-        mode: _attemptMode!,
-        key: _attemptKey!,
-        guest: _attemptGuest,
-        billingCountry: _attemptCountry,
-        recipientId: _attemptRecipient,
-        recurringIntervalDays: recurringIntervalDays,
-      );
-      if (_transactionId != null && _transactionId != session.transactionId) {
-        throw const FormatException('Attempt binding mismatch');
+    try {
+      if (_attemptMode == CheckoutMode.mock) {
+        final t = await client.topups.purchase(
+          quoteId: _attemptQuote!,
+          idempotencyKey: _attemptKey!,
+          recipientId: _attemptRecipient,
+        );
+        // Read canonical server state; no local inference from HTTP success.
+        _transactionId = t.id;
+        await refresh();
+      } else {
+        final session = await client.payment(
+          quote: quote!,
+          mode: _attemptMode!,
+          key: _attemptKey!,
+          guest: _attemptGuest,
+          billingCountry: _attemptCountry,
+          recipientId: _attemptRecipient,
+          recurringIntervalDays: recurringIntervalDays,
+        );
+        if (_transactionId != null && _transactionId != session.transactionId) {
+          throw const FormatException('Attempt binding mismatch');
+        }
+        hosted = session;
+        _transactionId = session.transactionId;
+        _schedule();
       }
-      hosted = session;
-      _transactionId = session.transactionId;
-      _schedule();
+    } catch (e) {
+      // These codes are emitted only before reservation/Stripe dispatch. An
+      // earlier uncertain request overrides this proof: a later guard rejection
+      // cannot prove that the earlier request created no payment.
+      final data = e is DioException ? e.response?.data : null;
+      final code = data is Map ? data['code'] : null;
+      final status = e is DioException ? e.response?.statusCode : null;
+      final rejectedBeforeReservation =
+          status != null &&
+          status >= 400 &&
+          status < 500 &&
+          const {
+            'EMAIL_VERIFICATION_REQUIRED',
+            'RECHARGE_RESTRICTED',
+            'REGISTERED_ACCOUNT_REQUIRED',
+            'GUEST_ACCESS_DISABLED',
+            'DEVICE_RESTRICTED_LINK',
+            'DEVICE_ACCOUNT_LIMIT',
+            'PAYMENT_ATTEMPT_LIMIT',
+            'PAYMENT_CARD_LIMIT',
+            'BILLING_COUNTRY_REQUIRED',
+            'TOPUP_QUOTE_EXPIRED',
+            'TOPUP_QUOTE_NOT_FOUND',
+          }.contains(code);
+      if (!_attemptUncertain &&
+          _transactionId == null &&
+          rejectedBeforeReservation) {
+        _attemptKey = null;
+        _attemptQuote = null;
+        _attemptRecipient = null;
+        _attemptCountry = null;
+        _attemptMode = null;
+        hosted = null;
+        reviewed = false;
+        step = RechargeStep.review;
+        if (code == 'TOPUP_QUOTE_EXPIRED' || code == 'TOPUP_QUOTE_NOT_FOUND') {
+          _invalidateQuote();
+          step = RechargeStep.product;
+        }
+      } else {
+        _attemptUncertain = true;
+      }
+      rethrow;
     }
   }
 
@@ -780,6 +845,7 @@ class RechargeJourney extends ChangeNotifier {
 
   Future<void> _refresh() async {
     final v = _revision;
+    final lookupKey = _attemptKey;
     final recovering =
         (step == RechargeStep.recovery || _historyCheckRequired) &&
         _attemptKey == null &&
@@ -793,15 +859,31 @@ class RechargeJourney extends ChangeNotifier {
         }
         return;
       }
-      final updated = _resumeToken != null
+      final missingOrderId =
+          _attemptKey != null && _transactionId == null && _resumeToken == null;
+      final updated = missingOrderId
+          ? await client.paymentAttemptStatus(_attemptKey!, _attemptQuote!)
+          : _resumeToken != null
           ? await client.resume(_resumeToken!)
           : _transactionId != null
           ? await client.transaction(_transactionId!)
           : null;
-      if (!_current(v) || updated == null) return;
-      if (_resumeToken == null && updated.id != _transactionId) {
+      if (!_current(v)) return;
+      if (missingOrderId && _attemptKey != lookupKey) return;
+      if (updated == null) {
+        if (missingOrderId) {
+          error = 'paymentOutcomeUnknown';
+          step = RechargeStep.recovery;
+          _emit();
+        }
+        return;
+      }
+      if (!missingOrderId &&
+          _resumeToken == null &&
+          updated.id != _transactionId) {
         throw const FormatException('Transaction mismatch');
       }
+      if (missingOrderId) _transactionId = updated.id;
       error = null;
       result = updated;
       _updateHistory(updated);
@@ -810,7 +892,20 @@ class RechargeJourney extends ChangeNotifier {
         _timer?.cancel();
         _resumeToken = null;
         _attemptKey = null;
+        _attemptUncertain = false;
         hosted = null;
+      } else if (hosted == null &&
+          _resumeToken == null &&
+          updated.status == 'PENDING' &&
+          ['SESSION_CREATED', 'PENDING'].contains(updated.paymentStatus) &&
+          updated.data['paymentSessionId'] is String) {
+        try {
+          final recovered = await client.recoverCheckout(updated);
+          if (!_current(v)) return;
+          hosted = recovered;
+        } catch (e) {
+          error = safeError(e);
+        }
       }
       _emit();
       _schedule();
@@ -1001,6 +1096,7 @@ class RechargeJourney extends ChangeNotifier {
     _transactionId = null;
     _attemptQuote = null;
     _attemptKey = null;
+    _attemptUncertain = false;
     _attemptRecipient = null;
     _attemptCountry = null;
     _attemptMode = null;

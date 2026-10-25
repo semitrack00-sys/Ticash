@@ -1491,6 +1491,17 @@ export class MobileTopUpService {
     return refresh ? this.refreshTransaction(record, !flupFlapCustomerId(userId)) : record;
   }
 
+  async getPaymentAttempt(userId: string, key: string, quoteId: string) {
+    this.assertEnabled();
+    const record = await this.repository.getTransactionByIdempotency(userId, key);
+    // Absence is not permission to send a new payment: an earlier request may
+    // still be running. The caller must retain its original idempotency key.
+    if (!record) return null;
+    if (record.quoteId !== quoteId) throw new MobileTopUpError('IDEMPOTENCY_CONFLICT', 'Payment attempt does not match this quote', 409);
+    // Receipt visibility must not hide the canonical outcome of an owned key.
+    return this.refreshTransaction(record, !flupFlapCustomerId(userId));
+  }
+
   async recoverHostedCheckout(userId: string, id: string) {
     const record = await this.getTransaction(userId, id);
     await this.assertPurchaseIdentity?.(userId);

@@ -77,6 +77,8 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     const c=await customer();const reserved=await new PrismaMobileTopUpRepository(clients[0]!).reserveTransaction(await input(c.id));
     const attempt={eventType:'payment_intent.payment_failed',attemptId:'ch_'+randomUUID(),fingerprint:'hashed-fixture',occurredAt:new Date()};
     await Promise.all(clients.map((db,i)=>new PrismaMobileTopUpRepository(db).registerPaymentEvent('evt_'+randomUUID(),'hash'+i,reserved.record.id,attempt)));
+    const duplicateEvent='evt_'+randomUUID();
+    await Promise.all(clients.map(db=>new PrismaMobileTopUpRepository(db).registerPaymentEvent(duplicateEvent,'same-hash',reserved.record.id,attempt)));
     expect(await clients[0]!.auditLog.count({where:{flupFlapCustomerId:c.id,action:'FLUPFLAP_PAYMENT_ATTEMPT_FAILED'}})).toBe(1);
     expect(await paymentAttemptReviewReason(clients[0]!,c.id)).toBeUndefined();
     for(let i=0;i<2;i++)await new PrismaMobileTopUpRepository(clients[0]!).registerPaymentEvent('evt_'+randomUUID(),'hash',reserved.record.id,{...attempt,attemptId:'ch_'+randomUUID()});

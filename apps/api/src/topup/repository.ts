@@ -585,9 +585,12 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
   }
 
   async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string, attempt?: VerifiedStripeEvent['attempt']) {
+    const key = { provider_eventId: { provider: 'STRIPE' as const, eventId } };
     const record = await this.prisma.mobileTopUpPaymentEvent.upsert({
-      where: { provider_eventId: { provider: 'STRIPE', eventId } },
-      create: { provider: 'STRIPE', eventId, payloadHash, transactionId }, update: {},
+      where: key, create: { provider: 'STRIPE', eventId, payloadHash, transactionId }, update: {},
+    }).catch(async error => {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+      return this.prisma.mobileTopUpPaymentEvent.findUniqueOrThrow({ where: key });
     });
     assertSameEvent(record, payloadHash, transactionId);
     if (attempt && !record.processedAt) {
@@ -596,7 +599,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
         // One audit row per Stripe charge, even if Stripe sends multiple events.
         // Both this write and event registration are idempotent across retries.
         const id = 'stripe-attempt:' + createHash('sha256').update(transactionId + ':' + attempt.attemptId).digest('hex');
-        await this.prisma.auditLog.upsert({ where: { id }, update: {}, create: {
+        await this.prisma.auditLog.createMany({ skipDuplicates: true, data: {
           id, flupFlapCustomerId: transaction.flupFlapCustomerId, action: 'FLUPFLAP_PAYMENT_ATTEMPT_FAILED',
           entity: 'MobileTopUpTransaction', entityId: transactionId, createdAt: attempt.occurredAt,
           metadata: { attemptId: attempt.attemptId, fingerprint: attempt.fingerprint ?? null },

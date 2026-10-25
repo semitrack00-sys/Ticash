@@ -42,6 +42,32 @@ not refund payments or release existing fraud holds.
 
 ## Deployment and operations
 
+### Audited purchase-attempt resets
+
+Admins and super admins have `recharge.attempts.reset`; operations, support and
+read-only staff do not. In FlupFlap Customers, **Reset purchase-attempt limit**
+requires a review reason of 20–500 characters. The protected POST endpoint is
+`/api/admin/flupflap/customers/:id/purchase-attempts/reset`, with `reason` and a
+32-character lowercase hex `requestId` for idempotent retries.
+
+The reset snapshots only production reservations currently FAILED/FAILED within
+24 hours. It exempts those explicit IDs from reservation-count checks for that
+customer, including their contributions to the shared recipient count during
+that customer's checkout. Other customers' recipient reservations still count.
+Successful purchases and every dollar of reserved usage still count. Fresh
+reservations count immediately; repeating an identical reset request cannot
+exempt newer reservations. This is not an unlimited purchase allowance.
+
+The customer row lock serializes checkout and reset. Inactive, guest or restricted
+accounts, unresolved payments and fraud holds cannot be reset. An atomic audit
+row records the actor, reason, customer and exact exempted IDs; failure to write
+the audit aborts the reset. No payment, transaction or failure event is deleted
+or changed. Signed failed-charge cooldowns, card/device controls, verification,
+CVC/ZIP, issuer authentication, dollar limits, fraud holds and idempotency remain
+independent. A reset can therefore succeed while another control still blocks
+a purchase. This operation never releases funds, creates Checkout or delivers
+airtime. No schema migration or customer Android release is required.
+
 Apply migrations 20261024010000_recharge_fraud_assessment and 20261024020000_recharge_fraud_review and generate Prisma before deploying. Missing database/provider evidence fails closed into a hold. Review held payments promptly in Stripe and the admin dashboard. Investigate the supplier state before refunds. Authorized staff with recharge.reconciliation permission can POST /api/admin/flupflap/transactions/:id/fraud-review/release with a reason of 20–500 characters. Release requires fresh normal-risk, captured, undisputed, unrefunded Stripe evidence that passes the automatic-3DS policy and all mandatory card checks and an active unrestricted customer. Approval is audited and bound to the charge and hashed card fingerprint; fulfillment checks evidence again. This permits reviewed card-velocity exceptions, never risk or authentication overrides. The mobile receipt and checkout resume response identify held payments and tell customers not to pay again. The staff transaction screen includes a reason-entry review action. Flutter validation remains outstanding. Do not clear the failure code directly as an operational workaround.
 
 ## Outstanding work — do not describe as enabled

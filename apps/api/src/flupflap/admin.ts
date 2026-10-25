@@ -20,6 +20,14 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
  const page=z.coerce.number().int().min(0).max(100000).default(0);
  router.get('/dashboard',async(_req,res)=>res.json({domain:'FLUPFLAP',...options.service.availability()}));
  router.get('/customers',protect('recharge.customers.view'),async(_req,res)=>res.json({customers:(await options.identities.listCustomers()).map(c=>({...publicFlupFlapCustomer(c),rechargeRestricted:c.rechargeRestricted})),limit:100}));
+ router.post('/customers/:id/purchase-attempts/reset',protect('recharge.attempts.reset'),async(req:AdminRequest,res)=>{
+  res.set('Cache-Control','no-store');
+  const id=z.uuid().parse(req.params.id);
+  const {reason,requestId}=z.object({reason:z.string().trim().min(20).max(500),requestId:z.string().regex(/^[a-f0-9]{32}$/)}).strict().parse(req.body);
+  if(!req.userId){res.status(401).json({code:'AUTH_REQUIRED'});return;}
+  if(!options.recharge.resetPurchaseAttempts){res.status(503).json({code:'PURCHASE_RESET_UNAVAILABLE'});return;}
+  res.json({...await options.recharge.resetPurchaseAttempts(id,req.userId,reason,requestId),otherLimitsStillApply:true});
+ });
  router.patch('/customers/:id/restrictions',protect('recharge.operations'),async(req:AdminRequest,res)=>{
   const id=z.uuid().parse(req.params.id);const input=z.object({rechargeRestricted:z.boolean(),reason:z.string().trim().min(5).max(300)}).strict().parse(req.body);
   if(!await options.identities.customer(id)){res.status(404).json({code:'CUSTOMER_NOT_FOUND'});return;}

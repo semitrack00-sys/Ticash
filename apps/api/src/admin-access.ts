@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 export const adminPermissions = [
+  'recharge.attempts.reset',
   'recharge.stores.view', 'recharge.stores.manage', 'recharge.stores.funding',
   'recharge.view', 'recharge.transactions.view', 'recharge.customers.view',
   'recharge.providers.view', 'recharge.providers.manage', 'recharge.operations',

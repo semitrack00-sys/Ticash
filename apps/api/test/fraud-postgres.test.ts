@@ -1,4 +1,5 @@
 import { paymentAttemptReviewReason } from '../src/topup/payment-attempt-controls.js';
+import { resetPurchaseAttempts, resetPurchaseAttemptIds } from '../src/topup/purchase-attempt-reset.js';
 import { checkRechargeDevice } from '../src/flupflap/device-security.js';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -41,6 +42,58 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     const results=await Promise.all(clients.map(db=>new PrismaMobileTopUpRepository(db).reserveTransaction(record)));
     expect(new Set(results.map(r=>r.record.id)).size).toBe(1);
     expect(await clients[0]!.mobileTopUpTransaction.count({where:{flupFlapCustomerId:c.id}})).toBe(1);
+  });
+  async function resetFixture() {
+    const c = await customer();
+    const staff = await clients[0]!.user.create({data:{email:randomUUID()+'@example.test',passwordHash:'fixture',firstName:'Staff',lastName:'Fixture'}});
+    const records = await Promise.all(Array.from({length:3},()=>input(c.id)));
+    const repo = new PrismaMobileTopUpRepository(clients[0]!);
+    for (const record of records) {
+      await repo.reserveTransaction(record);
+      await clients[0]!.mobileTopUpTransaction.update({where:{id:record.id},data:{status:'FAILED',paymentStatus:'FAILED',failureCode:'CANCELLED_BY_CUSTOMER'}});
+    }
+    return {c, staff, records, repo};
+  }
+  it('audits reset IDs without deleting history and keeps fresh concurrent attempts limited',async()=>{
+    const {c,staff,records,repo}=await resetFixture();
+    await expect(repo.reserveTransaction(await input(c.id))).rejects.toMatchObject({code:'RECHARGE_LIMIT_REACHED'});
+    const requestId=randomUUID().replaceAll('-','');
+    expect(await resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',requestId)).toEqual({resetCount:3});
+    expect(await clients[0]!.mobileTopUpTransaction.count({where:{flupFlapCustomerId:c.id,status:'FAILED'}})).toBe(3);
+    expect((await repo.reserveTransaction(records[0]!)).created).toBe(false);
+    const audit=await clients[0]!.auditLog.findUniqueOrThrow({where:{id:'purchase-reset:'+requestId}});
+    expect(audit).toMatchObject({userId:staff.id,flupFlapCustomerId:c.id,action:'FLUPFLAP_PURCHASE_ATTEMPTS_RESET'});
+    const inputs=await Promise.all(clients.map(()=>input(c.id)));
+    const results=await Promise.allSettled(inputs.map((r,i)=>new PrismaMobileTopUpRepository(clients[i]!).reserveTransaction(r)));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(3);
+    // Replaying the same admin request cannot include later reservations.
+    expect(await resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',requestId)).toEqual({resetCount:3});
+    expect(await resetPurchaseAttemptIds(clients[0]!,c.id,new Date())).toEqual(new Set(records.map(r=>r.id)));
+  });
+  it('refuses unresolved payments, restrictions and audit failures',async()=>{
+    const {c,staff,records}=await resetFixture();
+    await clients[0]!.mobileTopUpTransaction.update({where:{id:records[0]!.id},data:{status:'PENDING',paymentStatus:'SESSION_CREATED'}});
+    await expect(resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toMatchObject({code:'PURCHASE_RESET_PAYMENT_UNRESOLVED'});
+    await clients[0]!.mobileTopUpTransaction.update({where:{id:records[0]!.id},data:{status:'FAILED',paymentStatus:'FAILED'}});
+    await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{rechargeRestricted:true}});
+    await expect(resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toMatchObject({code:'PURCHASE_RESET_RESTRICTED'});
+    await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{rechargeRestricted:false}});
+    // Missing staff FK forces the audit INSERT to fail, rolling back its exemption.
+    await expect(resetPurchaseAttempts(clients[0]!,c.id,randomUUID(),'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toThrow();
+    expect(await resetPurchaseAttemptIds(clients[0]!,c.id,new Date())).toEqual(new Set());
+  });
+  it('keeps monetary budgets and other buyers recipient reservations after reset',async()=>{
+    const {c,staff,records,repo}=await resetFixture();
+    await resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''));
+    await clients[0]!.mobileTopUpTransaction.updateMany({where:{flupFlapCustomerId:c.id},data:{totalChargeUsd:70}});
+    await expect(repo.reserveTransaction(await input(c.id))).rejects.toMatchObject({code:'RECHARGE_LIMIT_REACHED'});
+    await clients[0]!.mobileTopUpTransaction.updateMany({where:{flupFlapCustomerId:c.id},data:{totalChargeUsd:5}});
+    const other=await customer();
+    // The first buyer's reset is never an exemption for another buyer.
+    const phone=records[0]!.recipientPhone;
+    for(let i=0;i<2;i++)await repo.reserveTransaction(await input(other.id,phone));
+    expect((await repo.reserveTransaction(await input(c.id,phone))).created).toBe(true);
+    await expect(repo.reserveTransaction(await input(c.id,phone))).rejects.toMatchObject({code:'RECHARGE_LIMIT_REACHED'});
   });
   it('shares recipient limits across concurrent new accounts before consuming quotes',async()=>{
     const phone='+509'+randomUUID().replace(/\D/g,'').slice(0,8).padEnd(8,'2');

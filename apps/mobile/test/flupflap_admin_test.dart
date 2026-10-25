@@ -8,6 +8,7 @@ import 'package:ticash/services/admin_service.dart';
 
 class AdminFixture implements HttpClientAdapter {
   final requests = <String>[];
+  final resets = <Map<String, dynamic>>[];
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
@@ -15,6 +16,11 @@ class AdminFixture implements HttpClientAdapter {
     Future<void>? cancel,
   ) async {
     requests.add(options.path);
+    if (options.path.endsWith('/purchase-attempts/reset')) {
+      resets.add(Map<String, dynamic>.from(options.data as Map));
+      return ResponseBody.fromString(jsonEncode({'resetCount': 3, 'otherLimitsStillApply': true}), 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    }
     final data = options.path.endsWith('/customers')
         ? {
             'customers': [
@@ -41,6 +47,33 @@ class AdminFixture implements HttpClientAdapter {
 }
 
 void main() {
+  testWidgets('admin reset requires review reason and reports the scoped result', (tester) async {
+    final adapter = AdminFixture();
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = adapter;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(
+      dio: dio, session: const AdminSession(role: 'ADMIN', permissions: {
+        'recharge.view', 'recharge.customers.view', 'recharge.attempts.reset',
+      }, environment: 'PRODUCTION'),
+    ))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('FlupFlap Customers'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Reset purchase-attempt limit'));
+    await tester.tap(find.text('Reset purchase-attempt limit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reset attempt count'));
+    await tester.pumpAndSettle();
+    expect(adapter.resets, isEmpty);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.enterText(find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)),
+      'Reviewed failed reservations with the customer');
+    await tester.tap(find.text('Reset attempt count'));
+    await tester.pumpAndSettle();
+    expect(adapter.resets, hasLength(1));
+    expect(adapter.resets.single['reason'], 'Reviewed failed reservations with the customer');
+    expect(adapter.resets.single['requestId'], matches(RegExp(r'^[a-f0-9]{32}$')));
+    expect(find.textContaining('3 failed reservation counts reset.'), findsOneWidget);
+  });
   testWidgets(
     'no recharge permission means no admin requests or customer records',
     (tester) async {
@@ -90,6 +123,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('fixture@example.test'), findsOneWidget);
       expect(find.text('Restrict recharge'), findsNothing);
+      expect(find.text('Reset purchase-attempt limit'), findsNothing);
       expect(
         adapter.requests.every((p) => p.startsWith('/admin/flupflap/')),
         true,

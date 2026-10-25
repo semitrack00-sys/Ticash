@@ -27,6 +27,7 @@ class MemoryStorage implements SessionStorage {
 class FixtureAdapter implements HttpClientAdapter {
   final requests = <RequestOptions>[];
   bool denied = false;
+  bool guestResponse = false;
   bool denyCountries = false;
   Completer<void>? holdCountries;
   final countriesStarted = Completer<void>();
@@ -64,7 +65,10 @@ class FixtureAdapter implements HttpClientAdapter {
       '/flupflap/auth/guest',
       '/flupflap/auth/refresh',
     ].contains(options.path)) {
-      user = {...user, 'guest': options.path.endsWith('/guest')};
+      user = {
+        ...user,
+        'guest': guestResponse || options.path.endsWith('/guest'),
+      };
       data = {
         'accessToken': 'fixture-access',
         'refreshToken': 'fixture-refresh',
@@ -111,42 +115,61 @@ class FixtureAdapter implements HttpClientAdapter {
 }
 
 void main() {
-  test('old unauthorized response is not retried under a newer signed-in account', () async {
-    final (session, adapter, _) = fixture();
-    await session.login('flup@example.test', 'test-password');
-    adapter.holdCountries = Completer<void>();
-    final pending = session.dio.get<dynamic>('/flupflap/mobile-topups/countries');
-    final rejected = expectLater(pending, throwsA(isA<DioException>()));
-    await adapter.countriesStarted.future;
-    await session.logout();
-    adapter.user = {...adapter.user, 'id': 'new-account'};
-    await session.login('new@example.test', 'test-password');
-    adapter.denyCountries = true;
-    adapter.holdCountries!.complete();
-    await rejected;
-    expect(session.user?['id'], 'new-account');
-    expect(adapter.requests.where((r) => r.path.endsWith('/refresh')), isEmpty);
-    expect(adapter.requests.where((r) => r.path.endsWith('/countries')).length, 1);
-  });
-  for (final refreshFails in [false, true]) {
-    test('late refresh (failure: $refreshFails) cannot erase or replay a newer login', () async {
-      final (session, adapter, storage) = fixture();
+  test(
+    'old unauthorized response is not retried under a newer signed-in account',
+    () async {
+      final (session, adapter, _) = fixture();
       await session.login('flup@example.test', 'test-password');
-      adapter.denyCountries = true;
-      adapter.holdRefresh = Completer<void>();
-      final pending = session.dio.get<dynamic>('/flupflap/mobile-topups/countries');
+      adapter.holdCountries = Completer<void>();
+      final pending = session.dio.get<dynamic>(
+        '/flupflap/mobile-topups/countries',
+      );
       final rejected = expectLater(pending, throwsA(isA<DioException>()));
-      await adapter.refreshStarted.future;
+      await adapter.countriesStarted.future;
+      await session.logout();
       adapter.user = {...adapter.user, 'id': 'new-account'};
       await session.login('new@example.test', 'test-password');
-      adapter.denied = refreshFails;
-      adapter.holdRefresh!.complete();
+      adapter.denyCountries = true;
+      adapter.holdCountries!.complete();
       await rejected;
       expect(session.user?['id'], 'new-account');
-      expect(session.authenticated, isTrue);
-      expect(storage.value, 'fixture-refresh');
-      expect(adapter.requests.where((r) => r.path.endsWith('/countries')).length, 1);
-    });
+      expect(
+        adapter.requests.where((r) => r.path.endsWith('/refresh')),
+        isEmpty,
+      );
+      expect(
+        adapter.requests.where((r) => r.path.endsWith('/countries')).length,
+        1,
+      );
+    },
+  );
+  for (final refreshFails in [false, true]) {
+    test(
+      'late refresh (failure: $refreshFails) cannot erase or replay a newer login',
+      () async {
+        final (session, adapter, storage) = fixture();
+        await session.login('flup@example.test', 'test-password');
+        adapter.denyCountries = true;
+        adapter.holdRefresh = Completer<void>();
+        final pending = session.dio.get<dynamic>(
+          '/flupflap/mobile-topups/countries',
+        );
+        final rejected = expectLater(pending, throwsA(isA<DioException>()));
+        await adapter.refreshStarted.future;
+        adapter.user = {...adapter.user, 'id': 'new-account'};
+        await session.login('new@example.test', 'test-password');
+        adapter.denied = refreshFails;
+        adapter.holdRefresh!.complete();
+        await rejected;
+        expect(session.user?['id'], 'new-account');
+        expect(session.authenticated, isTrue);
+        expect(storage.value, 'fixture-refresh');
+        expect(
+          adapter.requests.where((r) => r.path.endsWith('/countries')).length,
+          1,
+        );
+      },
+    );
   }
   test('startup refresh cannot clear a newer signed-in account', () async {
     final (session, adapter, storage) = fixture();
@@ -162,29 +185,47 @@ void main() {
     expect(session.authenticated, isTrue);
     expect(storage.value, 'fixture-refresh');
   });
-  test('session rejects changed API destinations before sending credentials', () async {
-    final (session, adapter, _) = fixture();
-    await session.login('flup@example.test', 'test-password');
-    for (final base in [
-      'https://attacker.example/api', 'http://api.example.test/api',
-      'https://api.example.test:444/api', 'https://api.example.test/other',
-    ]) {
-      session.dio.options.baseUrl = base;
-      await expectLater(session.dio.get<dynamic>('/flupflap/auth/me'),
-        throwsA(isA<DioException>()));
-      await expectLater(session.login('flup@example.test', 'test-password'),
-        throwsA(isA<DioException>()));
-    }
-    expect(adapter.requests.length, 1);
-  });
+  test(
+    'session rejects changed API destinations before sending credentials',
+    () async {
+      final (session, adapter, _) = fixture();
+      await session.login('flup@example.test', 'test-password');
+      for (final base in [
+        'https://attacker.example/api',
+        'http://api.example.test/api',
+        'https://api.example.test:444/api',
+        'https://api.example.test/other',
+      ]) {
+        session.dio.options.baseUrl = base;
+        await expectLater(
+          session.dio.get<dynamic>('/flupflap/auth/me'),
+          throwsA(isA<DioException>()),
+        );
+        await expectLater(
+          session.login('flup@example.test', 'test-password'),
+          throwsA(isA<DioException>()),
+        );
+      }
+      expect(adapter.requests.length, 1);
+    },
+  );
   test('session disables redirects even when a caller enables them', () async {
     final (session, adapter, _) = fixture();
     await session.login('flup@example.test', 'test-password');
-    await session.dio.get<dynamic>('/flupflap/mobile-topups/countries',
-      options: Options(followRedirects: true, headers: {'authorization': 'Bearer wrong-token'}));
+    await session.dio.get<dynamic>(
+      '/flupflap/mobile-topups/countries',
+      options: Options(
+        followRedirects: true,
+        headers: {'authorization': 'Bearer wrong-token'},
+      ),
+    );
     expect(adapter.requests.every((r) => !r.followRedirects), isTrue);
-    expect(adapter.requests.last.headers.entries.where((e) => e.key.toLowerCase() == 'authorization')
-      .map((e) => e.value), ['Bearer fixture-access']);
+    expect(
+      adapter.requests.last.headers.entries
+          .where((e) => e.key.toLowerCase() == 'authorization')
+          .map((e) => e.value),
+      ['Bearer fixture-access'],
+    );
   });
   testWidgets('registration sends locale-based national phone in E.164', (
     tester,
@@ -326,10 +367,24 @@ void main() {
       expect(a.requests.length, 1);
     },
   );
-  test('guest, logout and refresh use only FlupFlap namespace', () async {
+  test(
+    'legacy guest sessions are rejected before storing their credentials',
+    () async {
+      final (s, a, storage) = fixture();
+      a.guestResponse = true;
+      await expectLater(
+        s.login('flup@example.test', 'test-password'),
+        throwsFormatException,
+      );
+      expect(s.authenticated, isFalse);
+      expect(storage.value, isNull);
+      expect(a.requests.where((r) => r.path.endsWith('/guest')), isEmpty);
+    },
+  );
+  test('login, logout and refresh use only FlupFlap namespace', () async {
     final (s, a, storage) = fixture();
-    await s.enterGuest();
-    expect(s.guest, true);
+    await s.login('flup@example.test', 'test-password');
+    expect(s.guest, false);
     await s.refresh();
     await s.logout();
     expect(s.authenticated, false);
@@ -355,14 +410,14 @@ void main() {
     },
   );
   testWidgets(
-    'lightweight signup and guest entry are accessible without remittance fields',
+    'lightweight signup requires an account and exposes no guest entry',
     (tester) async {
       final (s, _, _) = fixture();
       await s.initialize();
       await tester.pumpWidget(FlupFlapApp(session: s));
       await tester.pumpAndSettle();
       expect(find.text('Welcome'), findsOneWidget);
-      expect(find.text('Continue as guest'), findsOneWidget);
+      expect(find.text('Continue as guest'), findsNothing);
       expect(find.textContaining('KYC'), findsNothing);
       await tester.ensureVisible(find.text('Create account'));
       await tester.pumpAndSettle();
@@ -373,11 +428,8 @@ void main() {
       expect(find.text('Last name'), findsOneWidget);
       expect(find.text('Phone number'), findsOneWidget);
       expect(find.byType(TextField), findsNWidgets(5));
-      final guestButton = find.text('Continue as guest');
-      await tester.ensureVisible(guestButton);
-      await tester.tap(guestButton);
-      await tester.pumpAndSettle();
-      expect(find.text('Start recharge'), findsOneWidget);
+      expect(find.text('Continue as guest'), findsNothing);
+      expect(s.authenticated, isFalse);
     },
   );
   testWidgets(

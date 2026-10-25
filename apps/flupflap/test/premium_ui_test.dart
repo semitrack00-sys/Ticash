@@ -216,10 +216,9 @@ Future<(FlupFlapSession, CatalogAdapter)> app(
   );
   await session.initialize();
   await tester.runAsync(
-    () => guest
-        ? session.enterGuest()
-        : session.login('customer@example.test', 'test-password'),
+    () => session.login('customer@example.test', 'test-password'),
   );
+  if (guest) session.user = {...session.user!, 'guest': true};
   await tester.pumpWidget(FlupFlapApp(session: session));
   await tester.pumpAndSettle();
   return (session, adapter);
@@ -253,8 +252,9 @@ Future<void> screenshot(WidgetTester tester, String name) async {
     final image = await boundary.toImage();
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     await Directory(directory).create(recursive: true);
-    await File('$directory/$name.png')
-        .writeAsBytes(bytes!.buffer.asUint8List());
+    await File(
+      '$directory/$name.png',
+    ).writeAsBytes(bytes!.buffer.asUint8List());
     image.dispose();
   });
 }
@@ -314,17 +314,7 @@ void main() {
         await tap(tester, find.text('Sign out'));
         expect(find.text('Welcome'), findsOneWidget);
         if (scale == 1) await screenshot(tester, 'login-${width.toInt()}');
-        final guestButton = find.widgetWithText(
-          OutlinedButton,
-          'Continue as guest',
-        );
-        await tester.ensureVisible(guestButton);
-        await tester.pumpAndSettle();
-        final buttonRect = tester.getRect(guestButton);
-        final labelRect = tester.getRect(find.text('Continue as guest'));
-        expect(buttonRect.height, greaterThanOrEqualTo(54));
-        expect(buttonRect.contains(labelRect.topLeft), isTrue);
-        expect(buttonRect.contains(labelRect.bottomRight), isTrue);
+        expect(find.text('Continue as guest'), findsNothing);
 
         await tap(tester, find.text('Create account'));
         tester.view.viewInsets = const FakeViewPadding(bottom: 300);
@@ -332,9 +322,7 @@ void main() {
         await tester.pumpAndSettle();
         await tap(tester, find.byTooltip('Show password'));
         expect(tester.takeException(), isNull);
-        await tester.ensureVisible(find.text('Continue as guest'));
-        await tester.pumpAndSettle();
-        expect(find.text('Continue as guest').hitTestable(), findsOneWidget);
+        expect(find.text('Continue as guest'), findsNothing);
         expect(
           adapter.requests.every((r) => r.path.startsWith('/flupflap/')),
           true,
@@ -516,13 +504,12 @@ void main() {
   );
 
   testWidgets(
-    'guest account exposes no profile write and logout clears its session',
+    'legacy guest account returns to sign-in without account access',
     (tester) async {
       final (session, adapter) = await app(tester, 360, guest: true);
-      await tap(tester, find.widgetWithText(NavigationDestination, 'Account'));
-      expect(find.text('Save profile'), findsNothing);
-      expect(find.textContaining('separate from your TiCash'), findsOneWidget);
-      await tap(tester, find.text('Sign out'));
+      expect(find.text('Welcome'), findsOneWidget);
+      expect(find.byType(NavigationDestination), findsNothing);
+      expect(find.text('Continue as guest'), findsNothing);
       expect(session.authenticated, false);
       expect(adapter.requests.where((r) => r.method == 'PATCH'), isEmpty);
     },

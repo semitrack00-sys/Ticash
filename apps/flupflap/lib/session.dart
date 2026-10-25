@@ -126,7 +126,7 @@ class FlupFlapSession extends ChangeNotifier {
   Future<void>? _storageWork;
   bool ready = false;
   String? deletionNotice;
-  bool get authenticated => user != null && _accessToken != null;
+  bool get authenticated => user != null && _accessToken != null && !guest;
   bool get guest => user?['guest'] == true;
   Future<void> initialize() async {
     final epoch = _epoch;
@@ -155,6 +155,7 @@ class FlupFlapSession extends ChangeNotifier {
     final data = Map<String, dynamic>.from(value as Map);
     final customer = Map<String, dynamic>.from(data['user'] as Map);
     if (customer['domain'] != 'FLUPFLAP' ||
+        customer['guest'] == true || data['guest'] == true ||
         data['accessToken'] is! String ||
         data['refreshToken'] is! String) {
       throw const FormatException('Invalid FlupFlap session');
@@ -194,7 +195,6 @@ class FlupFlapSession extends ChangeNotifier {
     'email': email,
     'password': password,
   });
-  Future<void> enterGuest() => _authenticate('guest', {});
   Future<void> refresh() {
     if (_loggingOut) return Future.error(StateError('Signing out'));
     return _refreshing ??= _refresh().whenComplete(() => _refreshing = null);

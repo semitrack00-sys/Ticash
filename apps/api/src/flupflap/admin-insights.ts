@@ -2,6 +2,7 @@ import express, { type RequestHandler } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { analyticsWindow } from '../admin-analytics.js';
+import { adminCountry } from '../admin-country.js';
 import type { AdminPermission, AdminRequest } from '../admin-access.js';
 
 export const insightMetrics = ['clients.total','clients.active','clients.new','clients.today','clients.week','clients.month','clients.year',
@@ -55,7 +56,7 @@ export function insightQuery(request:InsightRequest, includeCustomerDetails:bool
     FROM records r LEFT JOIN customers c ON c.id=r.customer WHERE r.created>=${start} AND ${outcome}`;
   return Prisma.sql`WITH customers AS (
     SELECT c.*,c."createdAt" AS created,c."guestExpiresAt" IS NOT NULL AS guest,
-      CASE WHEN upper(trim(c."countryCode")) ~ '^[A-Z]{2}$' THEN upper(trim(c."countryCode")) ELSE 'UNKNOWN' END AS country
+      ${adminCountry(Prisma.sql`c."countryCode"`)} AS country
     FROM "FlupFlapCustomer" c WHERE c."createdAt"<${end}
   ),records AS (
     SELECT t.id,t."flupFlapCustomerId" AS customer,t."createdAt" AS created,t.status::text AS status,t."paymentStatus"::text AS payment,
@@ -63,7 +64,7 @@ export function insightQuery(request:InsightRequest, includeCustomerDetails:bool
         WHEN t.status='FAILED' OR t."paymentStatus"='FAILED' THEN 'FAILED'
         WHEN t.status='DELIVERED' AND t."paymentStatus"='CAPTURED' THEN 'SUCCESS' ELSE 'PENDING' END AS outcome,
       (t."providerAmount"*100)::numeric(38,0) AS amount,(t."feeUsd"*100)::numeric(38,0) AS fee,(t."totalChargeUsd"*100)::numeric(38,0) AS total,
-      CASE WHEN upper(trim(t."countryCode")) ~ '^[A-Z]{2}$' THEN upper(trim(t."countryCode")) ELSE 'UNKNOWN' END AS country,
+      ${adminCountry(Prisma.sql`t."countryCode"`)} AS country,
       t."operatorName" AS operator,t."productName" AS product,t.kind::text AS kind,t."recipientPhone" AS recipient,
       t."deliveredValue" AS delivered,t."deliveredCurrency" AS currency,t."deliveredAt",t."failedAt",t."refundedAt",t."failureCode",t."paymentRecoveryCode",
       t."paymentProvider"::text AS "paymentProvider",t.provider::text AS provider

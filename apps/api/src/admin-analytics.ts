@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { adminCountry } from './admin-country.js';
 
 export type AnalyticsDomain = 'TICASH' | 'FLUPFLAP';
 const day = 86_400_000;
@@ -69,10 +70,10 @@ export function analyticsQuery(domain: AnalyticsDomain, window: AnalyticsWindow)
       AND t."createdAt" >= ${previousStart} AND t."createdAt" < ${end}`;
   const customers = domain === 'TICASH' ? Prisma.sql`
     SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest,
-      CASE WHEN upper(trim("countryCode")) ~ '^[A-Z]{2}$' THEN upper(trim("countryCode")) ELSE 'UNKNOWN' END AS country
+      ${adminCountry(Prisma.sql`"countryCode"`)} AS country
     FROM "User" WHERE role = 'CUSTOMER' AND "createdAt" < ${end}` : Prisma.sql`
     SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest,
-      CASE WHEN upper(trim("countryCode")) ~ '^[A-Z]{2}$' THEN upper(trim("countryCode")) ELSE 'UNKNOWN' END AS country
+      ${adminCountry(Prisma.sql`"countryCode"`)} AS country
     FROM "FlupFlapCustomer" WHERE "createdAt" < ${end}`;
   return Prisma.sql`
     WITH records AS (${source}), customers AS (${customers}),

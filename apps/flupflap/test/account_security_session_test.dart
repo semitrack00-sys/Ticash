@@ -84,7 +84,9 @@ void main() {
       final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))
         ..httpClientAdapter = adapter;
       final session = FlupFlapSession(dio: dio, storage: MemoryStorage());
-      await session.login('buyer@example.test', 'fixture-password');
+      await tester.runAsync(
+        () => session.login('buyer@example.test', 'fixture-password'),
+      );
       await tester.pumpWidget(MaterialApp(home: AuthScreen(session: session)));
       await tester.pumpAndSettle();
       expect(find.text('Verify sign-in'), findsOneWidget);

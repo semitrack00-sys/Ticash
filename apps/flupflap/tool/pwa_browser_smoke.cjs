@@ -71,8 +71,13 @@ async function boot(page) {
     });
     const returnPage=await returned.newPage(); returnPage.on('pageerror',error=>errors.push(error.message));
     const token='a'.repeat(43);
+    // URL scrubbing precedes the asynchronous resume request. Wait for the
+    // request itself instead of treating a clean URL as proof it has finished.
+    const resumeRequest=returnPage.waitForRequest(request=>request.url().endsWith('/checkout-resume') &&
+      request.method()==='POST', {timeout:10000});
     await returnPage.goto(origin+'/app/#/checkout-return?checkoutResumeToken='+token);
     await boot(returnPage);
+    await resumeRequest;
     for(let attempt=0;attempt<40 && returnPage.url().includes('checkoutResumeToken');attempt++) await pause(100);
     assert.ok(!returnPage.url().includes('checkoutResumeToken'),'Return capability must be removed from the URL');
     assert.ok(returnCalls.some(call=>call.url.endsWith('/checkout-resume') && JSON.parse(call.body).resumeToken===token));

@@ -28,6 +28,11 @@ Map<String, dynamic> analyticsFixture(
     'failed': 3,
     'reversed': 1,
   },
+  'clientCountries': [
+    {'code':'US','name':'United States','total':70,'registered':50,'guests':20},
+    {'code':'HT','name':'Haiti','total':40,'registered':20,'guests':20},
+    {'code':'UNKNOWN','name':'Not provided','total':2,'registered':2,'guests':0},
+  ],
   'volumeCents': today
       ? '1200'
       : domain == 'TICASH'
@@ -98,7 +103,16 @@ class AnalyticsFixtureAdapter implements HttpClientAdapter {
     final domain =
         wrongDomain ??
         (options.path.contains('/flupflap/') ? 'FLUPFLAP' : 'TICASH');
-    final data = options.path.endsWith('/analytics')
+    final data = options.path.endsWith('/details') || options.path.endsWith('/customer-directory')
+        ? {
+            'domain': domain, 'kind': 'CLIENTS', 'metric': options.queryParameters['metric'] ?? 'clients.total',
+            'mode':'live','total':112,'overallTotal':112,'offset':options.queryParameters['offset'] ?? 0,'nextOffset':25,
+            'countries':[{'code':'US','name':'United States','total':70},{'code':'HT','name':'Haiti','total':40},{'code':'UNKNOWN','name':'Not provided','total':2}],
+            'rows':[{'id':'client-fixture','firstName':'Marie','lastName':'Jean','email':'marie@example.test','phone':'+17755287791',
+              'countryCode':'US','guest':false,'createdAt':'2026-09-01T10:30:00Z','lastLoginAt':'2026-09-29T08:00:00Z','status':'ACTIVE',
+              'rechargeRestricted':false,'transactionCount':4,'successfulCount':3,'spentCents':'1500'}],
+          }
+        : options.path.endsWith('/analytics')
         ? analyticsFixture(
             domain,
             mode: options.queryParameters['mode'] as String? ?? 'live',

@@ -21,14 +21,19 @@ class AdminFixture implements HttpClientAdapter {
       return ResponseBody.fromString(jsonEncode({'resetCount': 3, 'otherLimitsStillApply': true}), 200,
         headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
     }
-    final data = options.path.endsWith('/customers')
+    final data = options.path.endsWith('/customer-directory')
         ? {
-            'customers': [
+            'domain': 'FLUPFLAP', 'kind': 'CLIENTS', 'mode': 'live', 'metric': 'clients.total',
+            'total': 1, 'overallTotal': 1, 'offset': 0, 'nextOffset': null,
+            'countries': [{'code': 'US', 'name': 'United States', 'total': 1}],
+            'rows': [
               {
                 'id': 'fixture-customer',
                 'domain': 'FLUPFLAP',
                 'email': 'fixture@example.test',
                 'rechargeRestricted': false,
+                'firstName': 'Fixture', 'lastName': 'Customer', 'countryCode': 'US', 'status':'ACTIVE',
+                'createdAt': '2026-10-01T10:00:00Z',
               },
             ],
           }
@@ -47,6 +52,21 @@ class AdminFixture implements HttpClientAdapter {
 }
 
 void main() {
+  testWidgets('directory preserves audited recharge restriction controls', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1000)); addTearDown(() => tester.binding.setSurfaceSize(null));
+    final adapter = AdminFixture();
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = adapter;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(dio: dio,
+      session: const AdminSession(role: 'ADMIN', permissions: {'recharge.view','recharge.customers.view','recharge.operations'}, environment: 'PRODUCTION')))));
+    await tester.pumpAndSettle(); await tester.tap(find.text('FlupFlap Customers')); await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Restrict recharge')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Restrict recharge')); await tester.pumpAndSettle();
+    await tester.enterText(find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)), 'Reviewed access with the customer');
+    await tester.pumpAndSettle(); await tester.tap(find.text('Confirm')); await tester.pumpAndSettle();
+    expect(adapter.requests, contains('/admin/flupflap/customers/fixture-customer/restrictions'));
+    expect(adapter.requests.where((p) => p.endsWith('/customer-directory')).length, greaterThanOrEqualTo(2));
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('admin reset requires review reason and reports the scoped result', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));

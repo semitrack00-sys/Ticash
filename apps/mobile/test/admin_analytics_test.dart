@@ -8,6 +8,37 @@ import 'package:ticash/widgets/admin_analytics_panel.dart';
 import 'admin_analytics_fixture.dart';
 
 void main() {
+  testWidgets('FlupFlap cards open searchable client details with registration dates and pagination', (tester) async {
+    tester.view.physicalSize = const Size(390, 1100); tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+    final adapter = AnalyticsFixtureAdapter();
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test'))..httpClientAdapter = adapter;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: AdminAnalyticsPanel(
+      business: AnalyticsBusiness.flupflap, dio: dio, permissions: const {'recharge.customers.view', 'recharge.transactions.view'},
+    )))));
+    await tester.pumpAndSettle();
+    expect(find.text('Clients by country'), findsOneWidget);
+    expect(find.text('All countries · 112 total clients'), findsOneWidget);
+    await tester.ensureVisible(find.text('Total clients')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Total clients')); await tester.pumpAndSettle();
+    expect(adapter.requests.last.path, '/admin/flupflap/analytics/details');
+    expect(adapter.requests.last.queryParameters['metric'], 'clients.total');
+    expect(adapter.requests.last.queryParameters['asOf'], '2026-09-29T12:00:00Z');
+    expect(find.text('Marie Jean'), findsOneWidget);
+    expect(find.textContaining('Registered on 2026-09-01'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '775 528-7791');
+    await tester.testTextInput.receiveAction(TextInputAction.search); await tester.pumpAndSettle();
+    expect(adapter.requests.last.queryParameters['q'], '775 528-7791');
+    await tester.tap(find.text('Marie Jean')); await tester.pumpAndSettle();
+    expect(find.text('Client profile'), findsOneWidget);
+    expect(find.text('Registered on'), findsOneWidget);
+    expect(find.text('Last sign-in'), findsOneWidget);
+    expect(find.text('2026-09-01 · 10:30 UTC'), findsOneWidget);
+    await tester.tap(find.byTooltip('Close details')); await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Next')); await tester.pumpAndSettle(); await tester.tap(find.text('Next')); await tester.pumpAndSettle();
+    expect(adapter.requests.last.queryParameters['offset'], 25);
+    expect(tester.takeException(), isNull);
+  });
   test(
     'cent formatting is exact, including large amounts and absent averages',
     () {

@@ -6,6 +6,7 @@ import '../../services/api_client.dart';
 import '../../services/admin_service.dart';
 import '../../services/admin_analytics_service.dart';
 import '../../widgets/admin_analytics_panel.dart';
+import '../../widgets/flupflap_admin_records.dart';
 import '../../widgets/app_downloads_panel.dart';
 import '../../widgets/flupflap_promotions_panel.dart';
 import '../../widgets/flupflap_stores_panel.dart';
@@ -58,7 +59,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 
   void load() {
-    if (!widget.session.can('recharge.view') || ['promotions', 'stores'].contains(section)) {
+    if (!widget.session.can('recharge.view') || ['promotions', 'stores', 'customers'].contains(section)) {
       return;
     }
     final query = <String, dynamic>{'offset': offset};
@@ -71,35 +72,17 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
         .then((r) => Map<String, dynamic>.from(r.data as Map));
   }
 
-  Future<void> operate(Map row) async {
+  Future<void> operate(Map row, {bool customer = false}) async {
+    final customerOperation = customer || section == 'customers';
     String? reason;
-    if (section == 'customers') {
-      final input = TextEditingController();
-      reason = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Recharge restriction'),
-          content: TextField(
-            controller: input,
-            decoration: const InputDecoration(labelText: 'Reason (required)'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, input.text.trim()),
-              child: const Text('Confirm'),
-            ),
-          ],
-        ),
-      );
-      input.dispose();
-      if (reason == null || reason.length < 5) return;
+    if (customerOperation) {
+      reason = await showDialog<String>(context: context, builder: (_) => const _AdminReasonDialog(
+        title: 'Recharge restriction', description: 'Record the reason for changing this client’s recharge access.',
+        action: 'Confirm', minimumLength: 5, maximumLength: 300));
+      if (reason == null) return;
     }
     try {
-      if (section == 'customers') {
+      if (customerOperation) {
         await client.patch(
           '/admin/flupflap/customers/${row['id']}/restrictions',
           data: {
@@ -134,7 +117,9 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     if (!widget.session.can('recharge.attempts.reset') || resettingAttempts.contains(id)) return;
     final reason = await showDialog<String>(
       context: context,
-      builder: (_) => const _PurchaseAttemptResetDialog(),
+      builder: (_) => const _AdminReasonDialog(title: 'Reset purchase-attempt limit',
+        description: 'Review this customer’s payment history first. This clears failed or cancelled reservation counts only. Pending payments and fraud holds must be resolved separately. Dollar limits, card checks and bank authentication still apply.',
+        action: 'Reset attempt count'),
     );
     if (!mounted || reason == null) return;
     final random = Random.secure();
@@ -366,7 +351,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
         ],
         const SizedBox(height: 16),
-        if (!['dashboard', 'promotions', 'stores', 'settings'].contains(section)) ...[
+        if (!['dashboard', 'promotions', 'stores', 'settings', 'customers'].contains(section)) ...[
           TextField(
             controller: search,
             onChanged: (_) => setState(() {}),
@@ -387,6 +372,10 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
           ),
           const SizedBox(height: 16),
         ],
+        if (section == 'customers')
+          FlupFlapRecordExplorer(key: const ValueKey('client-directory'), dio: client, title: 'FlupFlap clients', directory: true,
+            onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null,
+            onRestrictCustomer: widget.session.can('recharge.operations') ? (row) => operate(row, customer: true) : null),
         if (section == 'stores')
           FlupFlapStoresPanel(
             dio: client,
@@ -398,7 +387,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
             dio: client,
             canManage: widget.session.can('recharge.configuration.manage'),
           ),
-        if (result != null && !['promotions', 'stores'].contains(section))
+        if (result != null && !['promotions', 'stores', 'customers'].contains(section))
           FutureBuilder<Map<String, dynamic>>(
             future: result,
             builder: (context, snapshot) {
@@ -428,7 +417,9 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                   if (section == 'dashboard' && widget.session.can('recharge.reports')) ...[
                     AppDownloadsPanel(dio: widget.dio, canImport: widget.session.can('recharge.configuration.manage')),
                     const SizedBox(height: 18),
-                    AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio),
+                    AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio, permissions: widget.session.permissions,
+                      onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null,
+            onRestrictCustomer: widget.session.can('recharge.operations') ? (row) => operate(row, customer: true) : null),
                     const SizedBox(height: 18),
                   ],
                   if (section == 'dashboard')
@@ -560,13 +551,15 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
 
 
 
-class _PurchaseAttemptResetDialog extends StatefulWidget {
-  const _PurchaseAttemptResetDialog();
+class _AdminReasonDialog extends StatefulWidget {
+  const _AdminReasonDialog({required this.title, required this.description, required this.action, this.minimumLength = 20, this.maximumLength = 500});
+  final String title, description, action;
+  final int minimumLength, maximumLength;
   @override
-  State<_PurchaseAttemptResetDialog> createState() => _PurchaseAttemptResetDialogState();
+  State<_AdminReasonDialog> createState() => _AdminReasonDialogState();
 }
 
-class _PurchaseAttemptResetDialogState extends State<_PurchaseAttemptResetDialog> {
+class _AdminReasonDialogState extends State<_AdminReasonDialog> {
   final input = TextEditingController();
   @override
   void dispose() {
@@ -575,17 +568,17 @@ class _PurchaseAttemptResetDialogState extends State<_PurchaseAttemptResetDialog
   }
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Reset purchase-attempt limit'),
+    title: Text(widget.title),
     content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Text('Review this customer’s payment history first. This clears failed or cancelled reservation counts only. Pending payments and fraud holds must be resolved separately. Dollar limits, card checks and bank authentication still apply.'),
-      TextField(controller: input, maxLength: 500, minLines: 2, maxLines: 4,
+      Text(widget.description),
+      TextField(controller: input, maxLength: widget.maximumLength, minLines: 2, maxLines: 4,
         onChanged: (_) => setState(() {}),
-        decoration: const InputDecoration(labelText: 'Review reason (at least 20 characters)')),
+        decoration: InputDecoration(labelText: 'Review reason (at least ${widget.minimumLength} characters)')),
     ])),
     actions: [
       TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: input.text.trim().length < 20 ? null : () => Navigator.pop(context, input.text.trim()),
-        child: const Text('Reset attempt count')),
+      FilledButton(onPressed: input.text.trim().length < widget.minimumLength ? null : () => Navigator.pop(context, input.text.trim()),
+        child: Text(widget.action)),
     ],
   );
 }

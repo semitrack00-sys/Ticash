@@ -68,9 +68,11 @@ export function analyticsQuery(domain: AnalyticsDomain, window: AnalyticsWindow)
       AND t."providerCurrency" = 'USD'
       AND t."createdAt" >= ${previousStart} AND t."createdAt" < ${end}`;
   const customers = domain === 'TICASH' ? Prisma.sql`
-    SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest
+    SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest,
+      CASE WHEN upper(trim("countryCode")) ~ '^[A-Z]{2}$' THEN upper(trim("countryCode")) ELSE 'UNKNOWN' END AS country
     FROM "User" WHERE role = 'CUSTOMER' AND "createdAt" < ${end}` : Prisma.sql`
-    SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest
+    SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest,
+      CASE WHEN upper(trim("countryCode")) ~ '^[A-Z]{2}$' THEN upper(trim("countryCode")) ELSE 'UNKNOWN' END AS country
     FROM "FlupFlapCustomer" WHERE "createdAt" < ${end}`;
   return Prisma.sql`
     WITH records AS (${source}), customers AS (${customers}),
@@ -82,6 +84,9 @@ export function analyticsQuery(domain: AnalyticsDomain, window: AnalyticsWindow)
       FROM days d LEFT JOIN successful s ON s.created >= d.date AND s.created < d.date + interval '1 day'
       GROUP BY d.date ORDER BY d.date
     ),
+    client_countries AS (SELECT country AS code, count(*)::int AS total,
+      count(*) FILTER (WHERE NOT guest)::int AS registered, count(*) FILTER (WHERE guest)::int AS guests
+      FROM customers GROUP BY country ORDER BY count(*) DESC, country),
     country_totals AS (SELECT country AS name, count(*)::int AS count, sum(amount)::text AS "volumeCents" FROM successful GROUP BY country ORDER BY sum(amount) DESC, country LIMIT 10),
     product_totals AS (SELECT product AS name, count(*)::int AS count, sum(amount)::text AS "volumeCents" FROM successful GROUP BY product ORDER BY sum(amount) DESC, product),
     operator_totals AS (SELECT operator AS name, count(*)::int AS count, sum(amount)::text AS "volumeCents" FROM successful GROUP BY operator ORDER BY sum(amount) DESC, operator LIMIT 10),
@@ -97,6 +102,7 @@ export function analyticsQuery(domain: AnalyticsDomain, window: AnalyticsWindow)
         'guest', (SELECT count(*) FROM customers WHERE guest),
         'registered', (SELECT count(*) FROM customers WHERE NOT guest),
         'active', (SELECT count(DISTINCT customer) FROM current)),
+      'clientCountries', (SELECT COALESCE(jsonb_agg(client_countries), '[]'::jsonb) FROM client_countries),
       'transactions', jsonb_build_object(
         'total', (SELECT count(*) FROM current),
         'successful', (SELECT count(*) FROM successful),
@@ -132,7 +138,8 @@ export async function readAdminAnalytics(
   if (!row) throw new Error('ANALYTICS_UNAVAILABLE');
   const data = row.data;
   return {
-    ...data, domain, currency: 'USD', timezone: 'UTC', mode: window.mode,
+    ...data, clientCountries: Array.isArray(data.clientCountries) ? (data.clientCountries as {code:string}[]).map(c=>({...c,
+      name:c.code==='UNKNOWN'?'Not provided':new Intl.DisplayNames(['en'],{type:'region'}).of(c.code)??c.code})) : [], domain, currency: 'USD', timezone: 'UTC', mode: window.mode,
     start: window.start.toISOString(), end: window.end.toISOString(),
     previousStart: window.previousStart.toISOString(), generatedAt: new Date().toISOString(),
     performance: salesPerformance(String(data.volumeCents), String(data.previousVolumeCents)),

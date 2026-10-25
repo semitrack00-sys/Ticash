@@ -7,6 +7,18 @@ class AdminAnalyticsService {
   AdminAnalyticsService({Dio? dio}) : _dio = dio ?? ApiClient.instance.dio;
   final Dio _dio;
 
+  Future<Map<String, dynamic>> details({required Map<String, dynamic> query, bool directory = false}) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      directory ? '/admin/flupflap/customer-directory' : '/admin/flupflap/analytics/details', queryParameters: query);
+    final data = response.data!;
+    if (data['domain'] != 'FLUPFLAP' || data['rows'] is! List || data['countries'] is! List ||
+        data['total'] is! num || !const ['CLIENTS', 'TRANSACTIONS'].contains(data['kind']) ||
+        (!directory && data['metric'] != query['metric'])) {
+      throw const FormatException('Unexpected detail response');
+    }
+    return data;
+  }
+
   Future<Map<String, dynamic>> load(
     AnalyticsBusiness business, {
     required String period,

@@ -2,12 +2,16 @@ import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../services/admin_analytics_service.dart';
+import '../services/api_client.dart';
+import 'flupflap_admin_records.dart';
 
 /// Shared presentation only. Each business has an independent, authorized API.
 class AdminAnalyticsPanel extends StatefulWidget {
-  const AdminAnalyticsPanel({super.key, required this.business, this.dio});
+  const AdminAnalyticsPanel({super.key, required this.business, this.dio, this.permissions = const {}, this.onResetCustomer, this.onRestrictCustomer});
   final AnalyticsBusiness business;
   final Dio? dio;
+  final Set<String> permissions;
+  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer;
   @override
   State<AdminAnalyticsPanel> createState() => _AdminAnalyticsPanelState();
 }
@@ -18,6 +22,24 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
   DateTimeRange? custom;
   late Future<Map<String, dynamic>> result;
   bool get flup => widget.business == AnalyticsBusiness.flupflap;
+  String metricFor(String title) => switch (title) {
+    'Total clients' => 'clients.total', 'Active clients' => 'clients.active', 'New clients' => 'clients.new',
+    'Signups today' => 'clients.today', 'Signups this week' => 'clients.week', 'Signups this month' => 'clients.month',
+    'Signups this year' => 'clients.year', 'Guest users' => 'clients.guest', 'Registered clients' => 'clients.registered',
+    'Total transactions' => 'transactions.total', 'Successful' => 'transactions.successful', 'Pending' => 'transactions.pending',
+    'Failed' => 'transactions.failed', 'Reversed / refunded' => 'transactions.reversed', 'Completed recharge sales' => 'volume',
+    'Recorded fee revenue' || 'Simulated fees' => 'fees', 'Average completed amount' => 'average', 'Transaction success rate' => 'successRate', _ => 'transactions.total',
+  };
+  bool canOpen(String metric) => flup && widget.permissions.contains(metric.startsWith('clients.') ? 'recharge.customers.view' : 'recharge.transactions.view');
+  void openDetails(String metric, String title, String value, Map<String, dynamic> data, {String? country}) {
+    if (!canOpen(metric)) return;
+    Navigator.push(context, MaterialPageRoute<void>(builder: (_) => AdminInsightPage(
+      dio: widget.dio ?? ApiClient.instance.dio, title: title, value: value, onResetCustomer: widget.onResetCustomer, onRestrictCustomer: widget.onRestrictCustomer,
+      query: {'metric': metric, 'period': period, 'mode': mode, 'asOf': data['end'],
+        if (period == 'custom') 'start': date(custom!.start), if (period == 'custom') 'end': date(custom!.end),
+        if (country != null) 'country': country},
+    )));
+  }
   @override
   void initState() {
     super.initState();
@@ -336,7 +358,10 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
                 for (final c in cards)
                   SizedBox(
                     width: width,
-                    child: _box(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: canOpen(metricFor(c.$1)) ? () => openDetails(metricFor(c.$1), c.$1, c.$2, data) : null,
+                      child: _box(
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -344,10 +369,10 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
                           const SizedBox(height: 10),
                           Text(
                             c.$2,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.w800,
-                              color: c.$4,
+                              color: Color(0xFF142449),
                             ),
                           ),
                           const SizedBox(height: 5),
@@ -355,15 +380,32 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
                             c.$1,
                             style: const TextStyle(color: Color(0xFF52627A)),
                           ),
+                          if (canOpen(metricFor(c.$1))) const Padding(padding: EdgeInsets.only(top: 10),
+                            child: Row(children: [Expanded(child: Text('View details', style: TextStyle(fontSize: 12, color: Color(0xFF142449)))), Icon(Icons.arrow_forward, size: 16)])),
                         ],
                       ),
-                      tint: c.$4.withValues(alpha: 0.045),
-                    ),
+                      tint: Colors.white,
+                    )),
                   ),
               ],
             );
           },
         ),
+        if (flup && data['clientCountries'] is List) ...[
+          const SizedBox(height: 20),
+          _box(Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('Clients by country', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: Color(0xFF142449))),
+            Text('All countries · ${clients['total']} total clients', style: const TextStyle(fontWeight: FontWeight.w700)),
+            const Text('Client profile country · includes historical guests · missing countries are listed as Not provided', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+            const SizedBox(height: 10),
+            for (final country in data['clientCountries'] as List)
+              ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.public, color: Color(0xFF142449)),
+                title: Text('${country['name'] ?? country['code']}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                subtitle: Text('${country['registered']} registered · ${country['guests']} guests'),
+                trailing: Text('${country['total']}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                onTap: canOpen('clients.total') ? () => openDetails('clients.total', '${country['name'] ?? country['code']} clients', '${country['total']}', data, country: country['code'].toString()) : null),
+          ])),
+        ],
         const SizedBox(height: 12),
         const Text(
           'Clients: accounts as of period end. Signup cards use UTC calendar day, week, month and year boundaries. Active: at least one transaction in the selected period. Sales and fees count completed transactions only, grouped by creation date.',

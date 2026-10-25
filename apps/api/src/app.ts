@@ -1361,8 +1361,13 @@ export function createApp(options: CreateAppOptions = {}) {
     service:mobileTopUpService, audit:recordAudit,
     auditRows:async()=>databaseEnabled ? prisma.auditLog.findMany({
       where:{OR:[{flupFlapCustomerId:{not:null}},{action:{startsWith:'FLUPFLAP_'}}]},
-      select:{id:true,action:true,entity:true,entityId:true,createdAt:true},orderBy:{createdAt:'desc'},take:100,
-    }) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
+      select:{id:true,action:true,entity:true,entityId:true,createdAt:true,metadata:true},orderBy:{createdAt:'desc'},take:100,
+    }).then(rows=>rows.map(({metadata,...row})=>{
+      if(row.action!=='FLUPFLAP_PURCHASE_ATTEMPTS_RESET')return row;
+      const detail=metadata as Record<string,unknown>|null;
+      return {...row,staffActorId:detail?.staffActorId,reason:detail?.reason,
+        resetCount:Array.isArray(detail?.transactionIds)?detail.transactionIds.length:0};
+    })) : auditRecords.filter(row=>row.flupFlapCustomerId || row.action.startsWith('FLUPFLAP_')).slice(0,100).map(({id,action,entity,entityId,createdAt})=>({id,action,entity,entityId,createdAt})),
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
   app.use('/api/flupflap/verification', createVerificationRouter(flupFlap.authenticate,

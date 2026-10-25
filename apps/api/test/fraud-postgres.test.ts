@@ -45,7 +45,7 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
   });
   async function resetFixture() {
     const c = await customer();
-    const staff = await clients[0]!.user.create({data:{email:randomUUID()+'@example.test',passwordHash:'fixture',firstName:'Staff',lastName:'Fixture'}});
+    const staff = await clients[0]!.user.create({data:{email:randomUUID()+'@example.test',passwordHash:'fixture',firstName:'Staff',lastName:'Fixture',role:'ADMIN'}});
     const records = await Promise.all(Array.from({length:3},()=>input(c.id)));
     const repo = new PrismaMobileTopUpRepository(clients[0]!);
     for (const record of records) {
@@ -62,7 +62,7 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     expect(await clients[0]!.mobileTopUpTransaction.count({where:{flupFlapCustomerId:c.id,status:'FAILED'}})).toBe(3);
     expect((await repo.reserveTransaction(records[0]!)).created).toBe(false);
     const audit=await clients[0]!.auditLog.findUniqueOrThrow({where:{id:'purchase-reset:'+requestId}});
-    expect(audit).toMatchObject({userId:staff.id,flupFlapCustomerId:c.id,action:'FLUPFLAP_PURCHASE_ATTEMPTS_RESET'});
+    expect(audit).toMatchObject({flupFlapCustomerId:c.id,action:'FLUPFLAP_PURCHASE_ATTEMPTS_RESET',metadata:expect.objectContaining({staffActorId:staff.id})});
     const inputs=await Promise.all(clients.map(()=>input(c.id)));
     const results=await Promise.allSettled(inputs.map((r,i)=>new PrismaMobileTopUpRepository(clients[i]!).reserveTransaction(r)));
     expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(3);
@@ -70,7 +70,7 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     expect(await resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',requestId)).toEqual({resetCount:3});
     expect(await resetPurchaseAttemptIds(clients[0]!,c.id,new Date())).toEqual(new Set(records.map(r=>r.id)));
   });
-  it('refuses unresolved payments, restrictions and audit failures',async()=>{
+  it('refuses unresolved payments, restrictions and missing staff actors',async()=>{
     const {c,staff,records}=await resetFixture();
     await clients[0]!.mobileTopUpTransaction.update({where:{id:records[0]!.id},data:{status:'PENDING',paymentStatus:'SESSION_CREATED'}});
     await expect(resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toMatchObject({code:'PURCHASE_RESET_PAYMENT_UNRESOLVED'});
@@ -78,8 +78,7 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{rechargeRestricted:true}});
     await expect(resetPurchaseAttempts(clients[0]!,c.id,staff.id,'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toMatchObject({code:'PURCHASE_RESET_RESTRICTED'});
     await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{rechargeRestricted:false}});
-    // Missing staff FK forces the audit INSERT to fail, rolling back its exemption.
-    await expect(resetPurchaseAttempts(clients[0]!,c.id,randomUUID(),'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toThrow();
+    await expect(resetPurchaseAttempts(clients[0]!,c.id,randomUUID(),'Reviewed cancelled checkout reservations',randomUUID().replaceAll('-',''))).rejects.toMatchObject({code:'ADMIN_PERMISSION_REQUIRED'});
     expect(await resetPurchaseAttemptIds(clients[0]!,c.id,new Date())).toEqual(new Set());
   });
   it('keeps monetary budgets and other buyers recipient reservations after reset',async()=>{

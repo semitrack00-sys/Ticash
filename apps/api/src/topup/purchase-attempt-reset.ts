@@ -19,6 +19,10 @@ export async function resetPurchaseAttempts(db: PrismaClient, customerId: string
     throw new MobileTopUpError('PURCHASE_RESET_INVALID', 'A staff actor, review reason and request ID are required.', 400);
   }
   return db.$transaction(async tx => {
+    const staff = await tx.user.findUnique({ where: { id: actor }, select: { role: true, accountLocked: true } });
+    if (!staff || staff.accountLocked || !['ADMIN', 'SUPER_ADMIN'].includes(staff.role)) {
+      throw new MobileTopUpError('ADMIN_PERMISSION_REQUIRED', 'An active administrator is required.', 403);
+    }
     // Same row lock as checkout: concurrent reservations cannot enter this snapshot.
     await tx.$queryRaw`SELECT id FROM "FlupFlapCustomer" WHERE id = ${customerId} FOR UPDATE`;
     const customer = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
@@ -30,7 +34,7 @@ export async function resetPurchaseAttempts(db: PrismaClient, customerId: string
     const previous = await tx.auditLog.findUnique({ where: { id } });
     if (previous) {
       const metadata = previous.metadata as Record<string, unknown> | null;
-      if (previous.action !== action || previous.flupFlapCustomerId !== customerId || previous.userId !== actor || metadata?.reason !== reason.trim()) {
+      if (previous.action !== action || previous.flupFlapCustomerId !== customerId || metadata?.staffActorId !== actor || metadata?.reason !== reason.trim()) {
         throw new MobileTopUpError('PURCHASE_RESET_CONFLICT', 'Reset request ID was already used.', 409);
       }
       return { resetCount: Array.isArray(metadata.transactionIds) ? metadata.transactionIds.length : 0 };
@@ -51,9 +55,11 @@ export async function resetPurchaseAttempts(db: PrismaClient, customerId: string
     }, select: { id: true } });
     const transactionIds = failed.map(r => r.id).filter(id => !exempt.has(id));
     // The audit row IS the reset. Audit failure rolls back the operation.
-    await tx.auditLog.create({ data: { id, userId: actor, flupFlapCustomerId: customerId,
+    // AuditLog permits one identity domain per row. Keep its indexed customer
+    // association and record the authenticated staff approver in metadata.
+    await tx.auditLog.create({ data: { id, flupFlapCustomerId: customerId,
       action, entity: 'FlupFlapCustomer', entityId: customerId,
-      metadata: { reason: reason.trim(), transactionIds, scope: 'FAILED_RESERVATION_COUNTS_ONLY' },
+      metadata: { staffActorId: actor, reason: reason.trim(), transactionIds, scope: 'FAILED_RESERVATION_COUNTS_ONLY' },
     } });
     return { resetCount: transactionIds.length };
   });

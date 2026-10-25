@@ -60,6 +60,7 @@ describe('admin purchase attempt reset boundary', () => {
   });
   it('cannot record a reset when the audit write fails', async () => {
     const tx = {
+      user: {findUnique: vi.fn().mockResolvedValue({role:'ADMIN',accountLocked:false})},
       $queryRaw: vi.fn(),
       flupFlapCustomer: {findUnique: vi.fn().mockResolvedValue({status:'ACTIVE'})},
       mobileTopUpTransaction: {findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([{id:'failed'}])},

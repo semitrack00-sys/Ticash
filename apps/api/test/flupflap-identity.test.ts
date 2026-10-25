@@ -23,6 +23,16 @@ function setup(options: Parameters<typeof createApp>[0] = {}) {
 const root='/api/flupflap';
 const signup=async(app:ReturnType<typeof createApp>,name='a')=>(await request(app).post(root+'/auth/register').send({firstName:'Test',lastName:name.toUpperCase(),phone:`+1555000${name.charCodeAt(0).toString().padStart(4,'0')}`,email:`${name}@example.test`,password:'correct-horse-42'}).expect(201)).body;
 const headers=(token:string)=>({Authorization:`Bearer ${token}`});
+async function legacyGuest(identities: FlupFlapIdentityRepository) {
+ const expiresAt = new Date(Date.now()+3600_000);
+ const customer = await identities.create({guestExpiresAt:expiresAt});
+ const refreshToken = 'g'.repeat(43);
+ const session = await identities.createSession(customer.id,createHash('sha256').update(refreshToken).digest('hex'),expiresAt,customer.authVersion);
+ const accessToken = jwt.sign({sub:customer.id,type:'access',domain:'FLUPFLAP',sid:session.id,v:customer.authVersion},
+  'test-flupflap-only-secret-at-least-32-characters',{algorithm:'HS256',issuer:'flupflap-api',audience:'flupflap-customer',expiresIn:900});
+ return {accessToken,refreshToken,user:customer};
+}
+
 const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:'reloadly:JM:77:airtime:5.00'};
 
 describe('FlupFlap identity and shared recharge isolation',()=>{
@@ -186,11 +196,11 @@ describe('FlupFlap access in fully approved production', () => {
   return { mobileTopUpConfig, securityConfig, stripeConfig };
  }
 
- it('allows guest, registration and login with all approvals, without a payment/provider request', async () => {
+ it('blocks production guest creation while preserving registered login', async () => {
   const { app, provider } = setup(production());
-  const guest = (await request(app).post(root+'/auth/guest').send({}).expect(201)).body;
-  expect(guest.user).toMatchObject({domain:'FLUPFLAP', guest:true});
-  await request(app).get(root+'/auth/me').set(headers(guest.accessToken)).expect(200);
+  const denied = await request(app).post(root+'/auth/guest').send({}).expect(403);
+  expect(denied.body.code).toBe('GUEST_ACCESS_DISABLED');
+  expect(denied.body).not.toHaveProperty('accessToken');
   const customer = await signup(app, 'production');
   const login = await request(app).post(root+'/auth/login').send({email:customer.user.email,password:'correct-horse-42'}).expect(200);
   expect(login.body.user).toMatchObject({id:customer.user.id, domain:'FLUPFLAP', guest:false});
@@ -234,9 +244,9 @@ describe('FlupFlap access in fully approved production', () => {
   expect(() => setup(options)).toThrow(); expect(fetch).not.toHaveBeenCalled();
  });
 
- it('preserves cross-domain isolation and guest profile/bank restrictions in production', async () => {
-  const {app, provider} = setup(production());
-  const guest = (await request(app).post(root+'/auth/guest').send({}).expect(201)).body;
+ it('rejects legacy production guest access and refresh without altering cross-domain isolation', async () => {
+  const {app, identities, provider} = setup(production());
+  const guest = await legacyGuest(identities);
   const customer = await signup(app, 'isolated');
   for (const token of [guest.accessToken, customer.accessToken]) {
    for (const path of ['/api/users/me','/api/recipients','/api/funding/wallet','/api/admin/session','/api/mobile-topups/countries']) {
@@ -247,27 +257,30 @@ describe('FlupFlap access in fully approved production', () => {
   await request(app).get(root+'/auth/me').set(headers(legacy.accessToken)).expect(401);
   await request(app).get(root+'/mobile-topups/countries').set(headers(legacy.accessToken)).expect(401);
   await request(app).patch(root+'/auth/me').set(headers(guest.accessToken)).send({countryCode:'US'}).expect(403);
-  const methods = await request(app).get(root+'/mobile-topups/payment-methods').set(headers(guest.accessToken)).expect(200);
-  expect(methods.body.methods.find((m:{type:string})=>m.type==='BANK_ACCOUNT')).toMatchObject({enabled:false,reason:'GUEST_SCOPE_RESTRICTED'});
+  for (const path of ['/auth/me','/mobile-topups/payment-methods','/mobile-topups/countries']) {
+   expect((await request(app).get(root+path).set(headers(guest.accessToken)).expect(403)).body.code).toBe('GUEST_ACCESS_DISABLED');
+  }
+  await request(app).post(root+'/auth/refresh').send({refreshToken:guest.refreshToken}).expect(401);
+  expect(await identities.customer(guest.user.id)).not.toBeNull();
   expect((await request(app).post('/api/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_SANDBOX_REQUIRED');
   expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
  });
 
  it.each([true,false])('preserves recharge restrictions for production guest=%s', async guest => {
   const {app,identities,provider} = setup(production());
-  const customer = guest ? (await request(app).post(root+'/auth/guest').send({}).expect(201)).body : await signup(app);
+  const customer = guest ? await legacyGuest(identities) : await signup(app);
   await identities.update(customer.user.id,{rechargeRestricted:true});
   for (const path of ['quotes','transactions','payment-sessions']) {
    const response = await request(app).post(root+'/mobile-topups/'+path).set(headers(customer.accessToken)).send({}).expect(403);
-   expect(response.body.code).toBe('RECHARGE_RESTRICTED');
+   expect(response.body.code).toBe(guest ? 'GUEST_ACCESS_DISABLED' : 'RECHARGE_RESTRICTED');
   }
   expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
  });
 
- it('retains proxy configuration enforcement for production guests but allows permanent sign-in', async () => {
+ it('blocks production guests even without proxy configuration and allows permanent sign-in', async () => {
   vi.stubEnv('TRUST_PROXY_HOPS', undefined);
   const {app} = setup(production());
-  expect((await request(app).post(root+'/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_PROXY_CONFIGURATION_REQUIRED');
+  expect((await request(app).post(root+'/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_ACCESS_DISABLED');
   const customer = await signup(app);
   await request(app).post(root+'/auth/login').send({email:customer.user.email,password:'correct-horse-42'}).expect(200);
   expect(fetch).not.toHaveBeenCalled();

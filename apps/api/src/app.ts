@@ -1329,9 +1329,11 @@ export function createApp(options: CreateAppOptions = {}) {
   const flupFlap = createFlupFlapIdentity({
     deletion: databaseEnabled ? new FlupFlapSelfServiceDeletion(prisma) : undefined,
     config: options.flupFlapConfig ?? loadFlupFlapConfig(), repository: flupFlapRepository,
-    // FlupFlap may admit approved production guests without changing TiCash guest policy.
-    guestError: () => flupFlapProductionAllowed() && guestProxyConfigured && mobileTopUpConfig.enabled === true &&
-      mobileTopUpConfig.airtimeBaseUrl === 'https://topups.reloadly.com' ? undefined : guestAuthError(),
+    // Production FlupFlap is account-only, including previously issued guest
+    // access and refresh tokens. Sandbox fixtures retain their isolated policy.
+    guestError: () => process.env.NODE_ENV === 'production' || mobileTopUpConfig.environment === 'production'
+      ? { code: 'GUEST_ACCESS_DISABLED', error: 'Create an account or sign in to use FlupFlap.' }
+      : guestAuthError(),
     emailService: passwordResetEmailService, audit: recordAudit,
     accessAllowed: () => (mobileTopUpConfig.environment === 'sandbox' &&
       mobileTopUpConfig.productionEnabled === false && mobileTopUpConfig.approvedForLiveUse === false &&

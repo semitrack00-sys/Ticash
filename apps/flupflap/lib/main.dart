@@ -699,16 +699,6 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
           if (widget.resetToken == null) ...[
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () => run(() => widget.session.enterGuest()),
-              child: Text(
-                context.ft('Continue as guest'),
-                textAlign: TextAlign.center,
-              ),
-            ),
             Wrap(
               alignment: WrapAlignment.center,
               spacing: 8,

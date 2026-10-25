@@ -95,8 +95,9 @@ void noPurchases(List<RequestOptions> requests) {
     requests.where(
       (r) =>
           r.method != 'GET' &&
-          RegExp(r'payment|transactions|purchase|refund|reward|sms')
-              .hasMatch(r.path),
+          RegExp(
+            r'payment|transactions|purchase|refund|reward|sms',
+          ).hasMatch(r.path),
     ),
     isEmpty,
   );
@@ -181,12 +182,7 @@ void main() {
               lessThan(560),
             );
             expect(find.text('Sign in').hitTestable(), findsOneWidget);
-            await t.ensureVisible(find.text('Continue as guest'));
-            await t.pumpAndSettle();
-            expect(
-              find.text('Continue as guest').hitTestable(),
-              findsOneWidget,
-            );
+            expect(find.text('Continue as guest'), findsNothing);
             // Capture the initial balanced composition, before keyboard/scroll QA.
             await t.ensureVisible(find.byType(Brand));
             await t.pumpAndSettle();
@@ -484,19 +480,14 @@ void main() {
   );
 
   testWidgets(
-    'guest share card never requests referral endpoints and opens registration',
+    'signed-out entry requires registration and never requests private referral endpoints',
     (t) async {
       final (s, a, _) = auth.fixture();
       await s.initialize();
-      await t.runAsync(s.enterGuest);
       await t.pumpWidget(FlupFlapApp(session: s));
       await t.pumpAndSettle();
-      await press(t, find.widgetWithText(NavigationDestination, 'Account'));
-      expect(
-        find.text('Create an account to get your referral code'),
-        findsOneWidget,
-      );
-      final createAccount = find.widgetWithText(FilledButton, 'Create account');
+      expect(find.text('Continue as guest'), findsNothing);
+      final createAccount = find.text('Create account');
       await t.ensureVisible(createAccount);
       await t.pumpAndSettle();
       await t.runAsync(() async {

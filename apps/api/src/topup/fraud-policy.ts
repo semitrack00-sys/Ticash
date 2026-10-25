@@ -5,8 +5,10 @@ export type PurchaseHistory = { createdAt: string; totalChargeUsd: number; payme
 export function assertPurchaseLimits(amount: number, history: PurchaseHistory[], now: Date, newAccount: boolean) {
   const day = history.filter(r => Date.parse(r.createdAt) >= now.getTime() - 86400000);
   const hour = day.filter(r => Date.parse(r.createdAt) >= now.getTime() - 3600000);
-  const limit = newAccount ? 50 : 200;
-  if (amount > (newAccount ? 25 : 100) || day.reduce((n, r) => n + Math.round(r.totalChargeUsd * 100), 0) + Math.round(amount * 100) > limit * 100 ||
+  // Account age no longer lowers monetary limits; retain the argument for callers.
+  void newAccount;
+  const limit = 200;
+  if (amount > 100 || day.reduce((n, r) => n + Math.round(r.totalChargeUsd * 100), 0) + Math.round(amount * 100) > limit * 100 ||
       hour.length >= 3 || day.length >= 10 || hour.filter(r => r.paymentStatus === 'FAILED').length >= 3) {
     throw new MobileTopUpError('RECHARGE_LIMIT_REACHED', 'Purchase limit reached. Try again later or contact support.', 429);
   }

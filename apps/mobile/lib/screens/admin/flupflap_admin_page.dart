@@ -132,25 +132,10 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   Future<void> resetPurchaseAttempts(Map row) async {
     final id = row['id'].toString();
     if (!widget.session.can('recharge.attempts.reset') || resettingAttempts.contains(id)) return;
-    final input = TextEditingController();
     final reason = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Reset purchase-attempt limit'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Review this customer’s payment history first. This clears failed or cancelled reservation counts only. Pending payments and fraud holds must be resolved separately. Dollar limits, card checks and bank authentication still apply.'),
-          TextField(controller: input, maxLength: 500, minLines: 2, maxLines: 4,
-            decoration: const InputDecoration(labelText: 'Review reason (at least 20 characters)')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(onPressed: () {
-            if (input.text.trim().length >= 20) Navigator.pop(context, input.text.trim());
-          }, child: const Text('Reset attempt count')),
-        ],
-      ),
+      builder: (_) => const _PurchaseAttemptResetDialog(),
     );
-    input.dispose();
     if (!mounted || reason == null) return;
     final random = Random.secure();
     final requestId = List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join();
@@ -574,6 +559,36 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
 }
 
 
+
+class _PurchaseAttemptResetDialog extends StatefulWidget {
+  const _PurchaseAttemptResetDialog();
+  @override
+  State<_PurchaseAttemptResetDialog> createState() => _PurchaseAttemptResetDialogState();
+}
+
+class _PurchaseAttemptResetDialogState extends State<_PurchaseAttemptResetDialog> {
+  final input = TextEditingController();
+  @override
+  void dispose() {
+    input.dispose();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Reset purchase-attempt limit'),
+    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const Text('Review this customer’s payment history first. This clears failed or cancelled reservation counts only. Pending payments and fraud holds must be resolved separately. Dollar limits, card checks and bank authentication still apply.'),
+      TextField(controller: input, maxLength: 500, minLines: 2, maxLines: 4,
+        onChanged: (_) => setState(() {}),
+        decoration: const InputDecoration(labelText: 'Review reason (at least 20 characters)')),
+    ])),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      FilledButton(onPressed: input.text.trim().length < 20 ? null : () => Navigator.pop(context, input.text.trim()),
+        child: const Text('Reset attempt count')),
+    ],
+  );
+}
 
 class _FlupFlapAdminNavigation extends StatelessWidget {
   const _FlupFlapAdminNavigation({

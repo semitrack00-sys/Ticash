@@ -1,4 +1,5 @@
 import 'store_seller_screen.dart';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -63,6 +64,9 @@ void main() {
       ),
     ),
     storage: kIsWeb ? BrowserSessionStorage() : SecureSessionStorage(),
+    trustedDeviceStorage: kIsWeb
+        ? null
+        : SecureSessionStorage(key: 'flupflap.device-trust.v1'),
     browserSession: kIsWeb,
     deviceIdProvider: kIsWeb ? null : loadDeviceIdentifier,
   );
@@ -465,6 +469,7 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
+  final loginCode = TextEditingController();
   final firstName = TextEditingController(),
       lastName = TextEditingController(),
       phone = TextEditingController(),
@@ -491,6 +496,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   void dispose() {
+    loginCode.dispose();
     firstName.dispose();
     lastName.dispose();
     phone.dispose();
@@ -551,12 +557,54 @@ class _AuthScreenState extends State<AuthScreen> {
         );
       } else {
         await widget.session.login(email.text.trim(), password.text);
+        if (widget.session.loginChallengeId != null) password.clear();
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.session.loginChallengeId != null &&
+        widget.resetToken == null &&
+        !registration) {
+      return AuthLayout(
+        signIn: true,
+        language: widget.language,
+        onLanguage: widget.onLanguage,
+        logo: const Brand(compact: true),
+        child: Column(
+          children: [
+            Text(context.ft('newDeviceVerification')),
+            TextField(
+              controller: loginCode,
+              keyboardType: TextInputType.number,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              decoration: InputDecoration(
+                labelText: context.ft('securityCode'),
+              ),
+            ),
+            if (message != null) Text(message!),
+            FilledButton(
+              onPressed: busy
+                  ? null
+                  : () => run(
+                      () => widget.session.confirmLogin(loginCode.text.trim()),
+                    ),
+              child: Text(context.ft('verifySignIn')),
+            ),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () => setState(() {
+                      widget.session.cancelLoginChallenge();
+                      loginCode.clear();
+                    }),
+              child: Text(context.ft('Cancel')),
+            ),
+          ],
+        ),
+      );
+    }
     final signIn = !registration && widget.resetToken == null;
     return AuthLayout(
       signIn: signIn,
@@ -566,6 +614,8 @@ class _AuthScreenState extends State<AuthScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.session.securityNotice != null)
+            Text(context.ft(widget.session.securityNotice!)),
           if (widget.session.deletionNotice != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),

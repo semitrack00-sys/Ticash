@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, resetStore } from '../src/app.js';
 
 const account = {
@@ -20,6 +20,22 @@ async function adminContext(app: ReturnType<typeof createApp>) {
 
 describe('admin and operations dashboard API', () => {
   beforeEach(resetStore);
+  it('requires MFA before staff data while leaving the staff-only enrollment status accessible',async()=>{
+    vi.stubEnv('ADMIN_MFA_REQUIRED','true');
+    try{
+      const app=createApp(),context=await adminContext(app);
+      for(const path of ['/api/admin/session','/api/admin/overview','/api/admin/flupflap/customers','/api/admin/audit']) {
+        const r=await request(app).get(path).set(context.adminAuth).expect(403);expect(r.body.code).toBe('ADMIN_MFA_REQUIRED');
+      }
+      await request(app).get('/api/admin/security').set(context.userAuth).expect(403);
+      const setup=await request(app).get('/api/admin/security').set(context.adminAuth).expect(200);
+      expect(setup.body).toMatchObject({required:true,available:false});
+      await request(app).post('/api/admin/security/start').set(context.adminAuth).send({password:'AdminPass123!'}).expect(503);
+      const cors=await request(app).options('/api/admin/security').set('Origin','http://localhost:3000')
+        .set('Access-Control-Request-Method','POST').set('Access-Control-Request-Headers','x-admin-mfa,x-flupflap-trusted-device').expect(204);
+      expect(cors.headers['access-control-allow-headers']).toContain('X-Admin-MFA');
+    }finally{vi.unstubAllEnvs();}
+  });
 
   it('rejects unauthenticated and customer admin access', async () => {
     const app = createApp();

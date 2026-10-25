@@ -127,6 +127,17 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
   }
 
   final Set<String> reviewing = {};
+  Future<void> revokeSessions(Map row) async {
+    final input=TextEditingController();
+    final reason=await showDialog<String>(context:context,builder:(context)=>AlertDialog(
+      title:const Text('Sign customer out of all devices'),
+      content:TextField(controller:input,decoration:const InputDecoration(labelText:'Security reason (required)')),
+      actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(context,input.text.trim()),child:const Text('Sign out all devices'))]));
+    input.dispose();if(reason==null||reason.length<5)return;
+    try{await client.post('/admin/flupflap/customers/${row['id']}/revoke-sessions',data:{'reason':reason});if(mounted)setState(load);}
+    catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Session revocation was not confirmed. Refresh before retrying.')));}
+  }
   Future<void> reviewPayment(Map row) async {
     final id = row['id'].toString();
     if (reviewing.contains(id)) return;
@@ -427,6 +438,18 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if (section == 'customers' || row.containsKey('buyerNameSource')) ...[
+                                Wrap(spacing: 8, runSpacing: 4, children: [
+                                  Chip(label: Text((section == 'customers' ? row['emailVerified'] : row['buyerEmailVerified']) == true
+                                      ? 'Email verified' : 'Email unverified')),
+                                  Chip(label: Text((section == 'customers' ? row['phoneVerified'] : row['buyerPhoneVerified']) == true
+                                      ? 'Phone verified' : 'Phone unverified')),
+                                  if ((section == 'customers' ? row['rechargeRestricted'] : row['buyerPurchasesRestricted']) == true)
+                                    const Chip(label: Text('Purchases restricted')),
+                                ]),
+                                const Text('Profile name supplied by customer; legal identity and card ownership are not verified by these labels.'),
+                                const SizedBox(height: 8),
+                              ],
                               if ((row as Map).containsKey('buyerName')) ...[
                                 SelectableText(
                                   'Buyer: ${value(row['buyerName'])}',
@@ -459,6 +482,9 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                                   onPressed: reviewing.contains(row['id'].toString()) ? null : () => reviewPayment(row),
                                   child: const Text('Review held payment'),
                                 ),
+                              if (section == 'customers' &&
+                                  widget.session.can('recharge.operations'))
+                                TextButton(onPressed:()=>revokeSessions(row),child:const Text('Sign out all devices')),
                               if (section == 'customers' &&
                                   widget.session.can('recharge.operations'))
                                 TextButton(

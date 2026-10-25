@@ -7,6 +7,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaMobileTopUpRepository } from '../src/topup/repository.js';
 import { FlupFlapVerification } from '../src/flupflap/verification.js';
 import { createRechargeFraudGate } from '../src/topup/fraud-gate.js';
+import { SecurityChallenges } from '../src/security-challenges.js';
+import { AdminMfaService } from '../src/admin-mfa.js';
+import { TOTP } from 'otpauth';
+import bcrypt from 'bcryptjs';
 
 // CI supplies a disposable, fully migrated database; never use DATABASE_URL here.
 const url=process.env.FRAUD_TEST_DATABASE_URL;
@@ -19,6 +23,28 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
   async function customer(){
     return clients[0]!.flupFlapCustomer.create({data:{email:randomUUID()+'@example.test',passwordHash:'fixture'}});
   }
+  it('consumes a security code only once across independent connections',async()=>{
+    const c=await customer(),secret='fixture-security-secret-at-least-32-characters';let text='';
+    const mail={available:true,send:async(_to:string,value:string)=>{text=value;}};
+    const challenge=await new SecurityChallenges(clients[0]!,secret,mail).issue(c.id,'parallel-proof',c.email!,'credential-version');
+    const code=text.match(/code is (\d{6})/)![1];
+    const results=await Promise.allSettled(clients.map(db=>new SecurityChallenges(db,secret,mail).consume(challenge.challengeId,c.id,'parallel-proof',code,'credential-version')));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect(results.filter(r=>r.status==='rejected')).toHaveLength(5);
+  });
+  it('uses an admin MFA recovery code only once across independent connections',async()=>{
+    const password='fixture-admin-password',secret='fixture-security-secret-at-least-32-characters',encryption='fixture-encryption-secret-at-least-32-characters';let text='';
+    const mail={available:true,send:async(_to:string,value:string)=>{text=value;}};
+    const user=await clients[0]!.user.create({data:{email:randomUUID()+'@example.test',role:'ADMIN',passwordHash:await bcrypt.hash(password,4)}});
+    const services=clients.map(db=>new AdminMfaService(db,new SecurityChallenges(db,secret,mail),encryption));
+    const challenge=await services[0]!.start(user.id,password,'fixture-access');
+    const setup=await services[0]!.setup(user.id,password,'fixture-access',challenge.challengeId,text.match(/code is (\d{6})/)![1]);
+    const code=new TOTP({secret:setup.secret,algorithm:'SHA1',digits:6,period:30}).generate();
+    const enabled=await services[0]!.verify(user.id,password,'fixture-access',code,true);
+    const results=await Promise.allSettled(services.map(s=>s.verify(user.id,password,'fixture-access',enabled.recoveryCodes![0]!)));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect(await clients[0]!.adminMfaGrant.count({where:{userId:user.id}})).toBe(2);
+  });
   async function input(customerId:string, recipientPhone='+509'+randomUUID().replace(/\D/g,'').slice(0,8).padEnd(8,'1')){
     const repo=new PrismaMobileTopUpRepository(clients[0]!);
     const quote=await repo.createQuote({userId:'flupflap:'+customerId,countryCode:'HT',recipientPhone,

@@ -38,6 +38,19 @@ const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:
 describe('FlupFlap identity and shared recharge isolation',()=>{
  beforeEach(resetStore);
  afterEach(() => vi.unstubAllEnvs());
+ it('signs out all current and refresh sessions only after password proof and only for the caller',async()=>{
+  const {app}=setup(),a=await signup(app),b=await signup(app,'b');
+  const second=(await request(app).post(root+'/auth/login').send({email:a.user.email,password:'correct-horse-42'}).expect(200)).body;
+  const sessions=(await request(app).get(root+'/auth/sessions').set(headers(a.accessToken)).expect(200)).body.sessions;
+  expect(sessions).toHaveLength(2);expect(sessions.filter((s:{current:boolean})=>s.current)).toHaveLength(1);
+  expect(JSON.stringify(sessions)).not.toContain('refreshHash');
+  await request(app).post(root+'/auth/sessions/revoke-all').set(headers(a.accessToken)).send({password:'incorrect-password'}).expect(403);
+  await request(app).get(root+'/auth/me').set(headers(a.accessToken)).expect(200);
+  await request(app).post(root+'/auth/sessions/revoke-all').set(headers(a.accessToken)).send({password:'correct-horse-42'}).expect(204);
+  for(const token of [a.accessToken,second.accessToken])await request(app).get(root+'/auth/me').set(headers(token)).expect(401);
+  for(const refreshToken of [a.refreshToken,second.refreshToken])await request(app).post(root+'/auth/refresh').send({refreshToken}).expect(401);
+  await request(app).get(root+'/auth/me').set(headers(b.accessToken)).expect(200);
+ });
  it('rejects duplicate emails after trimming and case normalization without changing the original identity', async () => {
   const {app,identities}=setup(); const original=await signup(app);
   const duplicate=await request(app).post(root+'/auth/register').send({firstName:'John',lastName:'Doe',phone:'+15550009999',
@@ -186,7 +199,9 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   for(const path of ['refunds','settings','providers']) await request(app).patch('/api/admin/flupflap/'+path).set(headers(legacy.accessToken)).send({}).then(r=>expect([403,404]).toContain(r.status));
   await request(app).patch('/api/admin/flupflap/customers/'+flup.user.id+'/restrictions').set(headers(legacy.accessToken)).send({rechargeRestricted:true,reason:'Unauthorized operation'}).expect(403);
   await request(app).patch('/api/admin/flupflap/customers/'+flup.user.id+'/restrictions').set(ah).send({rechargeRestricted:true,reason:'Security review requested'}).expect(204);
-  await request(app).get(root+'/mobile-topups/countries').set(headers(flup.accessToken)).expect(403);
+  await request(app).get(root+'/mobile-topups/countries').set(headers(flup.accessToken)).expect(401);
+  const relogin=(await request(app).post(root+'/auth/login').send({email:flup.user.email,password:'correct-horse-42'}).expect(200)).body;
+  await request(app).get(root+'/mobile-topups/countries').set(headers(relogin.accessToken)).expect(403);
   await request(app).post('/api/admin/flupflap/refunds').set(ah).send({status:'REFUNDED'}).expect(409);
  });
 

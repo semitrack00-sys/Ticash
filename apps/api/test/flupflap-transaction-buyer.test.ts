@@ -14,6 +14,7 @@ describe('transaction buyer identity', () => {
     }), true);
     expect(await lookup('buyer')).toEqual({
       buyerName: 'Marie Jean', buyerEmail: 'buyer@example.test', buyerPhone: '+15005550001',
+      buyerEmailVerified:false,buyerPhoneVerified:false,buyerPurchasesRestricted:false,buyerNameSource:'CUSTOMER_PROFILE',
     });
   });
   it('does not fetch or expose identities without customer permission', async () => {

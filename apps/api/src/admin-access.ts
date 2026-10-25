@@ -65,6 +65,7 @@ export function hasPermission(role: string | undefined, permission: AdminPermiss
 export function requirePermission(
   permission: AdminPermission,
   resolveRole: (userId: string) => Promise<string | undefined>,
+  verifySecondFactor?: (req: AdminRequest) => Promise<boolean>,
 ) {
   return async (req: AdminRequest, res: Response, next: NextFunction) => {
     const role = await resolveRole(req.userId ?? '');
@@ -78,6 +79,9 @@ export function requirePermission(
     }
     req.staffRole = role as StaffRole;
     req.permissions = permissionsForRole(role);
+    if(verifySecondFactor&&!await verifySecondFactor(req)){
+      res.status(403).json({code:'ADMIN_MFA_REQUIRED',error:'Verify your administrator authenticator before accessing staff data.'});return;
+    }
     next();
   };
 }

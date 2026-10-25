@@ -11,6 +11,7 @@ import type { PasswordResetEmailService } from '../password-reset-email.js';
 import { passwordResetUrl } from '../password-reset-email.js';
 import { AccountDeletionError } from './account-deletion.js';
 import type { FlupFlapSelfServiceDeletion } from './self-service-deletion.js';
+import type { FlupFlapAccountSecurity } from './account-security.js';
 
 export type FlupFlapConfig = { enabled: boolean; accessSecret?: string; resetUrl?: string };
 export function loadFlupFlapConfig(env: NodeJS.ProcessEnv = process.env): FlupFlapConfig {
@@ -57,6 +58,7 @@ export function createFlupFlapIdentity(options: {
   accessAllowed: () => boolean;
   emailService: PasswordResetEmailService;
   deletion?: FlupFlapSelfServiceDeletion;
+  security?: FlupFlapAccountSecurity;
   audit: (owner:string|undefined, action:string, entity:string, id?:string) => Promise<void>;
 }) {
   const { config, repository: repo } = options;
@@ -94,6 +96,7 @@ export function createFlupFlapIdentity(options: {
     next();
   };
   router.use(available);
+  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   const limited = rateLimit({ windowMs:15*60_000, limit:20, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many requests. Try again later.'} });
   const refreshLimited = rateLimit({ windowMs:15*60_000, limit:120, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many session refresh requests. Try again later.'} });
   const guestLimited = rateLimit({ windowMs:15*60_000, limit:5, standardHeaders:'draft-8', legacyHeaders:false, message:{code:'RATE_LIMITED',error:'Too many guest sessions. Try again later.'} });
@@ -138,9 +141,64 @@ export function createFlupFlapIdentity(options: {
       }
       res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with these credentials'});return;
     }
+    const challenge=await options.security?.loginChallenge(c!,req.header('X-FlupFlap-Trusted-Device') ?? cookies(req.header('cookie')).flupflap_trusted_device);
+    if(challenge){res.status(202).json({code:'LOGIN_VERIFICATION_REQUIRED',...challenge});return;}
     const updated = await repo.completeLogin(c!.id,c!.passwordHash!,c!.authVersion);
     if(!updated){res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to sign in with these credentials'});return;}
     const session=await issue(updated); setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt); res.json(session);
+  });
+
+  router.post('/login/confirm',limited,async(req,res)=>{
+    const input=z.object({email,challengeId:z.uuid(),code:z.string().regex(/^\d{6}$/)}).strict().parse(req.body);
+    const c=await repo.byEmail(input.email);
+    if(!options.security||!active(c)||c!.guestExpiresAt||(c!.loginLockedUntil&&c!.loginLockedUntil>new Date())){
+      res.status(401).json({code:'INVALID_CREDENTIALS',error:'Unable to complete sign in.'});return;
+    }
+    const trustedDeviceToken=await options.security.confirmLogin(c!,input.challengeId,input.code);
+    const updated=await repo.completeLogin(c!.id,c!.passwordHash!,c!.authVersion);
+    if(!updated){res.status(401).json({code:'INVALID_CREDENTIALS'});return;}
+    const session=await issue(updated);setWebRefreshCookie(res,session.refreshToken,session.refreshExpiresAt);
+    res.cookie('flupflap_trusted_device',trustedDeviceToken,{httpOnly:true,secure:process.env.NODE_ENV==='production',
+      sameSite:process.env.NODE_ENV==='production'?'none':'lax',path:'/api/flupflap/auth',maxAge:30*86400000});
+    res.json({...session,trustedDeviceToken});
+  });
+
+  const securityLimit=rateLimit({windowMs:3600000,limit:20,standardHeaders:'draft-8',legacyHeaders:false,
+    message:{code:'RATE_LIMITED',error:'Too many account security requests.'}});
+  router.get('/security',authenticate,(_req,res)=>res.json({enabled:Boolean(options.security),sessions:true}));
+  router.get('/sessions',authenticate,async(req,res)=>{
+    const r=req as AuthRequest;
+    res.set('Cache-Control','no-store').json({sessions:(await repo.listSessions(r.flupFlapCustomer!.id)).map(s=>({...s,current:s.id===r.flupFlapSessionId}))});
+  });
+  router.post('/sessions/revoke-all',securityLimit,authenticate,async(req,res)=>{
+    const input=z.object({password}).strict().parse(req.body),c=(req as AuthRequest).flupFlapCustomer!;
+    if(!c.passwordHash||!await bcrypt.compare(input.password,c.passwordHash)){res.status(403).json({code:'REAUTHENTICATION_REQUIRED'});return;}
+    await repo.revokeAll(c.id);clearWebRefreshCookie(res);
+    res.clearCookie('flupflap_trusted_device',{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:process.env.NODE_ENV==='production'?'none':'lax',path:'/api/flupflap/auth'});
+    await options.audit(flupFlapOwner(c.id),'FLUPFLAP_ALL_SESSIONS_REVOKED','FlupFlapCustomer',c.id);res.status(204).end();
+  });
+  router.use('/security',securityLimit,authenticate);
+  router.post('/security/:action',async(req,res)=>{
+    if(!options.security){res.status(503).json({code:'SECURITY_UNAVAILABLE'});return;}
+    const c=(req as AuthRequest).flupFlapCustomer!;
+    if(c.guestExpiresAt){res.status(403).json({code:'REGISTERED_ACCOUNT_REQUIRED'});return;}
+    const action=req.params.action;
+    if(action==='password-send'){
+      const input=z.object({password}).strict().parse(req.body);res.json(await options.security.startPassword(c,input.password));return;
+    }
+    if(action==='password-confirm'){
+      const input=z.object({password,newPassword:password,challengeId:z.uuid(),code:z.string().regex(/^\d{6}$/)}).strict().parse(req.body);
+      await options.security.changePassword(c,input.password,input.newPassword,input.challengeId,input.code);
+    }else if(action==='email-send'){
+      const input=z.object({password,newEmail:email}).strict().parse(req.body);res.json(await options.security.startEmail(c,input.password,input.newEmail));return;
+    }else if(action==='email-current'){
+      const input=z.object({password,newEmail:email,challengeId:z.uuid(),code:z.string().regex(/^\d{6}$/)}).strict().parse(req.body);
+      res.json(await options.security.confirmCurrentEmail(c,input.password,input.newEmail,input.challengeId,input.code));return;
+    }else if(action==='email-confirm'){
+      const input=z.object({password,newEmail:email,challengeId:z.uuid(),code:z.string().regex(/^\d{6}$/)}).strict().parse(req.body);
+      await options.security.changeEmail(c,input.password,input.newEmail,input.challengeId,input.code);
+    }else{res.status(404).end();return;}
+    clearWebRefreshCookie(res);res.json({changed:true,signInRequired:true});
   });
 
 

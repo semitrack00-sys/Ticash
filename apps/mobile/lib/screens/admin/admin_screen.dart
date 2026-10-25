@@ -1,4 +1,6 @@
 import 'flupflap_admin_page.dart';
+import 'admin_security_gate.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -58,7 +60,8 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
       ),
       body: workspace.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => _ErrorState(
+        error: (error, _) => error is DioException && error.response?.data is Map && error.response?.data['code']=='ADMIN_MFA_REQUIRED'
+          ? AdminSecurityGate(onVerified:()=>ref.invalidate(adminWorkspaceProvider)) : _ErrorState(
           error: error,
           retry: () => ref.invalidate(adminWorkspaceProvider),
         ),

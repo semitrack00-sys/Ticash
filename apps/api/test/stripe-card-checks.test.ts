@@ -28,6 +28,7 @@ function fixture(checks?: Record<string, unknown>) {
 describe('issuer verification results from Stripe to fulfillment', () => {
   it.each([
     {address_postal_code_check:'fail', cvc_check:'pass'},
+    {address_postal_code_check:'pass', cvc_check:'pass', address_line1_check:'fail'},
     {address_postal_code_check:'pass', cvc_check:'fail'},
     {address_postal_code_check:'unavailable', cvc_check:'pass'},
     {address_postal_code_check:'pass', cvc_check:'unchecked'},
@@ -39,7 +40,7 @@ describe('issuer verification results from Stripe to fulfillment', () => {
     let record = {id:'tx', userId:`flupflap:${customerId}`, paymentProvider:'STRIPE', paymentProviderTransactionId:'pi_fixture',
       status:'PENDING', paymentStatus:'CAPTURED', testMode:false};
     const assessments = {findUnique:vi.fn().mockResolvedValue(null), findMany:vi.fn().mockResolvedValue([]), upsert:vi.fn()};
-    const tx = {$queryRaw:vi.fn(), flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'})}, rechargeFraudAssessment:assessments};
+    const tx = { flupFlapDevice:{findMany:vi.fn().mockResolvedValue([])}, auditLog:{findMany:vi.fn().mockResolvedValue([]),create:vi.fn()},$queryRaw:vi.fn(), flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'})}, rechargeFraudAssessment:assessments};
     const db = {...tx, $transaction:async(fn:(t:typeof tx)=>unknown)=>fn(tx)};
     const gate = createRechargeFraudGate(db as never, stripe);
     const submit = vi.fn(); const claim = vi.fn();
@@ -51,8 +52,8 @@ describe('issuer verification results from Stripe to fulfillment', () => {
 
     await service.fulfillPaidRecharge('tx');
     await service.fulfillPaidRecharge('tx');
-    expect(record).toMatchObject({status:'PENDING', paymentStatus:'CAPTURED', failureCode:'FRAUD_REVIEW_REQUIRED', paymentRecoveryCode:'PAYMENT_CARD_CHECK_FAILED'});
-    expect(assessments.upsert).toHaveBeenCalledWith(expect.objectContaining({create:expect.objectContaining({reason:'PAYMENT_CARD_CHECK_FAILED'})}));
+    expect(record).toMatchObject({status:'PENDING', paymentStatus:'CAPTURED', failureCode:'FRAUD_REVIEW_REQUIRED', paymentRecoveryCode:(checks.address_line1_check === 'fail' ? 'PAYMENT_STREET_CHECK_FAILED' : 'PAYMENT_CARD_CHECK_FAILED')});
+    expect(assessments.upsert).toHaveBeenCalledWith(expect.objectContaining({create:expect.objectContaining({reason:(checks.address_line1_check === 'fail' ? 'PAYMENT_STREET_CHECK_FAILED' : 'PAYMENT_CARD_CHECK_FAILED')})}));
     expect(transport).toHaveBeenCalledOnce();
     expect(submit).not.toHaveBeenCalled(); expect(claim).not.toHaveBeenCalled();
 

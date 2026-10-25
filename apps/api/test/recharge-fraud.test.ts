@@ -29,6 +29,10 @@ describe('payment risk decision', () => {
   it.each([{risk:'elevated'}, {risk:'highest'}, {risk:'unknown'}, {review:true}, {disputed:true}, {refunded:true}, {authentication:'attempt_acknowledged'}, {fingerprint:undefined}, {paymentType:'link'}])('holds uncertain evidence %j', patch => {
     expect(paymentReviewReason({...safe, ...patch})).toBeTruthy();
   });
+  it('holds explicit street failures but accepts unsupported street checks', () => {
+    expect(paymentReviewReason({...safe, streetCheck:'fail'})).toBe('PAYMENT_STREET_CHECK_FAILED');
+    expect(paymentReviewReason({...safe, streetCheck:'unavailable'})).toBeUndefined();
+  });
   it('holds network-downgraded authentication without confusing card networks', () => {
     expect(paymentReviewReason({...safe, cardNetwork:'visa', responseEci:'07'})).toBe('PAYMENT_AUTHENTICATION_REVIEW');
     expect(paymentReviewReason({...safe, cardNetwork:'mastercard', responseEci:'06'})).toBe('PAYMENT_AUTHENTICATION_REVIEW');
@@ -37,8 +41,8 @@ describe('payment risk decision', () => {
   });
   it('serializes the card history and persists a third-card review', async () => {
     const create = vi.fn(); const lock = vi.fn();
-    const tx = { $queryRaw:lock, flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'})}, rechargeFraudAssessment: {
-      findUnique:vi.fn().mockResolvedValue(null), findMany:vi.fn().mockImplementation(async args => args.where.fingerprint ? [] : [{fingerprint:'one'},{fingerprint:'two'}]), upsert:create } };
+    const tx = { flupFlapDevice:{findMany:vi.fn().mockResolvedValue([])}, auditLog:{findMany:vi.fn().mockResolvedValue([]),create:vi.fn()}, $queryRaw:lock, flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'})}, rechargeFraudAssessment: {
+      findUnique:vi.fn().mockResolvedValue(null), findMany:vi.fn().mockImplementation(async args => args.where.fingerprint || typeof args.where.customerId === 'object' ? [] : [{fingerprint:'one'},{fingerprint:'two'}]), upsert:create } };
     const db = {...tx, $transaction: async (fn: (t: typeof tx) => unknown) => fn(tx)};
     const gate = createRechargeFraudGate(db as never, {fraudEvidence:async()=>safe} as never);
     expect(await gate({id:'tx',userId:'flupflap:11111111-1111-4111-8111-111111111111',paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_test'} as never)).toBe('CARD_SWITCHING_REVIEW');
@@ -60,10 +64,10 @@ describe('payment risk decision', () => {
 describe('staff review safeguards', () => {
   const record = {id:'tx',userId:'flupflap:11111111-1111-4111-8111-111111111111',paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_test',testMode:false};
   function fixture(evidence = safe) {
-    const assessment = {findUnique:vi.fn().mockResolvedValue(null),findMany:vi.fn().mockImplementation(async args => args.where.fingerprint ? [] : [{fingerprint:'one'},{fingerprint:'two'}]),upsert:vi.fn()};
-    const tx = {$queryRaw:vi.fn(),flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'}),findFirst:vi.fn().mockResolvedValue(null)},
+    const assessment = {findUnique:vi.fn().mockResolvedValue(null),findMany:vi.fn().mockImplementation(async args => args.where.fingerprint || typeof args.where.customerId === 'object' ? [] : [{fingerprint:'one'},{fingerprint:'two'}]),upsert:vi.fn()};
+    const tx = { flupFlapDevice:{findMany:vi.fn().mockResolvedValue([])}, auditLog:{findMany:vi.fn().mockResolvedValue([]),create:vi.fn()},$queryRaw:vi.fn(),flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue({status:'ACTIVE'}),findFirst:vi.fn().mockResolvedValue(null)},
       mobileTopUpTransaction:{findUnique:vi.fn().mockResolvedValue({flupFlapCustomerId:record.userId.slice(9),status:'PENDING',paymentStatus:'CAPTURED',failureCode:'FRAUD_REVIEW_REQUIRED'})},
-      rechargeFraudAssessment:assessment,auditLog:{create:vi.fn()}};
+      rechargeFraudAssessment:assessment};
     return {tx,db:{...tx,$transaction:async(fn:(t:typeof tx)=>unknown)=>fn(tx)},stripe:{fraudEvidence:vi.fn().mockResolvedValue(evidence)}};
   }
   it('holds a shared card on a new account and keeps restricted links held after staff review',async()=>{
@@ -78,7 +82,7 @@ describe('staff review safeguards', () => {
     tx.flupFlapCustomer.findFirst.mockResolvedValue({id:'other-buyer'} as never);
     expect(await gate(record as never)).toBe('LINKED_ACCOUNT_REVIEW');
   });
-  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true},{postalCodeCheck:'fail'},{cvcCheck:'fail'},{postalCodeCheck:undefined},{cvcCheck:'unavailable'}])('rejects unsafe release %j',async patch=>{
+  it.each([{disputed:true},{refunded:true},{risk:'elevated'},{authentication:'attempt_acknowledged'},{review:true},{postalCodeCheck:'fail'},{cvcCheck:'fail'},{postalCodeCheck:undefined},{cvcCheck:'unavailable'},{streetCheck:'fail'}])('rejects unsafe release %j',async patch=>{
     const {db,stripe,tx}=fixture({...safe,...patch});
     await expect(approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed payment evidence')).rejects.toMatchObject({code:'FRAUD_REVIEW_NOT_CLEAR'});
     expect(tx.rechargeFraudAssessment.upsert).not.toHaveBeenCalled();

@@ -1101,7 +1101,21 @@ export class MobileTopUpService {
     if (event.amountMinor !== usdMinorUnits(record.totalChargeUsd) || event.currency !== 'USD' || paymentIdMismatch) {
       throw new MobileTopUpError('PAYMENT_EVENT_MISMATCH', 'Payment event did not match the reserved recharge', 409);
     }
-    if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id)) return;
+    if (!await this.repository.registerPaymentEvent(event.eventId, event.payloadHash, record.id, event.attempt)) return;
+
+    if (event.type === 'payment_intent.payment_failed' && !record.testMode && record.userId.startsWith('flupflap:') &&
+        this.repository.paymentAttemptReviewReason && record.paymentSessionId && this.stripeProvider) {
+      const reason = await this.repository.paymentAttemptReviewReason(record.userId.slice(9));
+      if (reason) {
+        // Stop further retries in this hosted session. If Stripe is unavailable,
+        // leave the event unprocessed so its retry attempts expiration again.
+        // A concurrent completion is still checked by the fulfillment fraud gate.
+        const session = await this.stripeProvider.getHostedCheckoutPaymentState(record.paymentSessionId);
+        if (!session.status) throw new MobileTopUpError('STRIPE_REQUEST_UNRESOLVED', 'Checkout state is unavailable.', 503);
+        if (session.status === 'open') await this.stripeProvider.expireHostedCheckoutSession(record.paymentSessionId, record.id);
+        await this.audit(record.userId, 'MOBILE_TOPUP_PAYMENT_ATTEMPTS_BLOCKED', 'MobileTopUpTransaction', record.id, { reason });
+      }
+    }
 
     // Checkout completion can precede payment for delayed methods. A signed
     // event is authoritative only when it explicitly confirms the session paid.

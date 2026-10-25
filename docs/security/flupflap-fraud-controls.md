@@ -9,7 +9,7 @@ This change is not a declaration that any buyer committed fraud. It adds conserv
 - First seven account days: maximum $25 per order and $50 reserved per rolling 24 hours. Older accounts: $100 per order and $200 per 24 hours. All amounts include fees. Maximum three reservations per hour and ten per 24 hours.
 - Stripe Checkout requests a 3DS challenge. The issuer controls whether a challenge occurs; this is not a liability guarantee.
 - Before any new production FlupFlap Stripe fulfillment, retrieve the bound PaymentIntent and charge from Stripe. Require succeeded/captured payment, matching transaction metadata and environment, normal risk, no review/dispute/refund, and authenticated card evidence. Unknown or non-card results require review rather than automatic delivery.
-- More than two observed paid-card fingerprints per buyer in 24 hours requires review. This does not count failed card attempts inside an existing hosted checkout; Radar must cover that path.
+- More than two observed card fingerprints per buyer or recently linked installation in 24 hours blocks new checkout and holds fulfillment. Signed failed-payment events and paid assessments both count. Hosted Checkout reveals card selection only after an attempt; Radar remains necessary for synchronous pre-authorization blocking.
 - Evidence is durable in RechargeFraudAssessment. Fingerprints are hashed. No card numbers or CVCs are stored. Transaction IDs join existing recipient and supplier-delivery evidence.
 - Held orders remain PENDING/CAPTURED with FRAUD_REVIEW_REQUIRED and an internal reason. Webhook retries/reconciliation cannot automatically release them. Existing admin pending-failures view exposes the held records. No automatic refunds or fraud accusations.
 
@@ -50,7 +50,7 @@ Contact verification is implemented behind FLUPFLAP_VERIFICATION_ENABLED, defaul
 
 Only after end-to-end delivery/app testing, set FLUPFLAP_REQUIRE_VERIFIED_CONTACTS=true to require both verified contact methods before new production recharge reservations. Startup rejects enforcement without both delivery providers. Existing held payments retain their independent review controls. Account possession verification is not identity verification or proof that a payment is legitimate. Configure challenge retention cleanup before rollout; rows contain contact data and cascade on customer deletion.
 
-Device/IP controls and repeated failed attempts within one Checkout Session require additional controls. Existing email blocks do not cover alternate emails. Merchant store-balance flows remain on their existing controls; this gate covers Stripe retail recharges.
+Device associations and signed failed-attempt tracking now cover the supported paths described below; Radar remains necessary for synchronous payment rejection. Existing email blocks do not cover alternate emails. Merchant store-balance flows remain on their existing controls; this gate covers Stripe retail recharges.
 
 ## Linked account safeguards
 
@@ -90,3 +90,15 @@ Telnyx 2FA campaign must be approved, its sender assigned, START/STOP/HELP respo
 verified, and a real code delivered/confirmed before phone verification is required.
 Do not enable FLUPFLAP_REQUIRE_VERIFIED_CONTACTS merely because this code deploys.
 The worker deletes expired verification challenges after seven days.
+
+### Additional attempt, street and recipient controls
+
+- Three distinct signed Stripe failed-charge attempts within a rolling 15 minutes reject new retail checkout reservations and hold any pending delivery. Deduplicate by transaction plus Stripe charge ID in the existing AuditLog; fallback to the signed event ID when the charge is absent. Event occurrence time, not delayed webhook arrival time, controls the window. Only SHA-256 fingerprints, charge references and timestamps are retained. Existing events are not backfilled.
+- One installation's recently associated accounts share failure and card limits. Resetting installation storage or using an old client can evade this signal; account and recipient limits remain independent. Missing card fingerprints cannot be inferred.
+- After a signed failure crosses a limit, expire that order's open hosted Checkout Session. Provider errors leave the event unprocessed for Stripe retries. A session that completed concurrently still passes through the fulfillment gate. Other already-open sessions cannot be synchronously blocked by an asynchronous webhook; new reservations and later delivery are guarded. Do not describe these controls as preventing every authorization.
+- A third distinct card within 24 hours (failed or paid) is held, and subsequent checkout reservations are rejected until the window clears. Staff release cannot override an active attempt/card limit. Existing holds remain durable after cooldown until audited review.
+- Three distinct customer accounts reserving recharges for one recipient within an hour cause SHARED_RECIPIENT_REVIEW before delivery. Existing recipient reservation budgets remain unchanged. Staff may release a legitimate shared-recipient hold after fresh safe evidence.
+- An explicit Stripe address_line1_check='fail' causes PAYMENT_STREET_CHECK_FAILED before supplier delivery, including retries and staff review. Missing/unavailable street results are not rejected solely for street verification. Mandatory passing CVC and ZIP remain unchanged.
+- First-seven-days limits of $25/order and $50/rolling day were already present and remain enforced including fees.
+- No new database migration is needed. The new attempt history uses idempotent audit rows and the existing customer/time index. Existing failed charges before this deployment are not counted.
+- Stripe Dashboard street blocking remains a separate operational step: preview and enable `:address_line1_check: = 'fail'` at 100%. This branch does not create that Radar rule. Country matching was enabled by the owner in the Dashboard; recipient destination countries are not compared to card countries.

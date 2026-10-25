@@ -1,3 +1,4 @@
+import { paymentAttemptReviewReason } from '../src/topup/payment-attempt-controls.js';
 import { checkRechargeDevice } from '../src/flupflap/device-security.js';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -61,6 +62,27 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     } as never)));
     expect(results.filter(r=>r===undefined)).toHaveLength(1);
     expect(results.filter(r=>r==='SHARED_CARD_REVIEW')).toHaveLength(5);
+  });
+  it('serializes distinct paid cards across two accounts sharing an installation',async()=>{
+    const buyers=await Promise.all([customer(),customer()]);const device=randomUUID().replaceAll('-','').repeat(2);
+    for(const c of buyers)await checkRechargeDevice(clients[0]!,c.id,device);
+    const stripe=(fingerprint:string)=>({fraudEvidence:async()=>({chargeId:'ch_'+fingerprint,fingerprint,postalCodeCheck:'pass',cvcCheck:'pass',risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})});
+    const record=(id:string)=>({id:randomUUID(),userId:'flupflap:'+id,paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_fixture'});
+    expect(await createRechargeFraudGate(clients[0]!,stripe(randomUUID()) as never)(record(buyers[0]!.id) as never)).toBeUndefined();
+    const results=await Promise.all(buyers.map((c,i)=>createRechargeFraudGate(clients[i]!,stripe(randomUUID()) as never)(record(c.id) as never)));
+    expect(results.filter(r=>r===undefined)).toHaveLength(1);
+    expect(results.filter(r=>r==='PAYMENT_CARD_LIMIT')).toHaveLength(1);
+  });
+  it('deduplicates concurrent signed-attempt records and blocks concurrent checkout reservations',async()=>{
+    const c=await customer();const reserved=await new PrismaMobileTopUpRepository(clients[0]!).reserveTransaction(await input(c.id));
+    const attempt={eventType:'payment_intent.payment_failed',attemptId:'ch_'+randomUUID(),fingerprint:'hashed-fixture',occurredAt:new Date()};
+    await Promise.all(clients.map((db,i)=>new PrismaMobileTopUpRepository(db).registerPaymentEvent('evt_'+randomUUID(),'hash'+i,reserved.record.id,attempt)));
+    expect(await clients[0]!.auditLog.count({where:{flupFlapCustomerId:c.id,action:'FLUPFLAP_PAYMENT_ATTEMPT_FAILED'}})).toBe(1);
+    expect(await paymentAttemptReviewReason(clients[0]!,c.id)).toBeUndefined();
+    for(let i=0;i<2;i++)await new PrismaMobileTopUpRepository(clients[0]!).registerPaymentEvent('evt_'+randomUUID(),'hash',reserved.record.id,{...attempt,attemptId:'ch_'+randomUUID()});
+    const inputs=await Promise.all(clients.map(()=>input(c.id)));
+    const results=await Promise.allSettled(inputs.map((r,i)=>new PrismaMobileTopUpRepository(clients[i]!).reserveTransaction(r)));
+    expect(results.every(r=>r.status==='rejected' && r.reason.code==='PAYMENT_ATTEMPT_LIMIT')).toBe(true);
   });
   it('does not consume a quote before contact verification',async()=>{
     const c=await customer();const record=await input(c.id);const repo=new PrismaMobileTopUpRepository(clients[0]!,true);

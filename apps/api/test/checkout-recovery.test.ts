@@ -19,9 +19,9 @@ function fixture(assertPurchaseIdentity?: (owner: string) => Promise<void>) {
 
 describe('recover existing hosted checkout', () => {
   it('does not disclose an existing checkout until the purchase identity check passes', async () => {
-    const guard=vi.fn(async () => { throw Object.assign(new Error('Verify email'), {code:'EMAIL_VERIFICATION_REQUIRED'}); });
+    const guard=vi.fn(async () => { throw Object.assign(new Error('Account restricted'), {code:'REGISTERED_ACCOUNT_REQUIRED'}); });
     const f=fixture(guard);
-    await expect(f.service.recoverHostedCheckout('owner','order')).rejects.toMatchObject({code:'EMAIL_VERIFICATION_REQUIRED'});
+    await expect(f.service.recoverHostedCheckout('owner','order')).rejects.toMatchObject({code:'REGISTERED_ACCOUNT_REQUIRED'});
     expect(guard).toHaveBeenCalledWith('owner');
     expect(f.stripe.getHostedCheckoutPaymentState).not.toHaveBeenCalled();
     expect(f.stripe.getHostedCheckoutSession).not.toHaveBeenCalled();

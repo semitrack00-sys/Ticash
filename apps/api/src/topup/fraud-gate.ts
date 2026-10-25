@@ -6,12 +6,11 @@ import type { MobileTopUpTransactionRecord } from './repository.js';
 import type { StripeHostedCheckoutProvider } from './stripe-provider.js';
 import { paymentReviewReason } from './fraud-policy.js';
 
-export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedCheckoutProvider, requireVerifiedEmail = false) {
+export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedCheckoutProvider) {
   return async (record: MobileTopUpTransactionRecord): Promise<string | undefined> => {
     const customerId = record.userId.slice('flupflap:'.length);
     const customer = await db.flupFlapCustomer.findUnique({ where: { id: customerId } });
     if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) return 'ACCOUNT_REVIEW_REQUIRED';
-    if (requireVerifiedEmail && (!customer.email || !customer.emailVerifiedAt)) return 'EMAIL_VERIFICATION_REQUIRED';
     if (record.paymentProvider !== 'STRIPE') return 'PAYMENT_METHOD_REVIEW';
     if (!stripe) return 'PAYMENT_RISK_UNAVAILABLE';
     const evidence = await stripe.fraudEvidence(record.paymentProviderTransactionId ?? record.paymentAuthorizationId ?? '', record.id);
@@ -27,7 +26,6 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
       }
       const current = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
       if (!current || current.status !== 'ACTIVE' || current.rechargeRestricted || current.guestExpiresAt) return 'ACCOUNT_REVIEW_REQUIRED';
-      if (requireVerifiedEmail && (!current.email || !current.emailVerifiedAt)) return 'EMAIL_VERIFICATION_REQUIRED';
       const saved = await tx.rechargeFraudAssessment.findUnique({ where: { transactionId: record.id } });
       // Reviews remain held on webhook retries and reconciliation.
       if (saved?.reason && !saved.reviewedAt) return saved.reason;

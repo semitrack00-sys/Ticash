@@ -138,11 +138,11 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     const results=await Promise.allSettled(inputs.map((r,i)=>new PrismaMobileTopUpRepository(clients[i]!).reserveTransaction(r)));
     expect(results.every(r=>r.status==='rejected' && r.reason.code==='PAYMENT_ATTEMPT_LIMIT')).toBe(true);
   });
-  it('does not consume a quote before contact verification',async()=>{
+  it('keeps staged phone verification while email remains optional',async()=>{
     const c=await customer();const record=await input(c.id);const repo=new PrismaMobileTopUpRepository(clients[0]!,true);
     await expect(repo.reserveTransaction(record)).rejects.toMatchObject({code:'CONTACT_VERIFICATION_REQUIRED'});
     expect((await clients[0]!.mobileTopUpQuote.findUniqueOrThrow({where:{id:record.quoteId}})).consumedAt).toBeNull();
-    await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{emailVerifiedAt:new Date(),phoneVerifiedAt:new Date()}});
+    await clients[0]!.flupFlapCustomer.update({where:{id:c.id},data:{phoneVerifiedAt:new Date()}});
     expect((await repo.reserveTransaction(record)).created).toBe(true);
   });
   it('limits concurrent accounts sharing one installation',async()=>{

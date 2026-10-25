@@ -45,25 +45,17 @@ describe('FlupFlap identity and shared recharge isolation',()=>{
   expect(duplicate.body.code).toBe('REGISTRATION_UNAVAILABLE');
   expect(await identities.byEmail('a@example.test')).toMatchObject({id:original.user.id,firstName:'Test',lastName:'A'});
  });
- it('requires saved email ownership for purchases and replays while preserving quotes, history and account access', async () => {
+ it('allows unverified email purchases and idempotent replays even with the legacy email flag set', async () => {
   vi.stubEnv('FLUPFLAP_REQUIRE_VERIFIED_EMAIL','true');
   const {app,identities,provider}=setup(); const customer=await signup(app); const auth=headers(customer.accessToken);
+  expect((await identities.customer(customer.user.id))!.emailVerifiedAt).toBeNull();
   const quote=(await request(app).post(root+'/mobile-topups/quotes').set(auth).send(quoteInput).expect(201)).body.quote;
-  for(const path of ['/mobile-topups/transactions','/mobile-topups/payment-sessions']) {
-   const result=await request(app).post(root+path).set(auth).set('Idempotency-Key','email-ownership-test').send({quoteId:quote.id}).expect(403);
-   expect(result.body.code).toBe('EMAIL_VERIFICATION_REQUIRED');
-  }
-  expect(provider.submitTopUp).not.toHaveBeenCalled();
-  expect((await request(app).get(root+'/mobile-topups/transactions').set(auth).expect(200)).body.transactions).toEqual([]);
-  await request(app).get(root+'/auth/me').set(auth).expect(200);
-  // Simulate the verification service committing proof of inbox ownership.
-  const saved=(await identities.customer(customer.user.id))!; saved.emailVerifiedAt=new Date();
-  await request(app).post(root+'/mobile-topups/transactions').set(auth).set('Idempotency-Key','email-ownership-test').send({quoteId:quote.id}).expect(201);
+  const body={quoteId:quote.id};
+  const original=await request(app).post(root+'/mobile-topups/transactions').set(auth).set('Idempotency-Key','optional-email-test').send(body).expect(201);
+  const replay=await request(app).post(root+'/mobile-topups/transactions').set(auth).set('Idempotency-Key','optional-email-test').send(body).expect(201);
+  expect(replay.body.transaction.id).toBe(original.body.transaction.id);
   expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
-  saved.emailVerifiedAt=null;
-  await request(app).post(root+'/mobile-topups/transactions').set(auth).set('Idempotency-Key','email-ownership-test').send({quoteId:quote.id}).expect(403);
-  await request(app).get(root+'/mobile-topups/transactions').set(auth).expect(200);
-  expect(provider.submitTopUp).toHaveBeenCalledTimes(1);
+  expect((await identities.customer(customer.user.id))!.emailVerifiedAt).toBeNull();
  });
  it('ignores malformed unrelated cookie escapes without breaking native refresh', async () => {
   const {app}=setup();const customer=await signup(app);
@@ -283,6 +275,32 @@ describe('FlupFlap access in fully approved production', () => {
   expect(login.body.user).toMatchObject({id:customer.user.id, domain:'FLUPFLAP', guest:false});
   await request(app).get(root+'/auth/me').set(headers(login.body.accessToken)).expect(200);
   expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+ });
+
+ it('allows production hosted payment and replay without verified email while retaining account restrictions', async () => {
+  vi.stubEnv('FLUPFLAP_REQUIRE_VERIFIED_EMAIL','true');
+  const session={id:'cs_live_fixture',url:'https://checkout.stripe.com/c/pay/fixture'};
+  const stripe={createPaymentSession:vi.fn().mockResolvedValue(session),getHostedCheckoutSession:vi.fn().mockResolvedValue(session),
+   getHostedCheckoutPaymentState:vi.fn().mockResolvedValue({status:'open',paymentStatus:'unpaid'}),
+   flowContract:vi.fn((transactionId,checkoutSession)=>({provider:'STRIPE',transactionId,checkoutSession}))};
+  const {app,identities,provider}=setup({...production(),mobileTopUpStripeProvider:stripe as never});
+  const customer=await signup(app,'optional'); const auth=headers(customer.accessToken);
+  await identities.update(customer.user.id,{countryCode:'US'});
+  expect((await identities.customer(customer.user.id))!.emailVerifiedAt).toBeNull();
+  const quote=(await request(app).post(root+'/mobile-topups/quotes').set(auth).send(quoteInput).expect(201)).body.quote;
+  const pay=()=>request(app).post(root+'/mobile-topups/payment-sessions').set(auth).set('Idempotency-Key','production-optional-email').send({quoteId:quote.id});
+  const first=await pay().expect(201); const replay=await pay().expect(201);
+  expect(replay.body.transactionId).toBe(first.body.transactionId);
+  const reopened=await request(app).get(root+'/mobile-topups/transactions/'+first.body.transactionId+'/checkout').set(auth).expect(200);
+  expect(reopened.body.transactionId).toBe(first.body.transactionId);
+  expect(stripe.createPaymentSession).toHaveBeenCalledOnce();
+  expect(stripe.createPaymentSession).toHaveBeenCalledWith(expect.objectContaining({automaticThreeDS:true,billingCountry:'US'}));
+  expect(provider.submitTopUp).not.toHaveBeenCalled();
+  expect((await identities.customer(customer.user.id))!.emailVerifiedAt).toBeNull();
+  await identities.update(customer.user.id,{rechargeRestricted:true});
+  await pay().expect(403);
+  expect(stripe.createPaymentSession).toHaveBeenCalledOnce();
+  expect(fetch).not.toHaveBeenCalled();
  });
 
  it.each([

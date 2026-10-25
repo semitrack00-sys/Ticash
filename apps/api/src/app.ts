@@ -1009,16 +1009,14 @@ export function createApp(options: CreateAppOptions = {}) {
     return telnyx ? new TelnyxReceiverSmsProvider(telnyx) : undefined;
   })();
 
-  // Live FlupFlap purchases always require ownership of the saved email.
-  // The explicit flag also enables the same boundary in isolated test/UAT apps.
+  // Registered production accounts remain required; email verification is optional.
   const flupFlapIdentityConfig = options.flupFlapConfig ?? loadFlupFlapConfig();
-  const requireVerifiedEmail = flupFlapIdentityConfig.enabled && (mobileTopUpConfig.environment === 'production' ||
-    process.env.FLUPFLAP_REQUIRE_VERIFIED_EMAIL === 'true');
+  const requirePurchaseIdentity = flupFlapIdentityConfig.enabled && mobileTopUpConfig.environment === 'production';
 
   if (process.env.FLUPFLAP_REQUIRE_VERIFIED_CONTACTS === 'true' &&
       (process.env.FLUPFLAP_VERIFICATION_ENABLED !== 'true' || !databaseEnabled ||
-       !verificationDelivery(receiverSmsProvider).available('email') || !verificationDelivery(receiverSmsProvider).available('phone'))) {
-    throw new Error('Contact verification enforcement requires enabled verification, database, email and SMS delivery');
+       !verificationDelivery(receiverSmsProvider).available('phone'))) {
+    throw new Error('Phone verification enforcement requires enabled verification, database and SMS delivery');
   }
 
   const recurringRechargeActive = recurringRechargeEnabled() &&
@@ -1050,17 +1048,14 @@ export function createApp(options: CreateAppOptions = {}) {
     },
     recurringRechargeActive,
     storeBalance,
-    databaseEnabled ? createRechargeFraudGate(prisma, mobileTopUpStripeProvider, requireVerifiedEmail) : undefined,
+    databaseEnabled ? createRechargeFraudGate(prisma, mobileTopUpStripeProvider) : undefined,
     databaseEnabled ? (record, actor, note) => approveRechargeReview(prisma, mobileTopUpStripeProvider, record, actor, note) : undefined,
-    requireVerifiedEmail ? async (owner) => {
+    requirePurchaseIdentity ? async (owner) => {
       const id = flupFlapCustomerId(owner);
       if (!id) return;
       const customer = await flupFlapRepository.customer(id);
       if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
         throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active registered account is required.', 403);
-      }
-      if (!customer.email || !customer.emailVerifiedAt) {
-        throw new MobileTopUpError('EMAIL_VERIFICATION_REQUIRED', 'Verify your email in Account before purchasing.', 403);
       }
     } : undefined,
   );
@@ -1371,7 +1366,7 @@ export function createApp(options: CreateAppOptions = {}) {
   }));
   app.use('/api/flupflap/auth', flupFlap.router);
   app.use('/api/flupflap/verification', createVerificationRouter(flupFlap.authenticate,
-    databaseEnabled && (requireVerifiedEmail || process.env.FLUPFLAP_VERIFICATION_ENABLED === 'true')
+    databaseEnabled && (mobileTopUpConfig.environment === 'production' || process.env.FLUPFLAP_VERIFICATION_ENABLED === 'true')
       ? new FlupFlapVerification(prisma, flupFlapIdentityConfig.accessSecret!, verificationDelivery(receiverSmsProvider))
       : undefined));
   app.use('/api/flupflap/stores', createStoresRouter({ stores: flupFlapStores, authenticate: flupFlap.authenticate,

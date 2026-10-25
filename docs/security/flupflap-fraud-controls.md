@@ -74,7 +74,7 @@ Apply migrations 20261024010000_recharge_fraud_assessment and 20261024020000_rec
 
 Contact verification is implemented behind FLUPFLAP_VERIFICATION_ENABLED, default false. Apply migration 20261024030000_flupflap_verification, configure RESEND_API_KEY, FLUPFLAP_VERIFICATION_EMAIL_FROM and existing Telnyx settings, then enable delivery and test the Account screen. Six-digit codes expire in 10 minutes, are HMAC protected, single use, bound to account/channel/saved contact, limited to five guesses each and three sends per hour with a 60-second cooldown. Ten failed guesses per hour also prevent resending. Failed delivery invalidates the code. Confirmation is audited without recording the code.
 
-Only after end-to-end delivery/app testing, set FLUPFLAP_REQUIRE_VERIFIED_CONTACTS=true to require both verified contact methods before new production recharge reservations. Startup rejects enforcement without both delivery providers. Existing held payments retain their independent review controls. Account possession verification is not identity verification or proof that a payment is legitimate. Configure challenge retention cleanup before rollout; rows contain contact data and cascade on customer deletion.
+Only after end-to-end delivery/app testing, set FLUPFLAP_REQUIRE_VERIFIED_CONTACTS=true to require a verified phone before new production recharge reservations. Startup rejects phone enforcement without SMS delivery. Email verification remains optional and is never required for checkout, payment, replay or fulfillment. Legacy FLUPFLAP_REQUIRE_VERIFIED_EMAIL is ignored. Existing held payments retain their independent review controls. Account possession verification is not identity verification or proof that a payment is legitimate. Configure challenge retention cleanup before rollout; rows contain contact data and cascade on customer deletion.
 
 Device associations and signed failed-attempt tracking now cover the supported paths described below; Radar remains necessary for synchronous payment rejection. Existing email blocks do not cover alternate emails. Merchant store-balance flows remain on their existing controls; this gate covers Stripe retail recharges.
 
@@ -98,7 +98,7 @@ accounts may use one installation in 30 days; a third is rejected before payment
 A link to a restricted/inactive account is also rejected. This is an evadable risk
 signal, not hardware identification or evidence of fraud. Existing native versions,
 blocked cookies, storage resets and new devices are not covered by this signal.
-Account, card and recipient protections remain independent. No geolocation, IP
+Account, card and recipient protections remain independent. Email verification is optional; production purchases still require an active registered, unrestricted customer. No geolocation, IP
 fingerprinting or advertising identifiers are collected by this feature.
 
 Set FLUPFLAP_FRAUD_ALERT_EMAIL to the owner's authorized address to activate the

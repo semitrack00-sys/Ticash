@@ -52,6 +52,14 @@ it('searches partial names, case-insensitive emails and formatted phone numbers 
   expect((await read({q:"' OR true --"})).total).toBe(0);
   expect((await read({q:'%'})).total).toBe(0);
 });
+it('groups unrecognized saved codes with missing countries without rewriting the profile',async()=>{
+  const invalid=await buyer('UC');await buyer(null);await buyer(' ca ');
+  const directory=await read();
+  expect(directory.countries).toEqual(expect.arrayContaining([expect.objectContaining({code:'UNKNOWN',total:2}),expect.objectContaining({code:'CA',total:1})]));
+  const summary=await readAdminAnalytics(execute,'FLUPFLAP',analyticsWindow({period:'30d'},now));
+  expect(summary.clientCountries).toEqual(expect.arrayContaining([expect.objectContaining({code:'UNKNOWN',total:2})]));
+  expect((await prisma.flupFlapCustomer.findUniqueOrThrow({where:{id:invalid.id}})).countryCode).toBe('UC');
+});
 it('matches status and financial card contributions, excludes mixed/test records, and retains hidden history',async()=>{
   const c=await buyer();const delivered=await transaction(c.id);await transaction(c.id,'FAILED');await transaction(c.id,'PENDING');await transaction(c.id,'REFUNDED');await transaction(c.id,'DELIVERED',true);
   await prisma.mobileTopUpTransaction.update({where:{id:delivered.id},data:{customerHiddenAt:now}});

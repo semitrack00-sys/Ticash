@@ -7,11 +7,11 @@ import 'flupflap_admin_records.dart';
 
 /// Shared presentation only. Each business has an independent, authorized API.
 class AdminAnalyticsPanel extends StatefulWidget {
-  const AdminAnalyticsPanel({super.key, required this.business, this.dio, this.permissions = const {}, this.onResetCustomer});
+  const AdminAnalyticsPanel({super.key, required this.business, this.dio, this.permissions = const {}, this.onResetCustomer, this.onRestrictCustomer});
   final AnalyticsBusiness business;
   final Dio? dio;
   final Set<String> permissions;
-  final Future<void> Function(Map)? onResetCustomer;
+  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer;
   @override
   State<AdminAnalyticsPanel> createState() => _AdminAnalyticsPanelState();
 }
@@ -34,7 +34,7 @@ class _AdminAnalyticsPanelState extends State<AdminAnalyticsPanel> {
   void openDetails(String metric, String title, String value, Map<String, dynamic> data, {String? country}) {
     if (!canOpen(metric)) return;
     Navigator.push(context, MaterialPageRoute<void>(builder: (_) => AdminInsightPage(
-      dio: widget.dio ?? ApiClient.instance.dio, title: title, value: value, onResetCustomer: widget.onResetCustomer,
+      dio: widget.dio ?? ApiClient.instance.dio, title: title, value: value, onResetCustomer: widget.onResetCustomer, onRestrictCustomer: widget.onRestrictCustomer,
       query: {'metric': metric, 'period': period, 'mode': mode, 'asOf': data['end'],
         if (period == 'custom') 'start': date(custom!.start), if (period == 'custom') 'end': date(custom!.end),
         if (country != null) 'country': country},

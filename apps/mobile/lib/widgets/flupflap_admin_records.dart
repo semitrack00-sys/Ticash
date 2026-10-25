@@ -22,18 +22,18 @@ String adminClientName(Map row) {
 
 class AdminInsightPage extends StatelessWidget {
   const AdminInsightPage({super.key, required this.dio, required this.title, required this.value,
-    required this.query, this.onResetCustomer});
+    required this.query, this.onResetCustomer, this.onRestrictCustomer});
   final Dio dio;
   final String title, value;
   final Map<String, dynamic> query;
-  final Future<void> Function(Map)? onResetCustomer;
+  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer;
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF5F7FB),
     appBar: AppBar(title: Text(title), backgroundColor: Colors.white, foregroundColor: _ink),
     body: SingleChildScrollView(padding: const EdgeInsets.all(20), child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 1100),
-      child: FlupFlapRecordExplorer(dio: dio, title: title, value: value, query: query, onResetCustomer: onResetCustomer),
+      child: FlupFlapRecordExplorer(dio: dio, title: title, value: value, query: query, onResetCustomer: onResetCustomer, onRestrictCustomer: onRestrictCustomer),
     ))),
   );
 }
@@ -41,13 +41,13 @@ class AdminInsightPage extends StatelessWidget {
 /// The same directory powers dashboard drill-down and the Customers section.
 class FlupFlapRecordExplorer extends StatefulWidget {
   const FlupFlapRecordExplorer({super.key, required this.dio, required this.title,
-    this.value, this.query = const {}, this.directory = false, this.onResetCustomer});
+    this.value, this.query = const {}, this.directory = false, this.onResetCustomer, this.onRestrictCustomer});
   final Dio dio;
   final String title;
   final String? value;
   final Map<String, dynamic> query;
   final bool directory;
-  final Future<void> Function(Map)? onResetCustomer;
+  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer;
   @override
   State<FlupFlapRecordExplorer> createState() => _FlupFlapRecordExplorerState();
 }
@@ -71,6 +71,10 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
     );
     result.ignore();
   }
+  Future<void> operate(Map row, Future<void> Function(Map) action) async {
+    await action(row);
+    if (mounted) setState(load);
+  }
   void filter() { searchDelay?.cancel(); setState(() { offset = 0; load(); }); }
   @override
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -90,10 +94,12 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
     const SizedBox(height: 12),
     FutureBuilder<Map<String, dynamic>>(future: result, builder: (context, snapshot) {
       if (snapshot.connectionState != ConnectionState.done) return const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()));
-      if (snapshot.hasError) return Column(children: [
+      if (snapshot.hasError) {
+        return Column(children: [
         const Text('Details are unavailable for this staff account. Refresh or check your viewing permissions.'),
         TextButton(onPressed: () => setState(load), child: const Text('Retry details')),
-      ]);
+        ]);
+      }
       final data = snapshot.data!;
       final rows = (data['rows'] as List).cast<Map<String, dynamic>>();
       final countries = (data['countries'] as List).cast<Map<String, dynamic>>();
@@ -119,7 +125,9 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
         for (final row in rows) Padding(padding: const EdgeInsets.only(bottom: 12), child: Material(
           color: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFE2E8F0))),
           clipBehavior: Clip.antiAlias,
-          child: InkWell(onTap: () => _showRecord(context, row, clients, widget.onResetCustomer),
+          child: InkWell(onTap: () => _showRecord(context, row, clients,
+            widget.onResetCustomer == null ? null : (row) => operate(row, widget.onResetCustomer!),
+            widget.onRestrictCustomer == null ? null : (row) => operate(row, widget.onRestrictCustomer!)),
             child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 CircleAvatar(backgroundColor: const Color(0xFFF0F4FA), foregroundColor: _ink,
@@ -138,9 +146,12 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
                 _badge(clients ? row['countryCode'] == 'UNKNOWN' ? 'Country not provided' : '${row['countryCode']}' : analyticsMoney(row['totalCents'])),
                 if (clients && row['rechargeRestricted'] == true) _badge('Recharge restricted'),
               ]),
-              if (clients && widget.onResetCustomer != null) Align(alignment: Alignment.centerLeft, child: TextButton.icon(
-                onPressed: () => widget.onResetCustomer!(row), icon: const Icon(Icons.restart_alt, size: 18),
+              if (clients && widget.onResetCustomer != null && row['guest'] != true && row['status'] == 'ACTIVE' && row['rechargeRestricted'] != true) Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+                onPressed: () => operate(row, widget.onResetCustomer!), icon: const Icon(Icons.restart_alt, size: 18),
                 label: const Text('Reset purchase-attempt limit'))),
+              if (clients && widget.onRestrictCustomer != null) Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+                onPressed: () => operate(row, widget.onRestrictCustomer!), icon: const Icon(Icons.shield_outlined, size: 18),
+                label: Text(row['rechargeRestricted'] == true ? 'Remove recharge restriction' : 'Restrict recharge'))),
             ])),
           ),
         )),
@@ -174,7 +185,7 @@ Widget _badge(String label) => Container(padding: const EdgeInsets.symmetric(hor
   decoration: BoxDecoration(color: const Color(0xFFF0F4FA), borderRadius: BorderRadius.circular(6)),
   child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _ink)));
 
-void _showRecord(BuildContext context, Map<String, dynamic> row, bool client, Future<void> Function(Map)? reset) {
+void _showRecord(BuildContext context, Map<String, dynamic> row, bool client, Future<void> Function(Map)? reset, Future<void> Function(Map)? restrict) {
   showDialog<void>(context: context, builder: (context) => Dialog(child: ConstrainedBox(
     constraints: const BoxConstraints(maxWidth: 680),
     child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -194,8 +205,10 @@ void _showRecord(BuildContext context, Map<String, dynamic> row, bool client, Fu
         if (row['customer'] is Map) ...[_section('Client'), ..._profile(Map<String, dynamic>.from(row['customer'] as Map))]
         else const Text('Client contact details require customer-view permission.', style: TextStyle(color: _muted)),
       ],
-      if (client && reset != null) Padding(padding: const EdgeInsets.only(top: 16), child: OutlinedButton.icon(
-        onPressed: () => reset(row), icon: const Icon(Icons.restart_alt), label: const Text('Reset purchase-attempt limit'))),
+      if (client && reset != null && row['guest'] != true && row['status'] == 'ACTIVE' && row['rechargeRestricted'] != true) Padding(padding: const EdgeInsets.only(top: 16), child: OutlinedButton.icon(
+        onPressed: () { Navigator.pop(context); reset(row); }, icon: const Icon(Icons.restart_alt), label: const Text('Reset purchase-attempt limit'))),
+      if (client && restrict != null) OutlinedButton.icon(onPressed: () { Navigator.pop(context); restrict(row); },
+        icon: const Icon(Icons.shield_outlined), label: Text(row['rechargeRestricted'] == true ? 'Remove recharge restriction' : 'Restrict recharge')),
     ])),
   )));
 }

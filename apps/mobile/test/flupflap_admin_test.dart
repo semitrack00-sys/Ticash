@@ -70,6 +70,7 @@ void main() {
     expect(find.byType(AlertDialog), findsOneWidget);
     await tester.enterText(find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)),
       'Reviewed failed reservations with the customer');
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Reset attempt count'));
     await tester.pumpAndSettle();
     expect(adapter.resets, hasLength(1));

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MobileTopUpService } from '../src/topup/service.js';
 
-function fixture() {
+function fixture(assertPurchaseIdentity?: (owner: string) => Promise<void>) {
   const record = { id: 'order', userId: 'owner', status: 'PENDING', paymentStatus: 'SESSION_CREATED',
     paymentProvider: 'STRIPE', paymentSessionId: 'cs_test_existing', totalChargeUsd: 5.75,
     paymentEnvironment: 'SANDBOX', rechargeEnvironment: 'SANDBOX', testMode: true };
@@ -12,11 +12,20 @@ function fixture() {
     flowContract: vi.fn((id, session) => ({transactionId: id, checkoutSession: session})),
   };
   const service = new MobileTopUpService({enabled: true, environment: 'sandbox', testMode: true, paymentMode: 'stripe_sandbox'} as never,
-    {} as never, {} as never, repository as never, async () => {}, undefined, stripe as never);
+    {} as never, {} as never, repository as never, async () => {}, undefined, stripe as never,
+    undefined, undefined, false, undefined, undefined, undefined, assertPurchaseIdentity);
   return {record, stripe, service};
 }
 
 describe('recover existing hosted checkout', () => {
+  it('does not disclose an existing checkout until the purchase identity check passes', async () => {
+    const guard=vi.fn(async () => { throw Object.assign(new Error('Verify email'), {code:'EMAIL_VERIFICATION_REQUIRED'}); });
+    const f=fixture(guard);
+    await expect(f.service.recoverHostedCheckout('owner','order')).rejects.toMatchObject({code:'EMAIL_VERIFICATION_REQUIRED'});
+    expect(guard).toHaveBeenCalledWith('owner');
+    expect(f.stripe.getHostedCheckoutPaymentState).not.toHaveBeenCalled();
+    expect(f.stripe.getHostedCheckoutSession).not.toHaveBeenCalled();
+  });
   it('returns the same unpaid checkout and server amount', async () => {
     const f = fixture();
     const result = await f.service.recoverHostedCheckout('owner', 'order');

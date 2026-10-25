@@ -26,7 +26,7 @@ export function publicFlupFlapCustomer(c: FlupFlapCustomer) {
 }
 type AuthRequest = Request & { userId?: string; flupFlapCustomer?: FlupFlapCustomer; flupFlapSessionId?: string };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const email = z.email().max(254).transform(value => value.trim().toLowerCase());
+const email = z.string().trim().pipe(z.email().max(254)).transform(value => value.toLowerCase());
 const password = z.string().min(8).max(128).refine(value => Buffer.byteLength(value, 'utf8') <= 72);
 const phone = z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'Enter a valid international phone number including + and country code');
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);

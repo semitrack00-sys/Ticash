@@ -18,6 +18,14 @@ describe('recharge purchase limits', () => {
   });
 });
 describe('payment risk decision', () => {
+  it('holds pre-existing paid sessions with unverified email before Stripe or supplier access', async () => {
+    const customer={status:'ACTIVE',email:'buyer@example.test',emailVerifiedAt:null};
+    const db={flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue(customer)}};
+    const stripe={fraudEvidence:vi.fn()};
+    const gate=createRechargeFraudGate(db as never,stripe as never,true);
+    expect(await gate({userId:'flupflap:buyer',paymentProvider:'STRIPE'} as never)).toBe('EMAIL_VERIFICATION_REQUIRED');
+    expect(stripe.fraudEvidence).not.toHaveBeenCalled();
+  });
   it('allows authenticated normal-risk cards', () => expect(paymentReviewReason(safe)).toBeUndefined());
   it.each([undefined, 'exempted', 'not_supported'])('allows automatic 3DS outcome %s only with the other checks passing', authentication => {
     const evidence = {...safe, authentication, cardNetwork:'visa', responseEci:'07'};

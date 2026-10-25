@@ -976,6 +976,7 @@ void main() {
   test('safe localized error codes; never provider raw error', () {
     final (_, _, j) = fixture();
     for (final pair in [
+      ('EMAIL_VERIFICATION_REQUIRED', 'emailVerificationRequired'),
       ('INSUFFICIENT_FUNDS', 'insufficientFunds'),
       ('PAYMENT_DECLINED', 'paymentDeclined'),
       ('GUEST_SCOPE_RESTRICTED', 'accountRequired'),

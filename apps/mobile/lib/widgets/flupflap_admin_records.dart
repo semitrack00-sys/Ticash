@@ -112,14 +112,14 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
         Text(metricValue, style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: _ink)),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(initialValue: country ?? 'ALL', isExpanded: true,
-          decoration: InputDecoration(labelText: clients ? 'Client profile country' : 'Recharge destination', border: const OutlineInputBorder()),
+          decoration: InputDecoration(labelText: clients ? 'Client country' : 'Recharge destination', border: const OutlineInputBorder()),
           items: [DropdownMenuItem(value: 'ALL', child: Text('All countries · ${data['overallTotal']} ${clients ? 'clients' : 'transactions'}')),
             for (final c in countries) DropdownMenuItem(value: c['code'].toString(), child: Text('${c['name']} · ${c['total']}', overflow: TextOverflow.ellipsis))],
           onChanged: (value) { country = value == 'ALL' ? null : value; filter(); }),
         const SizedBox(height: 12),
         Text('${data['total']} matching ${clients ? 'clients' : 'transactions'} · ${data['mode'] == 'test' ? 'Test activity' : 'Live activity'}',
           style: const TextStyle(fontWeight: FontWeight.w700, color: _ink)),
-        if (clients) const Text('Country comes from the client profile. Not provided includes accounts without a saved country.', style: TextStyle(fontSize: 12, color: _muted)),
+        if (clients) const Text('Groups registered clients and guests by their phone country, or saved profile country when no phone country is available. This does not verify residence. Unknown means no country was recorded.', style: TextStyle(fontSize: 12, color: _muted)),
         const SizedBox(height: 12),
         if (rows.isEmpty) const Padding(padding: EdgeInsets.all(28), child: Text('No records match these filters.')),
         for (final row in rows) Padding(padding: const EdgeInsets.only(bottom: 12), child: Material(
@@ -143,7 +143,7 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
               const SizedBox(height: 10),
               Wrap(spacing: 8, runSpacing: 6, children: [
                 _badge(clients ? row['guest'] == true ? 'Guest' : 'Registered' : '${row['status']}'),
-                _badge(clients ? row['countryCode'] == 'UNKNOWN' ? 'Country not provided' : '${row['countryCode']}' : analyticsMoney(row['totalCents'])),
+                _badge(clients ? row['countryCode'] == 'UNKNOWN' ? 'Unknown country' : '${row['countryName'] ?? row['countryCode']}' : analyticsMoney(row['totalCents'])),
                 if (clients && row['rechargeRestricted'] == true) _badge('Recharge restricted'),
               ]),
               if (clients && widget.onResetCustomer != null && row['guest'] != true && row['status'] == 'ACTIVE' && row['rechargeRestricted'] != true) Align(alignment: Alignment.centerLeft, child: TextButton.icon(
@@ -215,7 +215,10 @@ void _showRecord(BuildContext context, Map<String, dynamic> row, bool client, Fu
 
 List<Widget> _profile(Map<String, dynamic> row) => [
   Text(adminClientName(row), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _ink)),
-  _section('Contact'), _fact('Email', row['email']), _fact('Phone', row['phone']), _fact('Profile country', row['countryCode'] == 'UNKNOWN' ? 'Not provided' : row['countryCode']),
+  _section('Contact'), _fact('Email', row['email']), _fact('Phone', row['phone']), _fact('Country category', row['countryName'] ?? (row['countryCode'] == 'UNKNOWN' ? 'Unknown' : row['countryCode'])),
+  _fact('Country source', row['countrySource'] == 'PHONE_NUMBER' ? 'Client phone number (not verified residence)' : row['countrySource'] == 'SAVED_PROFILE' ? 'Saved profile / billing country' : 'No country information recorded'),
+  _fact('Phone country', row['phoneCountryName'] ?? row['phoneCountryCode']),
+  _fact('Saved profile / billing country', row['profileCountryName'] ?? row['profileCountryCode']),
   _section('Account'), _fact('Client ID', row['id']), _fact('Account type', row['guest'] == true ? 'Guest' : 'Registered'),
   _fact(row['guest'] == true ? 'Account created' : 'Registered on', adminDate(row['createdAt'])), _fact('Last sign-in', adminDate(row['lastLoginAt'])),
   _fact('Status', row['status']), _fact('Recharge access', row['rechargeRestricted'] == true ? 'Restricted' : 'Available subject to purchase limits'),

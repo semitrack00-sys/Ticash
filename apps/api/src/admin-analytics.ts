@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { adminCountry } from './admin-country.js';
+import { adminCountry, adminClientCountry } from './admin-country.js';
 
 export type AnalyticsDomain = 'TICASH' | 'FLUPFLAP';
 const day = 86_400_000;
@@ -73,7 +73,7 @@ export function analyticsQuery(domain: AnalyticsDomain, window: AnalyticsWindow)
       ${adminCountry(Prisma.sql`"countryCode"`)} AS country
     FROM "User" WHERE role = 'CUSTOMER' AND "createdAt" < ${end}` : Prisma.sql`
     SELECT id, "createdAt" AS created, "guestExpiresAt" IS NOT NULL AS guest,
-      ${adminCountry(Prisma.sql`"countryCode"`)} AS country
+      ${adminClientCountry(Prisma.sql`"phoneCountryCode"`, Prisma.sql`"countryCode"`)} AS country
     FROM "FlupFlapCustomer" WHERE "createdAt" < ${end}`;
   return Prisma.sql`
     WITH records AS (${source}), customers AS (${customers}),
@@ -140,7 +140,7 @@ export async function readAdminAnalytics(
   const data = row.data;
   return {
     ...data, clientCountries: Array.isArray(data.clientCountries) ? (data.clientCountries as {code:string}[]).map(c=>({...c,
-      name:c.code==='UNKNOWN'?'Not provided':new Intl.DisplayNames(['en'],{type:'region'}).of(c.code)??c.code})) : [], domain, currency: 'USD', timezone: 'UTC', mode: window.mode,
+      name:c.code==='UNKNOWN'?'Unknown / not recorded':new Intl.DisplayNames(['en'],{type:'region'}).of(c.code)??c.code})) : [], domain, currency: 'USD', timezone: 'UTC', mode: window.mode,
     start: window.start.toISOString(), end: window.end.toISOString(),
     previousStart: window.previousStart.toISOString(), generatedAt: new Date().toISOString(),
     performance: salesPerformance(String(data.volumeCents), String(data.previousVolumeCents)),

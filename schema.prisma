@@ -835,6 +835,8 @@ model FlupFlapCustomer {
   status String @default("ACTIVE")
   rechargeRestricted Boolean @default(false)
   countryCode String?
+  // Reporting only: derived from the client's own phone, never the recharge recipient.
+  phoneCountryCode String?
   guestExpiresAt DateTime?
   failedLoginAttempts Int @default(0)
   loginLockedUntil DateTime?

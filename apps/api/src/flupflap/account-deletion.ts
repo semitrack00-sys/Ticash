@@ -109,7 +109,7 @@ export async function eraseFlupFlapAccountData(tx: Prisma.TransactionClient, cus
     await tx.flupFlapCustomer.update({ where: { id: customerId }, data: {
       status: 'DELETED', rechargeRestricted: true, authVersion: incrementVersion ? { increment: 1 } : undefined,
       email: null, passwordHash: null, googleSubject: null, firstName: null, lastName: null,
-      phone: null, countryCode: null, emailVerifiedAt: null, phoneVerifiedAt: null,
+      phone: null, phoneCountryCode: null, countryCode: null, emailVerifiedAt: null, phoneVerifiedAt: null,
       guestExpiresAt: null, lastLoginAt: null, failedLoginAttempts: 0, loginLockedUntil: null,
     } });
 }

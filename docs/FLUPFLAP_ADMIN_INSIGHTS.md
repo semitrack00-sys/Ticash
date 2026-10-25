@@ -41,3 +41,10 @@ checks still apply; viewing details never resets a limit or changes a payment.
 
 No pricing, purchase limits, verification policy or payment operations change.
 No schema migration or customer Android release is required.
+
+
+## Client country evidence
+
+Client country categories use `FlupFlapCustomer.phoneCountryCode` (derived from a valid international client phone using libphonenumber metadata), then a valid saved `countryCode`, otherwise UNKNOWN. The same rule covers registered accounts and historical guests. Phone country is a numbering-plan country, not verified residence or physical location. Saved profile/billing country is displayed separately and never rewritten by this report. Recharge recipient countries remain transaction destinations and never become a buyer country. Shared +1 calling codes are resolved by the full national number; shared toll-free/premium/personal numbers do not establish a country.
+
+Deploy the additive `20261025000000_client_phone_country` migration before the API. After release run `backfillCustomerPhoneCountries(prisma)` from `dist/flupflap/customer-country.js` once. It processes 250 rows at a time, compares the unchanged source phone, only updates the derived reporting field, and is idempotent. New identities derive the field automatically. Guest creation may store an optional country when supplied, while the existing guest-access gate remains enforced. Historical guests without a saved country or client phone remain Unknown; neither recipient country nor IP address is substituted.

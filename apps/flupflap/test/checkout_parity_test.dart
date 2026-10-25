@@ -717,7 +717,6 @@ void main() {
     expect(j.hosted?.transactionId, txnId);
     expect(j.hosted?.id, 'cs_test_fixture');
     expect(a.requests.where((r) => r.path.endsWith('/payment-sessions')), isEmpty);
-    j.dispose();
   });
 
   test(

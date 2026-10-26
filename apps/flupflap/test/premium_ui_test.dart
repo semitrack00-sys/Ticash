@@ -314,7 +314,7 @@ void main() {
         await tap(tester, find.text('Sign out'));
         expect(find.text('Welcome'), findsOneWidget);
         if (scale == 1) await screenshot(tester, 'login-${width.toInt()}');
-        expect(find.text('Continue as guest'), findsNothing);
+        expect(find.text('Continue as guest'), findsOneWidget);
 
         await tap(tester, find.text('Create account'));
         tester.view.viewInsets = const FakeViewPadding(bottom: 300);
@@ -504,13 +504,12 @@ void main() {
   );
 
   testWidgets(
-    'legacy guest account returns to sign-in without account access',
+    'guest can open recharge without editing a registered profile',
     (tester) async {
       final (session, adapter) = await app(tester, 360, guest: true);
-      expect(find.text('Welcome'), findsOneWidget);
-      expect(find.byType(NavigationDestination), findsNothing);
-      expect(find.text('Continue as guest'), findsNothing);
-      expect(session.authenticated, false);
+      expect(find.byType(NavigationDestination), findsWidgets);
+      expect(session.authenticated, true);
+      expect(session.guest, true);
       expect(adapter.requests.where((r) => r.method == 'PATCH'), isEmpty);
     },
   );

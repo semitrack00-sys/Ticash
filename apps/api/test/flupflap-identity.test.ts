@@ -265,11 +265,11 @@ describe('FlupFlap access in fully approved production', () => {
   return { mobileTopUpConfig, securityConfig, stripeConfig };
  }
 
- it('blocks production guest creation while preserving registered login', async () => {
+ it('allows temporary production guests while preserving registered login', async () => {
   const { app, provider } = setup(production());
-  const denied = await request(app).post(root+'/auth/guest').send({}).expect(403);
-  expect(denied.body.code).toBe('GUEST_ACCESS_DISABLED');
-  expect(denied.body).not.toHaveProperty('accessToken');
+  const guest = await request(app).post(root+'/auth/guest').send({countryCode:'US'}).expect(201);
+  expect(guest.body.user).toMatchObject({domain:'FLUPFLAP',guest:true,countryCode:'US'});
+  await request(app).get(root+'/auth/me').set(headers(guest.body.accessToken)).expect(200);
   const customer = await signup(app, 'production');
   const login = await request(app).post(root+'/auth/login').send({email:customer.user.email,password:'correct-horse-42'}).expect(200);
   expect(login.body.user).toMatchObject({id:customer.user.id, domain:'FLUPFLAP', guest:false});
@@ -277,18 +277,18 @@ describe('FlupFlap access in fully approved production', () => {
   expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
  });
 
- it('allows production hosted payment and replay without verified email while retaining account restrictions', async () => {
+ it.each([false,true])('allows production hosted payment and replay with guest=%s while retaining restrictions', async guest => {
   vi.stubEnv('FLUPFLAP_REQUIRE_VERIFIED_EMAIL','true');
   const session={id:'cs_live_fixture',url:'https://checkout.stripe.com/c/pay/fixture'};
   const stripe={createPaymentSession:vi.fn().mockResolvedValue(session),getHostedCheckoutSession:vi.fn().mockResolvedValue(session),
    getHostedCheckoutPaymentState:vi.fn().mockResolvedValue({status:'open',paymentStatus:'unpaid'}),
    flowContract:vi.fn((transactionId,checkoutSession)=>({provider:'STRIPE',transactionId,checkoutSession}))};
   const {app,identities,provider}=setup({...production(),mobileTopUpStripeProvider:stripe as never});
-  const customer=await signup(app,'optional'); const auth=headers(customer.accessToken);
+  const customer=guest ? (await request(app).post(root+'/auth/guest').send({countryCode:'US'}).expect(201)).body : await signup(app,'optional'); const auth=headers(customer.accessToken);
   await identities.update(customer.user.id,{countryCode:'US'});
   expect((await identities.customer(customer.user.id))!.emailVerifiedAt).toBeNull();
   const quote=(await request(app).post(root+'/mobile-topups/quotes').set(auth).send(quoteInput).expect(201)).body.quote;
-  const pay=()=>request(app).post(root+'/mobile-topups/payment-sessions').set(auth).set('Idempotency-Key','production-optional-email').send({quoteId:quote.id});
+  const pay=()=>request(app).post(root+'/mobile-topups/payment-sessions').set(auth).set('Idempotency-Key','production-optional-email').send({quoteId:quote.id,...(guest ? {billingCountry:'US'} : {})});
   const first=await pay().expect(201); const replay=await pay().expect(201);
   expect(replay.body.transactionId).toBe(first.body.transactionId);
   const reopened=await request(app).get(root+'/mobile-topups/transactions/'+first.body.transactionId+'/checkout').set(auth).expect(200);
@@ -339,7 +339,7 @@ describe('FlupFlap access in fully approved production', () => {
   expect(() => setup(options)).toThrow(); expect(fetch).not.toHaveBeenCalled();
  });
 
- it('rejects legacy production guest access and refresh without altering cross-domain isolation', async () => {
+ it('allows temporary guest refresh without altering cross-domain isolation', async () => {
   const {app, identities, provider} = setup(production());
   const guest = await legacyGuest(identities);
   const customer = await signup(app, 'isolated');
@@ -353,9 +353,9 @@ describe('FlupFlap access in fully approved production', () => {
   await request(app).get(root+'/mobile-topups/countries').set(headers(legacy.accessToken)).expect(401);
   await request(app).patch(root+'/auth/me').set(headers(guest.accessToken)).send({countryCode:'US'}).expect(403);
   for (const path of ['/auth/me','/mobile-topups/payment-methods','/mobile-topups/countries']) {
-   expect((await request(app).get(root+path).set(headers(guest.accessToken)).expect(403)).body.code).toBe('GUEST_ACCESS_DISABLED');
+   await request(app).get(root+path).set(headers(guest.accessToken)).expect(200);
   }
-  await request(app).post(root+'/auth/refresh').send({refreshToken:guest.refreshToken}).expect(401);
+  await request(app).post(root+'/auth/refresh').send({refreshToken:guest.refreshToken}).expect(200);
   expect(await identities.customer(guest.user.id)).not.toBeNull();
   expect((await request(app).post('/api/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_SANDBOX_REQUIRED');
   expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
@@ -367,15 +367,15 @@ describe('FlupFlap access in fully approved production', () => {
   await identities.update(customer.user.id,{rechargeRestricted:true});
   for (const path of ['quotes','transactions','payment-sessions']) {
    const response = await request(app).post(root+'/mobile-topups/'+path).set(headers(customer.accessToken)).send({}).expect(403);
-   expect(response.body.code).toBe(guest ? 'GUEST_ACCESS_DISABLED' : 'RECHARGE_RESTRICTED');
+   expect(response.body.code).toBe('RECHARGE_RESTRICTED');
   }
   expect(provider.submitTopUp).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
  });
 
- it('blocks production guests even without proxy configuration and allows permanent sign-in', async () => {
+ it('blocks production guests without proxy configuration and allows permanent sign-in', async () => {
   vi.stubEnv('TRUST_PROXY_HOPS', undefined);
   const {app} = setup(production());
-  expect((await request(app).post(root+'/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_ACCESS_DISABLED');
+  expect((await request(app).post(root+'/auth/guest').send({}).expect(403)).body.code).toBe('GUEST_PROXY_CONFIGURATION_REQUIRED');
   const customer = await signup(app);
   await request(app).post(root+'/auth/login').send({email:customer.user.email,password:'correct-horse-42'}).expect(200);
   expect(fetch).not.toHaveBeenCalled();

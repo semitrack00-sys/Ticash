@@ -126,7 +126,7 @@ class FlupFlapSession extends ChangeNotifier {
   Future<void>? _storageWork;
   bool ready = false;
   String? deletionNotice;
-  bool get authenticated => user != null && _accessToken != null && !guest;
+  bool get authenticated => user != null && _accessToken != null;
   bool get guest => user?['guest'] == true;
   Future<void> initialize() async {
     final epoch = _epoch;
@@ -150,12 +150,12 @@ class FlupFlapSession extends ChangeNotifier {
     return next;
   }
 
-  Future<void> _accept(dynamic value, int epoch) async {
+  Future<void> _accept(dynamic value, int epoch, {bool allowGuest = false}) async {
     if (epoch != _epoch || _loggingOut) throw StateError('Session changed');
     final data = Map<String, dynamic>.from(value as Map);
     final customer = Map<String, dynamic>.from(data['user'] as Map);
     if (customer['domain'] != 'FLUPFLAP' ||
-        customer['guest'] == true || data['guest'] == true ||
+        !allowGuest && (customer['guest'] == true || data['guest'] == true) ||
         data['accessToken'] is! String ||
         data['refreshToken'] is! String) {
       throw const FormatException('Invalid FlupFlap session');
@@ -177,8 +177,11 @@ class FlupFlapSession extends ChangeNotifier {
     await _accept(
       (await dio.post('/flupflap/auth/$route', data: body)).data,
       epoch,
+      allowGuest: route == 'guest',
     );
   }
+
+  Future<void> continueAsGuest() => _authenticate('guest', {});
 
   Future<void> login(String email, String password) =>
       _authenticate('login', {'email': email, 'password': password});
@@ -212,6 +215,7 @@ class FlupFlapSession extends ChangeNotifier {
         data: value == null && browserSession ? <String, dynamic>{} : {'refreshToken': value},
       )).data,
       epoch,
+      allowGuest: true,
     );
   }
 

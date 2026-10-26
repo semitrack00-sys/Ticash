@@ -703,8 +703,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           // Serialize reservations across processes before counting or consuming a quote.
           await tx.$queryRaw`SELECT id FROM "FlupFlapCustomer" WHERE id = ${customerId} FOR UPDATE`;
           const customer = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
-          if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
-            throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active registered account is required.', 403);
+          if (!customer || (customer.guestExpiresAt && customer.guestExpiresAt <= new Date()) || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
+            throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active recharge session is required.', 403);
           }
           if (this.requireVerifiedPhone && !customer.phoneVerifiedAt) {
             throw new MobileTopUpError('CONTACT_VERIFICATION_REQUIRED', 'Verify your phone in Account before purchasing.', 403);

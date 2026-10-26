@@ -1010,7 +1010,7 @@ export function createApp(options: CreateAppOptions = {}) {
     return telnyx ? new TelnyxReceiverSmsProvider(telnyx) : undefined;
   })();
 
-  // Registered production accounts remain required; email verification is optional.
+  // Active production identities remain required; email verification is optional.
   const flupFlapIdentityConfig = options.flupFlapConfig ?? loadFlupFlapConfig();
   const requirePurchaseIdentity = flupFlapIdentityConfig.enabled && mobileTopUpConfig.environment === 'production';
 
@@ -1055,8 +1055,8 @@ export function createApp(options: CreateAppOptions = {}) {
       const id = flupFlapCustomerId(owner);
       if (!id) return;
       const customer = await flupFlapRepository.customer(id);
-      if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
-        throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active registered account is required.', 403);
+      if (!customer || (customer.guestExpiresAt && customer.guestExpiresAt <= new Date()) || customer.status !== 'ACTIVE' || customer.rechargeRestricted) {
+        throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active recharge session is required.', 403);
       }
     } : undefined,
   );
@@ -1342,10 +1342,11 @@ export function createApp(options: CreateAppOptions = {}) {
   const flupFlap = createFlupFlapIdentity({
     deletion: databaseEnabled ? new FlupFlapSelfServiceDeletion(prisma) : undefined,
     config: flupFlapIdentityConfig, repository: flupFlapRepository,
-    // Production FlupFlap is account-only, including previously issued guest
-    // access and refresh tokens. Sandbox fixtures retain their isolated policy.
-    guestError: () => process.env.NODE_ENV === 'production' || mobileTopUpConfig.environment === 'production'
-      ? { code: 'GUEST_ACCESS_DISABLED', error: 'Create an account or sign in to use FlupFlap.' }
+    // Live guests use only the approved FlupFlap recharge domain. The legacy
+    // TiCash guest endpoint remains sandbox-only. Preserve the proxy rate-limit gate.
+    guestError: () => flupFlapProductionAllowed()
+      ? guestProxyConfigured ? undefined
+        : { code: 'GUEST_PROXY_CONFIGURATION_REQUIRED', error: 'Guest recharge requires a verified TRUST_PROXY_HOPS setting in production' }
       : guestAuthError(),
     emailService: passwordResetEmailService, audit: recordAudit,
     accessAllowed: () => (mobileTopUpConfig.environment === 'sandbox' &&
@@ -1400,8 +1401,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use('/api/flupflap/mobile-topups', createMobileTopUpRouter({
     allowRestrictedRecovery: true,
     purchaseGuard: databaseEnabled && flupFlapProductionAllowed() ? rechargeDeviceGuard(prisma) : undefined,
-    // Guest checkout is retained only for sandbox regression/recovery testing.
-    allowGuestPurchases: mobileTopUpConfig.environment === 'sandbox',
+    allowGuestPurchases: mobileTopUpConfig.environment === 'sandbox' || flupFlapProductionAllowed(),
     authenticate: flupFlap.authenticate, requireFundingAllowed: flupFlap.requireRechargeAllowed,
     service: mobileTopUpService, isGuest: flupFlap.isGuest, billingCountryForUser: flupFlap.billingCountryForUser,
     supportedCountriesPath: '/api/flupflap/mobile-topups/countries',

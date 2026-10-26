@@ -182,7 +182,7 @@ void main() {
               lessThan(560),
             );
             expect(find.text('Sign in').hitTestable(), findsOneWidget);
-            expect(find.text('Continue as guest'), findsNothing);
+            expect(find.text('Continue as guest'), findsOneWidget);
             // Capture the initial balanced composition, before keyboard/scroll QA.
             await t.ensureVisible(find.byType(Brand));
             await t.pumpAndSettle();
@@ -480,13 +480,13 @@ void main() {
   );
 
   testWidgets(
-    'signed-out entry requires registration and never requests private referral endpoints',
+    'signed-out entry offers guests without requesting private referral endpoints',
     (t) async {
       final (s, a, _) = auth.fixture();
       await s.initialize();
       await t.pumpWidget(FlupFlapApp(session: s));
       await t.pumpAndSettle();
-      expect(find.text('Continue as guest'), findsNothing);
+      expect(find.text('Continue as guest'), findsOneWidget);
       final createAccount = find.text('Create account');
       await t.ensureVisible(createAccount);
       await t.pumpAndSettle();

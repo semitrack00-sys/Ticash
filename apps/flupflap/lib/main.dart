@@ -698,6 +698,12 @@ class _AuthScreenState extends State<AuthScreen> {
                   : context.ft('Sign in'),
             ),
           ),
+          if (signIn)
+            TextButton(
+              key: const ValueKey('continue-as-guest'),
+              onPressed: busy ? null : () => run(widget.session.continueAsGuest),
+              child: Text(context.ft('Continue as guest')),
+            ),
           if (widget.resetToken == null) ...[
             Wrap(
               alignment: WrapAlignment.center,

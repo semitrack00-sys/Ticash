@@ -381,6 +381,19 @@ void main() {
       expect(a.requests.where((r) => r.path.endsWith('/guest')), isEmpty);
     },
   );
+  test('explicit guest entry refreshes and logs out within the FlupFlap domain', () async {
+    final (s, a, storage) = fixture();
+    await s.continueAsGuest();
+    expect(s.authenticated, isTrue);
+    expect(s.guest, isTrue);
+    expect(storage.value, isNotNull);
+    await s.refresh();
+    expect(s.guest, isTrue);
+    expect(a.requests.every((r) => r.path.startsWith('/flupflap/auth/')), isTrue);
+    await s.logout();
+    expect(s.authenticated, isFalse);
+    expect(storage.value, isNull);
+  });
   test('login, logout and refresh use only FlupFlap namespace', () async {
     final (s, a, storage) = fixture();
     await s.login('flup@example.test', 'test-password');
@@ -410,14 +423,14 @@ void main() {
     },
   );
   testWidgets(
-    'lightweight signup requires an account and exposes no guest entry',
+    'sign-in offers guests while registration keeps its identity fields',
     (tester) async {
       final (s, _, _) = fixture();
       await s.initialize();
       await tester.pumpWidget(FlupFlapApp(session: s));
       await tester.pumpAndSettle();
       expect(find.text('Welcome'), findsOneWidget);
-      expect(find.text('Continue as guest'), findsNothing);
+      expect(find.text('Continue as guest'), findsOneWidget);
       expect(find.textContaining('KYC'), findsNothing);
       await tester.ensureVisible(find.text('Create account'));
       await tester.pumpAndSettle();

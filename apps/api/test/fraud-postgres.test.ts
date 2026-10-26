@@ -37,6 +37,19 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     for(const result of results)if(result.status==='rejected')expect(result.reason).toMatchObject({code:'RECHARGE_LIMIT_REACHED'});
     expect(await clients[0]!.mobileTopUpTransaction.count({where:{flupFlapCustomerId:c.id}})).toBe(3);
   });
+  it('enforces the same concurrent purchase budget and expiry for temporary guests',async()=>{
+    const db=clients[0]!;
+    const c=await db.flupFlapCustomer.create({data:{guestExpiresAt:new Date(Date.now()+3600000)}});
+    const inputs=await Promise.all(clients.map(()=>input(c.id)));
+    const results=await Promise.allSettled(inputs.map((r,i)=>new PrismaMobileTopUpRepository(clients[i]!).reserveTransaction(r)));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(3);
+    for(const r of results)if(r.status==='rejected')expect(r.reason).toMatchObject({code:'RECHARGE_LIMIT_REACHED'});
+    const repo=new PrismaMobileTopUpRepository(db);
+    await db.flupFlapCustomer.update({where:{id:c.id},data:{rechargeRestricted:true}});
+    await expect(repo.reserveTransaction(await input(c.id))).rejects.toMatchObject({code:'REGISTERED_ACCOUNT_REQUIRED'});
+    await db.flupFlapCustomer.update({where:{id:c.id},data:{rechargeRestricted:false,guestExpiresAt:new Date(Date.now()-1000)}});
+    await expect(repo.reserveTransaction(await input(c.id))).rejects.toMatchObject({code:'REGISTERED_ACCOUNT_REQUIRED'});
+  });
   it('reuses a single reservation for concurrent idempotent requests',async()=>{
     const c=await customer();const record=await input(c.id);
     const results=await Promise.all(clients.map(db=>new PrismaMobileTopUpRepository(db).reserveTransaction(record)));

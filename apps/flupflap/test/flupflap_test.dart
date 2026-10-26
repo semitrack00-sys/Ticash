@@ -67,7 +67,8 @@ class FixtureAdapter implements HttpClientAdapter {
     ].contains(options.path)) {
       user = {
         ...user,
-        'guest': guestResponse || options.path.endsWith('/guest'),
+        'guest': guestResponse || options.path.endsWith('/guest') ||
+            options.path.endsWith('/refresh') && user['guest'] == true,
       };
       data = {
         'accessToken': 'fixture-access',

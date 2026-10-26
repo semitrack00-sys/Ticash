@@ -91,21 +91,21 @@ describe('store accounts and balance integrity in migrated PostgreSQL', () => {
   });
   it('delivers one recharge, debits once, credits commission once and preserves the quoted fee', async () => {
     const f = await fixture(); const e = engine(); const q = await quote(e.service, f.owner);
-    expect(q).toMatchObject({ feeUsd: 1.5, totalChargeUsd: 11.5 });
+    expect(q).toMatchObject({ feeUsd: 1.7, totalChargeUsd: 11.7 });
     const result = await e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'store-sale-idempotency');
     expect(result.status).toBe('DELIVERED'); expect(result.paymentProvider).toBe('STORE_BALANCE');
-    expect(await balance(f.store.id)).toBe(8880);
+    expect(await balance(f.store.id)).toBe(8864);
     await e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'store-sale-idempotency');
     await e.service.getTransaction(f.owner, result.id, true);
-    expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1); expect(await balance(f.store.id)).toBe(8880);
-    expect((await stores.summary(f.owner)).earnedCents).toBe(30);
+    expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1); expect(await balance(f.store.id)).toBe(8864);
+    expect((await stores.summary(f.owner)).earnedCents).toBe(34);
     await expect(e.service.purchase(f.owner, { quoteId: q.id }, 'store-sale-idempotency')).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
     await checkJournals();
   });
   it('does not credit commission while delivery is pending and refunds a confirmed failure', async () => {
     const f = await fixture(); const e = engine('PROCESSING'); const q = await quote(e.service, f.owner);
     const result = await e.service.purchaseFromStore(f.owner, { quoteId: q.id }, randomUUID());
-    expect(await balance(f.store.id)).toBe(8850);
+    expect(await balance(f.store.id)).toBe(8830);
     expect((await stores.summary(f.owner)).earnedCents).toBe(0);
     e.result.status = 'FAILED';
     const failed = await e.service.getTransaction(f.owner, result.id, true);
@@ -122,30 +122,30 @@ describe('store accounts and balance integrity in migrated PostgreSQL', () => {
     await checkJournals();
   });
   it('prevents overspending across simultaneous orders', async () => {
-    const f = await fixture(1150); const a = engine(), b = engine();
+    const f = await fixture(1170); const a = engine(), b = engine();
     const qa = await quote(a.service, f.owner), qb = await quote(b.service, f.owner);
     const results = await Promise.allSettled([a.service.purchaseFromStore(f.owner, { quoteId: qa.id }, randomUUID()), b.service.purchaseFromStore(f.owner, { quoteId: qb.id }, 'same-retry-key')]);
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-    expect(await balance(f.store.id)).toBe(30);
+    expect(await balance(f.store.id)).toBe(34);
     expect(vi.mocked(a.provider.submitTopUp).mock.calls.length + vi.mocked(b.provider.submitTopUp).mock.calls.length).toBe(1);
   });
   it('retries an insufficient-balance sale with the same key after funding', async () => {
     const f = await fixture(0), e = engine(), q = await quote(e.service, f.owner);
     await expect(e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'refill-retry-key')).rejects.toMatchObject({ code: 'STORE_INSUFFICIENT_BALANCE' });
     expect(e.provider.submitTopUp).not.toHaveBeenCalled();
-    const funding = await stores.requestFunding(f.owner, { amountCents: 1150, reference: randomUUID() });
+    const funding = await stores.requestFunding(f.owner, { amountCents: 1170, reference: randomUUID() });
     await stores.reviewFunding(actor, funding.id, true, 'Verified bank deposit');
     await e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'refill-retry-key');
-    expect(await balance(f.store.id)).toBe(30); expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1);
+    expect(await balance(f.store.id)).toBe(34); expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1);
   });
   it('does not debit an expired unfunded quote after a later deposit', async () => {
     const f = await fixture(0), e = engine(), q = await quote(e.service, f.owner);
     await expect(e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'expired-store-key')).rejects.toMatchObject({ code: 'STORE_INSUFFICIENT_BALANCE' });
     await prisma.mobileTopUpQuote.update({ where: { id: q.id }, data: { expiresAt: new Date(0) } });
-    const funding = await stores.requestFunding(f.owner, { amountCents: 1150, reference: randomUUID() });
+    const funding = await stores.requestFunding(f.owner, { amountCents: 1170, reference: randomUUID() });
     await stores.reviewFunding(actor, funding.id, true, 'Verified bank deposit');
     await expect(e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'expired-store-key')).rejects.toMatchObject({ code: 'TOPUP_QUOTE_EXPIRED' });
-    expect(await balance(f.store.id)).toBe(1150); expect(e.provider.submitTopUp).not.toHaveBeenCalled();
+    expect(await balance(f.store.id)).toBe(1170); expect(e.provider.submitTopUp).not.toHaveBeenCalled();
     const transaction = await prisma.mobileTopUpTransaction.findFirstOrThrow({ where: { quoteId: q.id } });
     expect(transaction.paymentStatus).toBe('FAILED');
   });
@@ -165,28 +165,28 @@ describe('store accounts and balance integrity in migrated PostgreSQL', () => {
     await stores.review(actor, f.store.id, { status: 'ACTIVE', commissionBps: 4000, reason: 'New rate for future sales' });
     e.result.status = 'SUCCESSFUL';
     await e.service.getTransaction(f.owner, sale.id, true);
-    expect(await balance(f.store.id)).toBe(8880);
+    expect(await balance(f.store.id)).toBe(8864);
   });
   it('does not refund or resubmit after an ambiguous provider timeout', async () => {
     const f = await fixture(), e = engine(), q = await quote(e.service, f.owner);
     vi.mocked(e.provider.submitTopUp).mockRejectedValueOnce(new Error('Ambiguous provider timeout'));
     await expect(e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'unknown-provider-key')).rejects.toMatchObject({ code: 'TOPUP_SUBMISSION_UNKNOWN' });
     const replay = await e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'unknown-provider-key');
-    expect(replay.status).toBe('PROCESSING'); expect(await balance(f.store.id)).toBe(8850);
+    expect(replay.status).toBe('PROCESSING'); expect(await balance(f.store.id)).toBe(8830);
     expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1);
     e.provider.findTopUpByCustomIdentifier = vi.fn(async () => e.result);
     await e.service.getTransaction(f.owner, replay.id, true);
-    expect(await balance(f.store.id)).toBe(8880); expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1);
+    expect(await balance(f.store.id)).toBe(8864); expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1);
   });
   it('recovers a captured balance debit after interruption before provider submission', async () => {
     const f = await fixture(), e = engine(), q = await quote(e.service, f.owner);
     vi.spyOn(e.service, 'fulfillPaidRecharge').mockRejectedValueOnce(new Error('Process interrupted'));
     await expect(e.service.purchaseFromStore(f.owner, { quoteId: q.id }, 'interrupted-sale-key')).rejects.toThrow();
-    expect(await balance(f.store.id)).toBe(8850); expect(e.provider.submitTopUp).not.toHaveBeenCalled();
+    expect(await balance(f.store.id)).toBe(8830); expect(e.provider.submitTopUp).not.toHaveBeenCalled();
     const row = await prisma.mobileTopUpTransaction.findFirstOrThrow({ where: { flupFlapCustomerId: f.customer.id } });
     await prisma.mobileTopUpTransaction.update({ where: { id: row.id }, data: { updatedAt: new Date(Date.now() - 60000) } });
     await e.service.reconcilePendingTransactions();
-    expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1); expect(await balance(f.store.id)).toBe(8880);
+    expect(e.provider.submitTopUp).toHaveBeenCalledTimes(1); expect(await balance(f.store.id)).toBe(8864);
   });
   it('keeps sandbox funds inaccessible to a production store and denies foreign owners', async () => {
     const f = await fixture(), other = await fixture();

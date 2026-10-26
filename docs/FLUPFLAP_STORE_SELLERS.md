@@ -4,7 +4,7 @@ Stores use a registered FlupFlap customer identity and a separate, administrator
 
 ## Agreed pricing
 
-The starting store commission is **20% of the actual service fee**, rounded to the nearest cent. FlupFlap's existing 15% fee is unchanged. A $10 recharge costs the customer $11.50; the store earns $0.30 and FlupFlap retains $1.20 of the fee before costs. Commission settings affect new purchases only; each order retains its original rate and amounts. Country/operator costs still need to be checked when enabling a market.
+The starting store commission is **20% of the actual service fee**, rounded to the nearest cent. FlupFlap charges a flat 17% service fee for airtime, data and bundles. A $10 recharge costs the customer $11.70; the store earns $0.34 and FlupFlap retains $1.36 of the fee before costs. Commission settings affect new purchases only; each order retains its original rate and amounts. Country/operator costs still need to be checked when enabling a market.
 
 ## Seller flow
 

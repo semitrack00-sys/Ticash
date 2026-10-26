@@ -35,7 +35,7 @@ export function approvedRechargePrice(amountUsd: number) {
 
 // Shared FlupFlap AIRTIME, DATA and BUNDLE fees, inclusive bounds in integer cents.
 // Applied only when creating a new applicable quote; never reprice stored records.
-const flupFlapRechargeFeePercent = 15;
+const flupFlapRechargeFeePercent = 17;
 
 export function flupFlapRechargePrice(amountUsd: number) {
   const amountMinorUnits = normalizeRechargeAmountMinorUnits(amountUsd);

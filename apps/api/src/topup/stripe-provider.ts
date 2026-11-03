@@ -71,7 +71,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return url.toString();
   }
 
-  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean; pwaReturn?: boolean; saveForRecurring?: boolean; automaticThreeDS?: boolean }) {
+  async createPaymentSession(input: PaymentSessionInput & { billingCountry?: string; resumeToken: string; androidReturn?: boolean; pwaReturn?: boolean; saveForRecurring?: boolean; automaticThreeDS?: boolean; flupFlap?: boolean }) {
     if (input.currency !== 'USD' || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0 || !/^[A-Za-z0-9_-]{43,512}$/.test(input.resumeToken) || !/^[A-Z]{2}$/.test(input.billingCountry ?? '')) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Server-verified billing country and USD amount are required', 400);
     }
@@ -83,6 +83,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
       cancel_url: this.buildReturnUrl(input.pwaReturn ? 'https://www.flupflap.com/app/' : input.androidReturn ? ANDROID_CHECKOUT_RETURN_URL : this.config.failureUrl!, input.resumeToken),
       client_reference_id: input.transactionId,
       metadata: {
+        ...(input.flupFlap ? { business: 'flupflap', fraudPolicyVersion: '2026-11-03' } : {}),
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
       },
@@ -90,6 +91,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
       payment_intent_data: {
         ...(input.saveForRecurring ? { setup_future_usage: 'off_session' } : {}),
         metadata: {
+          ...(input.flupFlap ? { business: 'flupflap', fraudPolicyVersion: '2026-11-03' } : {}),
           transactionId: input.transactionId,
           billingCountry: input.billingCountry,
           ...(input.saveForRecurring ? { recurringEligible: 'true' } : {}),
@@ -188,6 +190,30 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     return { id: paymentSessionId, status, paymentStatus, paymentIntentId };
   }
 
+  // Only cancel a bound, unpaid checkout. A 404 (including another account's
+  // session), failed read, payment intent, or unknown state never proves safety.
+  async expireUnpaidCheckout(paymentSessionId: string, transactionId: string, amountMinor: number) {
+    if (!this.checkoutSessionPattern().test(paymentSessionId)) {
+      throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);
+    }
+    const path = `/v1/checkout/sessions/${encodeURIComponent(paymentSessionId)}`;
+    const read = async () => {
+      const { data } = await this.request(path);
+      if (data.id !== paymentSessionId || data.mode !== 'payment' ||
+          data.livemode !== !this.config.testMode || data.currency !== 'usd' ||
+          data.amount_total !== amountMinor || data.client_reference_id !== transactionId ||
+          (data.metadata as Record<string, unknown> | undefined)?.transactionId !== transactionId || data.payment_status !== 'unpaid' ||
+          data.payment_intent !== null || (typeof data.status !== 'string' || !['open', 'expired'].includes(data.status))) {
+        throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Checkout is not confirmed unpaid', 409);
+      }
+      return data.status;
+    };
+    if (await read() === 'open') await this.expireHostedCheckoutSession(paymentSessionId, transactionId);
+    if (await read() !== 'expired') {
+      throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Checkout closure is not confirmed', 409);
+    }
+  }
+
   async expireHostedCheckoutSession(paymentSessionId: string, transactionId: string) {
     if (!this.checkoutSessionPattern().test(paymentSessionId)) {
       throw new MobileTopUpError('INVALID_PAYMENT_SESSION', 'Invalid stored Stripe payment session', 502);
@@ -232,6 +258,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     customerId: string;
     paymentMethodId: string;
     billingCountry: string;
+    flupFlap?: boolean;
   }) {
     this.assertMinorAmount(input.amountMinor);
     if (!/^cus_[A-Za-z0-9_]+$/.test(input.customerId) ||
@@ -250,6 +277,7 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
         transactionId: input.transactionId,
         billingCountry: input.billingCountry,
         recurringRecharge: 'true',
+        ...(input.flupFlap ? { business: 'flupflap', fraudPolicyVersion: '2026-11-03' } : {}),
       },
     }, input.transactionId + ':recurring-payment');
     const id = typeof data.id === 'string' ? data.id : undefined;

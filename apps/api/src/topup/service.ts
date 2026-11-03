@@ -695,7 +695,7 @@ export class MobileTopUpService {
           currency: 'USD',
           billingCountry: country,
           resumeToken,
-          ...(flupFlapCustomerId(userId) ? { automaticThreeDS: true } : {}),
+          ...(flupFlapCustomerId(userId) ? { automaticThreeDS: true, flupFlap: true } : {}),
           ...(androidReturn ? { androidReturn: true } : {}),
           ...(pwaReturn ? { pwaReturn: true } : {}),
           ...(recurringIntervalDays !== undefined ? { saveForRecurring: true } : {}),
@@ -774,6 +774,7 @@ export class MobileTopUpService {
       customerId: binding.customerId,
       paymentMethodId: binding.paymentMethodId,
       billingCountry: binding.billingCountry,
+      flupFlap: Boolean(flupFlapCustomerId(userId)),
     });
 
     if (intent.status === 'succeeded') {
@@ -859,7 +860,7 @@ export class MobileTopUpService {
       record.failureCode?.startsWith('PROVIDER_') ||
       record.providerStatus === 'FAILED'
     );
-    const failureReason = record.failureCode === 'CANCELLED_BY_CUSTOMER' ? 'PAYMENT_CANCELLED' :
+    const failureReason = ['CANCELLED_BY_CUSTOMER', 'CANCELLED_BY_ADMIN'].includes(record.failureCode ?? '') ? 'PAYMENT_CANCELLED' :
       providerFailure ? 'RECHARGE_PROVIDER_FAILED' :
       publicFailures.find(code => code === record.failureCode) ?? null;
     // Construct the public DTO explicitly so new repository fields cannot leak by default.
@@ -1554,6 +1555,41 @@ export class MobileTopUpService {
     }
 
     return { scanned: candidates.length, resolved, pending, errors };
+  }
+
+  async cancelPendingPaymentByAdmin(id: string, actor: string, reason: string) {
+    this.assertEnabled();
+    if (!actor || reason.trim().length < 20 || reason.trim().length > 500) {
+      throw new MobileTopUpError('INVALID_CANCELLATION_REASON', 'An administrator and review reason are required', 400);
+    }
+    const record = await this.repository.getTransactionById(id);
+    if (!record || !flupFlapCustomerId(record.userId)) {
+      throw new MobileTopUpError('TOPUP_NOT_FOUND', 'FlupFlap transaction was not found', 404);
+    }
+    this.assertTransactionEnvironment(record);
+    if (record.status !== 'PENDING' || record.paymentStatus !== 'SESSION_CREATED' ||
+        record.paymentProvider !== 'STRIPE' || !record.paymentSessionId ||
+        record.paymentProviderTransactionId || record.paymentAuthorizationId || record.providerTransactionId ||
+        record.fulfillmentStartedAt || record.paymentRecoveryCode) {
+      throw new MobileTopUpError('TOPUP_NOT_CANCELLABLE', 'This recharge cannot be safely cancelled', 409);
+    }
+    if (!this.stripeProvider) {
+      throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED', 'Stripe is not available to verify this checkout', 409);
+    }
+    const metadata = { reason: reason.trim(), customerId: flupFlapCustomerId(record.userId), paymentSessionId: record.paymentSessionId };
+    // Persist intent before any external mutation, even if the response is lost.
+    await this.audit(actor, 'FLUPFLAP_PAYMENT_CANCELLATION_REQUESTED', 'MobileTopUpTransaction', id, metadata);
+    try {
+      await this.stripeProvider.expireUnpaidCheckout(record.paymentSessionId, id, usdMinorUnits(record.totalChargeUsd));
+    } catch {
+      throw new MobileTopUpError('TOPUP_CANCELLATION_UNRESOLVED',
+        'Cancellation was not confirmed. Verify the checkout in its original Stripe account.', 409);
+    }
+    if (!await this.repository.cancelPendingByAdmin(record, this.clock().toISOString())) {
+      throw new MobileTopUpError('TOPUP_NOT_CANCELLABLE', 'The transaction changed. Refresh its status before trying again.', 409);
+    }
+    await this.audit(actor, 'FLUPFLAP_PAYMENT_CANCELLED_BY_ADMIN', 'MobileTopUpTransaction', id, metadata);
+    return (await this.repository.getTransactionById(id))!;
   }
 
   async cancelTransaction(userId: string, id: string, onlyIfAbandoned = false) {

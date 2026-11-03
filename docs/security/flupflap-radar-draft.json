@@ -1,0 +1,27 @@
+{
+  "status": "DRAFT_NOT_ACTIVATED",
+  "stripeAccount": "acct_1TTY71FEcUl5NAXm",
+  "scope": "::business:: = 'flupflap'",
+  "policies": [
+    {
+      "id": "card-checks",
+      "action": "block",
+      "condition": "::business:: = 'flupflap' and (is_missing(:address_zip_check:) or :address_zip_check: != 'pass' or is_missing(:cvc_check:) or :cvc_check: != 'pass')"
+    },
+    {
+      "id": "country-match",
+      "action": "block",
+      "condition": "::business:: = 'flupflap' and (is_missing(:ip_country:) or is_missing(:card_country:) or :ip_country: != :card_country:)"
+    },
+    {
+      "id": "highest-risk",
+      "action": "block",
+      "condition": "::business:: = 'flupflap' and :risk_level: = 'highest'"
+    },
+    {
+      "id": "elevated-risk",
+      "action": "review",
+      "condition": "::business:: = 'flupflap' and :risk_level: = 'elevated'"
+    }
+  ]
+}

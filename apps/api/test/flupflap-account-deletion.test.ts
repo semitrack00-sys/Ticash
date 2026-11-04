@@ -95,6 +95,23 @@ describe('self-service FlupFlap deletion in migrated PostgreSQL', () => {
     expect(await prisma.auditLog.count({ where: { action: 'FLUPFLAP_ACCOUNT_DELETED', entityId: f.customer.id } })).toBe(1);
   });
 
+  it('finishes deletion after a confirmed refund while retaining refund history', async () => {
+    const f = await fixture();
+    await prisma.mobileTopUpTransaction.update({ where: { id: f.transaction.id }, data: {
+      status: 'FAILED', paymentStatus: 'REFUND_PENDING', recoveryStartedAt: new Date(), paymentRecoveryCode: 'PAYMENT_POLICY_REJECTED',
+    } });
+    const service = new FlupFlapSelfServiceDeletion(prisma);
+    await service.request(f.customer.id, f.customer.passwordHash!, 0);
+    expect(await service.process(f.customer.id)).toMatchObject({ status: 'DELETION_PENDING' });
+    await prisma.mobileTopUpTransaction.update({ where: { id: f.transaction.id }, data: {
+      paymentStatus: 'REFUNDED', paymentRecoveryCode: 'RECOVERY_CONFIRMED', refundedAt: new Date(),
+    } });
+    expect(await service.process(f.customer.id)).toMatchObject({ status: 'LOCAL_DATA_DELETED' });
+    expect(await prisma.mobileTopUpTransaction.findUnique({ where: { id: f.transaction.id } })).toMatchObject({
+      paymentStatus: 'REFUNDED', paymentRecoveryCode: 'RECOVERY_CONFIRMED', recoveryStartedAt: expect.any(Date),
+    });
+  });
+
   it('persists pending requests across worker restarts and blocks new work until existing payments settle', async () => {
     const f = await fixture();
     await prisma.mobileTopUpTransaction.update({ where: { id: f.transaction.id }, data: { status: 'PROCESSING' } });

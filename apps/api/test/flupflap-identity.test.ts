@@ -38,6 +38,31 @@ const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:
 describe('FlupFlap identity and shared recharge isolation',()=>{
  beforeEach(resetStore);
  afterEach(() => vi.unstubAllEnvs());
+ it('reports unavailable password reset equally for existing and unknown identities', async () => {
+  const sendPasswordReset=vi.fn();
+  const {app}=setup({passwordResetEmailService:{configured:false,sendPasswordReset}});
+  await signup(app);
+  for(const email of ['a@example.test','unknown@example.test']) {
+   const result=await request(app).post(root+'/auth/forgot-password').send({email}).expect(503);
+   expect(result.body.code).toBe('PASSWORD_RESET_UNAVAILABLE');
+  }
+  expect(sendPasswordReset).not.toHaveBeenCalled();
+ });
+ it('delivers a usable reset link and revokes the old login', async () => {
+  const sendPasswordReset=vi.fn(async()=>{});
+  const {app}=setup({passwordResetEmailService:{configured:true,sendPasswordReset},
+   flupFlapConfig:{enabled:true,accessSecret:'test-flupflap-only-secret-at-least-32-characters',resetUrl:'https://www.flupflap.com/app/reset-password'}});
+  const customer=await signup(app);
+  const known=await request(app).post(root+'/auth/forgot-password').send({email:'a@example.test'}).expect(200);
+  const unknown=await request(app).post(root+'/auth/forgot-password').send({email:'unknown@example.test'}).expect(200);
+  expect(known.body).toEqual(unknown.body);
+  expect(sendPasswordReset).toHaveBeenCalledTimes(1);
+  const sent=sendPasswordReset.mock.calls[0] as unknown as [{resetUrl:string}];
+  const token=new URL(sent[0].resetUrl).searchParams.get('token');
+  await request(app).post(root+'/auth/reset-password').send({token,password:'replacement-password-42'}).expect(200);
+  await request(app).get(root+'/auth/me').set(headers(customer.accessToken)).expect(401);
+  await request(app).post(root+'/auth/login').send({email:'a@example.test',password:'replacement-password-42'}).expect(200);
+ });
  it('rejects duplicate emails after trimming and case normalization without changing the original identity', async () => {
   const {app,identities}=setup(); const original=await signup(app);
   const duplicate=await request(app).post(root+'/auth/register').send({firstName:'John',lastName:'Doe',phone:'+15550009999',

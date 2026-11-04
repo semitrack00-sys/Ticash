@@ -10,7 +10,7 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
   return async (record: MobileTopUpTransactionRecord): Promise<string | undefined> => {
     const customerId = record.userId.slice('flupflap:'.length);
     const customer = await db.flupFlapCustomer.findUnique({ where: { id: customerId } });
-    if (!customer || customer.guestExpiresAt || customer.status !== 'ACTIVE' || customer.rechargeRestricted) return 'ACCOUNT_REVIEW_REQUIRED';
+    if (!customer || (customer.guestExpiresAt && customer.guestExpiresAt <= new Date()) || customer.status !== 'ACTIVE' || customer.rechargeRestricted) return 'ACCOUNT_REVIEW_REQUIRED';
     if (record.paymentProvider !== 'STRIPE') return 'PAYMENT_METHOD_REVIEW';
     if (!stripe) return 'PAYMENT_RISK_UNAVAILABLE';
     const evidence = await stripe.fraudEvidence(record.paymentProviderTransactionId ?? record.paymentAuthorizationId ?? '', record.id);
@@ -25,7 +25,7 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
         await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${cardLock}, 0))`;
       }
       const current = await tx.flupFlapCustomer.findUnique({ where: { id: customerId } });
-      if (!current || current.status !== 'ACTIVE' || current.rechargeRestricted || current.guestExpiresAt) return 'ACCOUNT_REVIEW_REQUIRED';
+      if (!current || current.status !== 'ACTIVE' || current.rechargeRestricted || (current.guestExpiresAt && current.guestExpiresAt <= new Date())) return 'ACCOUNT_REVIEW_REQUIRED';
       const saved = await tx.rechargeFraudAssessment.findUnique({ where: { transactionId: record.id } });
       // Reviews remain held on webhook retries and reconciliation.
       if (saved?.reason && !saved.reviewedAt) return saved.reason;
@@ -75,7 +75,7 @@ export async function approveRechargeReview(db: PrismaClient, stripe: StripeHost
     const attemptReason = await paymentAttemptReviewReason(tx, customerId, new Date(), fingerprint, [], true);
     if (attemptReason) throw new MobileTopUpError('FRAUD_REVIEW_NOT_CLEAR', 'Payment attempt limits do not permit release.', 409);
     const current = await tx.mobileTopUpTransaction.findUnique({ where: { id: record.id } });
-    if (!customer || customer.status !== 'ACTIVE' || customer.guestExpiresAt || customer.rechargeRestricted ||
+    if (!customer || customer.status !== 'ACTIVE' || (customer.guestExpiresAt && customer.guestExpiresAt <= new Date()) || customer.rechargeRestricted ||
         !current || current.flupFlapCustomerId !== customerId || current.status !== 'PENDING' || current.paymentStatus !== 'CAPTURED' ||
         current.fulfillmentStartedAt || current.providerTransactionId || current.failureCode !== 'FRAUD_REVIEW_REQUIRED') {
       throw new MobileTopUpError('FRAUD_REVIEW_CONFLICT', 'Order or account state changed. Refresh before reviewing.', 409);

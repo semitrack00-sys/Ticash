@@ -144,3 +144,16 @@ describe('staff review safeguards', () => {
     expect(await createRechargeFraudGate(db as never,stripe as never)(record as never)).toBeTruthy();
   });
 });
+
+describe('risk-policy regression coverage',()=>{
+  it.each(['highest','elevated','unknown','not_assessed'])('holds %s risk even when issuer checks pass',risk=>{
+    expect(paymentReviewReason({...safe,risk})).toBe('PAYMENT_RISK_REVIEW');
+  });
+  it('normal risk and passing checks do not override an open Radar review',()=>{
+    expect(paymentReviewReason({...safe,review:true})).toBe('PAYMENT_RISK_REVIEW');
+  });
+  it.each(['fail','unavailable','unchecked',undefined])('never treats CVC/ZIP %s as passing',value=>{
+    expect(paymentReviewReason({...safe,cvcCheck:value})).toBe('PAYMENT_CARD_CHECK_FAILED');
+    expect(paymentReviewReason({...safe,postalCodeCheck:value})).toBe('PAYMENT_CARD_CHECK_FAILED');
+  });
+});

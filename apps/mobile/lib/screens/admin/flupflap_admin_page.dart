@@ -110,6 +110,34 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
     }
   }
 
+  final Set<String> cancelling = {};
+  Future<void> cancelPendingPayment(Map row) async {
+    final id = row['id'].toString();
+    if (!widget.session.can('recharge.payments.cancel') || cancelling.contains(id)) return;
+    setState(() => cancelling.add(id));
+    try {
+      final reason = await showDialog<String>(context: context, builder: (_) => _AdminReasonDialog(
+        title: 'Cancel pending payment',
+        description: 'Transaction $id · Total USD ${value(row['totalUsd'])}. This closes an unpaid checkout and releases the pending-payment lock. Paid or unverified payments cannot be cancelled here.',
+        action: 'Confirm cancellation'));
+      if (!mounted || reason == null) return;
+      await client.post('/admin/flupflap/transactions/$id/cancel', data: {'reason': reason});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unpaid checkout cancelled. The pending-payment lock is cleared.')));
+      setState(load);
+    } on DioException catch (error) {
+      if (!mounted) return;
+      final data = error.response?.data;
+      final unresolved = data is Map && data['code'] == 'TOPUP_CANCELLATION_UNRESOLVED';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(unresolved
+        ? 'Cancellation not confirmed. Check the payment in its original Stripe account; access to an old account may be required.'
+        : 'Cancellation not confirmed. Refresh the transaction and review its payment status.')));
+      setState(load);
+    } finally {
+      if (mounted) setState(() => cancelling.remove(id));
+    }
+  }
+
   final Set<String> reviewing = {};
   final Set<String> resettingAttempts = {};
   Future<void> resetPurchaseAttempts(Map row) async {
@@ -473,6 +501,13 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                                 TextButton(
                                   onPressed: () => retryNotification(row),
                                   child: const Text('Retry receiver SMS'),
+                                ),
+                              if (['transactions', 'pending-failures'].contains(section) &&
+                                  row['status'] == 'PENDING' && row['paymentStatus'] == 'SESSION_CREATED' &&
+                                  widget.session.can('recharge.payments.cancel'))
+                                TextButton(
+                                  onPressed: cancelling.contains(row['id'].toString()) ? null : () => cancelPendingPayment(row),
+                                  child: const Text('Cancel pending payment'),
                                 ),
                               if (row['reviewRequired'] == true &&
                                   widget.session.can('recharge.reconciliation'))

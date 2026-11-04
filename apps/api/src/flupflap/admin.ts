@@ -43,6 +43,14 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
    res.json({transactions:await Promise.all(rows.map(async t=>({...publicTransaction(t),...await buyerFor(flupFlapCustomerId(t.userId)),notification:await options.service.notificationStatus(t.id)}))),offset,limit:100,nextOffset:all.length===100?offset+100:null,scope:'PAGE',authoritativeState:'PAYMENT_AND_RECHARGE_PROVIDERS'});
   });
  }
+ router.post('/transactions/:id/cancel',protect('recharge.payments.cancel'),async(req:AdminRequest,res)=>{
+  res.set('Cache-Control','no-store');
+  const id=z.uuid().parse(req.params.id);
+  const {reason}=z.object({reason:z.string().trim().min(20).max(500)}).strict().parse(req.body);
+  if(!req.userId){res.status(401).json({code:'AUTH_REQUIRED'});return;}
+  const result=await options.service.cancelPendingPaymentByAdmin(id,req.userId,reason);
+  res.json({transaction:publicTransaction(result)});
+ });
  router.post('/transactions/:id/reconcile',protect('recharge.reconciliation'),async(req:AdminRequest,res)=>{
   const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.body??{});
   const t=await options.recharge.getTransactionById(id);

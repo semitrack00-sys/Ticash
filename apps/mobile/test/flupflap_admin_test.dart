@@ -7,6 +7,9 @@ import 'package:ticash/screens/admin/flupflap_admin_page.dart';
 import 'package:ticash/services/admin_service.dart';
 
 class AdminFixture implements HttpClientAdapter {
+  bool cancellationFails = false;
+  String transactionStatus = 'PENDING';
+  final cancellations = <Map<String, dynamic>>[];
   final requests = <String>[];
   final resets = <Map<String, dynamic>>[];
   @override
@@ -20,6 +23,18 @@ class AdminFixture implements HttpClientAdapter {
       resets.add(Map<String, dynamic>.from(options.data as Map));
       return ResponseBody.fromString(jsonEncode({'resetCount': 3, 'otherLimitsStillApply': true}), 200,
         headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    }
+    if (options.path.endsWith('/cancel')) {
+      cancellations.add(Map<String, dynamic>.from(options.data as Map));
+      if (!cancellationFails) transactionStatus = 'FAILED';
+      return ResponseBody.fromString(jsonEncode(cancellationFails
+        ? {'code': 'TOPUP_CANCELLATION_UNRESOLVED'} : {'transaction': {'status': 'FAILED'}}), cancellationFails ? 409 : 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    }
+    if (options.path.endsWith('/transactions')) {
+      return ResponseBody.fromString(jsonEncode({'transactions': [
+        {'id': 'fixture-transaction', 'status': transactionStatus, 'paymentStatus': transactionStatus == 'PENDING' ? 'SESSION_CREATED' : 'FAILED', 'totalUsd': 5.85}
+      ]}), 200, headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
     }
     final data = options.path.endsWith('/customer-directory')
         ? {
@@ -54,6 +69,36 @@ class AdminFixture implements HttpClientAdapter {
 }
 
 void main() {
+  for (final fail in [false, true]) {
+    testWidgets('admin cancellation confirms reason and handles failure=$fail', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1500));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final adapter = AdminFixture()..cancellationFails = fail;
+      final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = adapter;
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(dio: dio,
+        session: const AdminSession(role: 'ADMIN', permissions: {'recharge.view', 'recharge.transactions.view', 'recharge.payments.cancel'}, environment: 'PRODUCTION')))));
+      await tester.pumpAndSettle(); await tester.tap(find.text('Transactions')); await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Cancel pending payment')); await tester.tap(find.text('Cancel pending payment')); await tester.pumpAndSettle();
+      expect(adapter.cancellations, isEmpty);
+      expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Confirm cancellation')).onPressed, isNull);
+      await tester.enterText(find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)), 'Customer requested cancellation of this checkout');
+      await tester.pumpAndSettle(); await tester.tap(find.text('Confirm cancellation')); await tester.pumpAndSettle();
+      expect(adapter.cancellations.single['reason'], 'Customer requested cancellation of this checkout');
+      expect(adapter.transactionStatus, fail ? 'PENDING' : 'FAILED');
+      expect(find.text(fail
+        ? 'Cancellation not confirmed. Check the payment in its original Stripe account; access to an old account may be required.'
+        : 'Unpaid checkout cancelled. The pending-payment lock is cleared.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+  testWidgets('read-only staff never see cancellation controls', (tester) async {
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.example.test/api'))..httpClientAdapter = AdminFixture();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlupFlapAdminPage(dio: dio,
+      session: const AdminSession(role: 'READ_ONLY', permissions: {'recharge.view', 'recharge.transactions.view'}, environment: 'PRODUCTION')))));
+    await tester.pumpAndSettle(); await tester.tap(find.text('Transactions')); await tester.pumpAndSettle();
+    expect(find.text('Cancel pending payment'), findsNothing);
+  });
+
   testWidgets('client profile separates phone country from saved billing country', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));

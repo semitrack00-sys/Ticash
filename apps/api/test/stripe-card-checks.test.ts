@@ -98,3 +98,29 @@ describe('issuer verification results from Stripe to fulfillment', () => {
     expect(await fixture().stripe.fraudEvidence('pi_fixture', 'tx')).toMatchObject({postalCodeCheck:undefined, cvcCheck:undefined});
   });
 });
+
+describe('server-owned Radar scope', () => {
+  it.each([true, false])('tags only FlupFlap Checkout and PaymentIntent metadata (FlupFlap: %s)', async flupFlap => {
+    const transport=vi.fn(async()=>new Response(JSON.stringify({id:'cs_live_fixture',url:'https://checkout.stripe.com/c/pay/fixture'}),{status:200}));
+    const stripe=new StripeHostedCheckoutProvider(config,transport);
+    await stripe.createPaymentSession({transactionId:'tx',amountMinor:585,currency:'USD',billingCountry:'US',resumeToken:'a'.repeat(43),flupFlap});
+    const body=new URLSearchParams((transport.mock.calls[0] as unknown as [string,RequestInit])[1].body as string);
+    expect(body.getAll('payment_method_types[0]')).toEqual(flupFlap ? ['card'] : []);
+    expect(body.has('payment_method_types[1]')).toBe(false);
+    expect(body.has('automatic_payment_methods[enabled]')).toBe(false);
+    for(const prefix of ['metadata','payment_intent_data[metadata]']) {
+      expect(body.get(`${prefix}[business]`)).toBe(flupFlap?'flupflap':null);
+      expect(body.get(`${prefix}[fraudPolicyVersion]`)).toBe(flupFlap?'2026-11-03':null);
+    }
+  });
+  it.each([true, false])('restricts recurring methods only for FlupFlap and preserves evidence scope (%s)',async flupFlap=>{
+    const transport=vi.fn(async()=>new Response(JSON.stringify({id:'pi_fixture',status:'succeeded',amount:585,currency:'usd',customer:'cus_fixture',payment_method:'pm_fixture',livemode:true,metadata:{transactionId:'tx'}}),{status:200}));
+    const stripe=new StripeHostedCheckoutProvider(config,transport);
+    await stripe.createOffSessionPaymentIntent({transactionId:'tx',amountMinor:585,customerId:'cus_fixture',paymentMethodId:'pm_fixture',billingCountry:'US',flupFlap});
+    const body=new URLSearchParams((transport.mock.calls[0] as unknown as [string,RequestInit])[1].body as string);
+    expect(body.get('metadata[business]')).toBe(flupFlap ? 'flupflap' : null);
+    expect(body.getAll('payment_method_types[0]')).toEqual(flupFlap ? ['card'] : []);
+    expect(body.has('payment_method_types[1]')).toBe(false);
+    expect(body.has('metadata[ip_country]')).toBe(false);
+  });
+});

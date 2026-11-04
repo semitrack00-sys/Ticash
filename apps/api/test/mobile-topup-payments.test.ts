@@ -532,6 +532,66 @@ describe('Stripe sandbox flow',()=>{
     return { service, provider, repository, submit, transport, stripeProvider };
   }
 
+  async function adminCancellationFixture() {
+    const f = stripeFixture();
+    const owner = 'flupflap:11111111-1111-4111-8111-111111111111';
+    const quote = await f.service.createQuote(owner, quoteInput);
+    const session = await f.service.createPaymentSession(owner, {quoteId: quote.id}, 'admin-cancellation-test', 'US');
+    const data = {id: 'cs_test_fixture_123', mode: 'payment', livemode: false, currency: 'usd',
+      amount_total: Math.round(quote.totalChargeUsd * 100), client_reference_id: session.transactionId,
+      metadata: {transactionId: session.transactionId}, payment_status: 'unpaid', payment_intent: null, status: 'open'};
+    f.transport.mockImplementation(async (_url?: unknown, init?: RequestInit) => {
+      if (init?.method === 'POST') data.status = 'expired';
+      return stripeResponse(data);
+    });
+    f.transport.mockClear();
+    return {...f, owner, session, data};
+  }
+  it.each(['open', 'expired'])('admin safely closes %s unpaid checkout, retaining history', async status => {
+    const f = await adminCancellationFixture(); f.data.status = status;
+    const result = await f.service.cancelPendingPaymentByAdmin(f.session.transactionId, 'admin-id', 'Customer requested cancellation of this checkout');
+    expect(result).toMatchObject({status:'FAILED', paymentStatus:'FAILED', failureCode:'CANCELLED_BY_ADMIN'});
+    expect(await f.repository.listTransactions(f.owner)).toHaveLength(1);
+    expect(f.transport.mock.calls.length).toBe(status === 'open' ? 3 : 2);
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+  it.each([
+    {payment_status:'paid'}, {payment_intent:'pi_attempt'}, {status:'complete'},
+    {client_reference_id:'another-transaction'}, {metadata:{transactionId:'wrong'}},
+    {amount_total:1}, {livemode:true}, {currency:'eur'},
+  ])('admin refuses unsafe Stripe evidence %j', async changes => {
+    const f = await adminCancellationFixture(); Object.assign(f.data, changes);
+    await expect(f.service.cancelPendingPaymentByAdmin(f.session.transactionId, 'admin-id', 'Customer requested cancellation of this checkout'))
+      .rejects.toMatchObject({code:'TOPUP_CANCELLATION_UNRESOLVED'});
+    expect((await f.repository.getTransactionById(f.session.transactionId))?.status).toBe('PENDING');
+    expect(f.transport).toHaveBeenCalledTimes(1); expect(f.submit).not.toHaveBeenCalled();
+  });
+  it('admin keeps a missing old-account session pending', async () => {
+    const f = await adminCancellationFixture();
+    f.transport.mockImplementation(async () => new Response(JSON.stringify({error:{code:'resource_missing'}}), {status:404}));
+    await expect(f.service.cancelPendingPaymentByAdmin(f.session.transactionId, 'admin-id', 'Customer requested cancellation of this checkout'))
+      .rejects.toMatchObject({code:'TOPUP_CANCELLATION_UNRESOLVED'});
+    expect((await f.repository.getTransactionById(f.session.transactionId))?.status).toBe('PENDING');
+  });
+  it('admin refuses a local authorization or fulfillment race after Stripe closure', async () => {
+    const f = await adminCancellationFixture();
+    f.transport.mockImplementation(async () => {
+      await f.repository.updateTransaction(f.session.transactionId, {paymentAuthorizationId:'pi_racing', fulfillmentStartedAt:new Date().toISOString()});
+      return stripeResponse({...f.data,status:'expired'});
+    });
+    await expect(f.service.cancelPendingPaymentByAdmin(f.session.transactionId, 'admin-id', 'Customer requested cancellation of this checkout'))
+      .rejects.toMatchObject({code:'TOPUP_NOT_CANCELLABLE'});
+    expect((await f.repository.getTransactionById(f.session.transactionId))?.status).toBe('PENDING');
+  });
+  it('admin never cancels a TiCash transaction through FlupFlap', async () => {
+    const f = stripeFixture(); const quote = await f.service.createQuote('customer', quoteInput);
+    const session = await f.service.createPaymentSession('customer', {quoteId:quote.id}, 'admin-wrong-domain', 'US');
+    f.transport.mockClear();
+    await expect(f.service.cancelPendingPaymentByAdmin(session.transactionId, 'admin-id', 'Customer requested cancellation of this checkout'))
+      .rejects.toMatchObject({code:'TOPUP_NOT_FOUND'});
+    expect(f.transport).not.toHaveBeenCalled();
+  });
+
   it('confirms Stripe refund immediately when Stripe returns succeeded', async () => {
     const transport = vi.fn(async () => stripeResponse({
       id: 're_fixture_123',

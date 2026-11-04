@@ -116,6 +116,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   getTransactionByCheckoutResumeTokenHash(tokenHash: string): Promise<MobileTopUpTransactionRecord | undefined>;
   listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment): Promise<MobileTopUpTransactionRecord[]>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
+  cancelPendingByAdmin(record: MobileTopUpTransactionRecord, when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
   registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string, attempt?: VerifiedStripeEvent['attempt']): Promise<boolean>;
   paymentAttemptReviewReason?(customerId: string): Promise<string | undefined>;
@@ -218,6 +219,17 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     }
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
     transactions.set(id, { ...record, [field]: when, updatedAt: now() });
+    return true;
+  }
+
+  async cancelPendingByAdmin(record: MobileTopUpTransactionRecord, when: string) {
+    const current = transactions.get(record.id);
+    if (!current || current.updatedAt !== record.updatedAt || current.status !== 'PENDING' ||
+        current.paymentStatus !== 'SESSION_CREATED' || current.paymentSessionId !== record.paymentSessionId ||
+        current.paymentProviderTransactionId || current.paymentAuthorizationId || current.providerTransactionId ||
+        current.fulfillmentStartedAt || current.paymentRecoveryCode) return false;
+    transactions.set(record.id, { ...current, status: 'FAILED', paymentStatus: 'FAILED',
+      failureCode: 'CANCELLED_BY_ADMIN', failedAt: when, updatedAt: now() });
     return true;
   }
 
@@ -573,6 +585,19 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     if (operation === 'recovery') where.paymentStatus = { in: ['AUTHORIZED', 'CAPTURED'] };
     const result = await this.prisma.mobileTopUpTransaction.updateMany({ where, data: { [operationField(operation)]: new Date(when) } });
     return result.count === 1;
+  }
+
+  async cancelPendingByAdmin(record: MobileTopUpTransactionRecord, when: string) {
+    return this.prisma.$transaction(async tx => {
+      const result = await tx.mobileTopUpTransaction.updateMany({where: {
+        id: record.id, updatedAt: new Date(record.updatedAt), status: 'PENDING',
+        paymentStatus: 'SESSION_CREATED', paymentSessionId: record.paymentSessionId,
+        paymentProvider: 'STRIPE', paymentProviderTransactionId: null, paymentAuthorizationId: null,
+        providerTransactionId: null, fulfillmentStartedAt: null, paymentRecoveryCode: null,
+      }, data: {status: 'FAILED', paymentStatus: 'FAILED', failureCode: 'CANCELLED_BY_ADMIN', failedAt: new Date(when)}});
+      if (result.count && marketingEnabled()) await reconcilePromotion(tx, record.id);
+      return result.count === 1;
+    });
   }
 
   async transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate) {

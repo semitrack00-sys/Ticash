@@ -95,3 +95,16 @@ it('excludes old signed failures from a current cooldown',async()=>{
   for(let i=0;i<3;i++)await save(event(r.id,'ch_old'+i,'one-card',Math.floor(Date.now()/1000)-3600));
   expect(await paymentAttemptReviewReason(prisma,c.id)).toBeUndefined();
 });
+
+it('admin cancellation updates only the unchanged unpaid reservation and preserves history',async()=>{
+  const c=await buyer(),r=(await repo.reserveTransaction(await input(c.id))).record;
+  expect(await repo.cancelPendingByAdmin(r,new Date().toISOString())).toBe(true);
+  expect(await repo.cancelPendingByAdmin(r,new Date().toISOString())).toBe(false);
+  expect(await repo.getTransactionById(r.id)).toMatchObject({status:'FAILED',paymentStatus:'FAILED',failureCode:'CANCELLED_BY_ADMIN'});
+});
+it('admin cancellation cannot overwrite a concurrent authorization with unchanged payment status',async()=>{
+  const c=await buyer(),r=(await repo.reserveTransaction(await input(c.id))).record;
+  await prisma.mobileTopUpTransaction.update({where:{id:r.id},data:{paymentAuthorizationId:'pi_racing'}});
+  expect(await repo.cancelPendingByAdmin(r,new Date().toISOString())).toBe(false);
+  expect(await repo.getTransactionById(r.id)).toMatchObject({status:'PENDING',paymentAuthorizationId:'pi_racing'});
+});

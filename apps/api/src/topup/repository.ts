@@ -116,6 +116,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   getTransactionByCheckoutResumeTokenHash(tokenHash: string): Promise<MobileTopUpTransactionRecord | undefined>;
   listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment): Promise<MobileTopUpTransactionRecord[]>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
+  deferSecurityRefundCheck?(record: MobileTopUpTransactionRecord, when: string): Promise<void>;
   claimSecurityRefund?(record: MobileTopUpTransactionRecord, reason: string, when: string): Promise<boolean>;
   cancelPendingByAdmin(record: MobileTopUpTransactionRecord, when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
@@ -193,6 +194,8 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
           (item.paymentProvider === 'STRIPE' &&
             item.status === 'PENDING' &&
             ['PENDING', 'SESSION_CREATED'].includes(item.paymentStatus)) ||
+          (item.userId.startsWith('flupflap:') && item.paymentProvider === 'STRIPE' &&
+            item.status === 'PENDING' && item.paymentStatus === 'CAPTURED' && item.failureCode === 'FRAUD_REVIEW_REQUIRED') ||
           ['REFUND_PENDING', 'VOID_PENDING'].includes(item.paymentStatus)
         ) &&
         item.updatedAt <= staleBefore)
@@ -221,6 +224,11 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
     transactions.set(id, { ...record, [field]: when, updatedAt: now() });
     return true;
+  }
+
+  async deferSecurityRefundCheck(record: MobileTopUpTransactionRecord, when: string) {
+    const current = transactions.get(record.id);
+    if (current?.updatedAt === record.updatedAt) transactions.set(record.id, {...current, updatedAt: when});
   }
 
   async claimSecurityRefund(record: MobileTopUpTransactionRecord, reason: string, when: string) {
@@ -572,6 +580,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
           { paymentProvider: 'STORE_BALANCE', paymentStatus: 'PENDING', status: 'PENDING', quote: { expiresAt: { lt: new Date() } } },
           { paymentProvider: 'STORE_BALANCE', paymentStatus: 'CAPTURED', OR: [{ status: 'PENDING' }, { status: 'FAILED' }, { status: 'REFUNDED' }, { storeOrder: { status: 'HELD' }, status: 'DELIVERED' }] },
           { paymentProvider: 'STRIPE', status: 'PENDING', paymentStatus: { in: ['PENDING', 'SESSION_CREATED'] } },
+          { flupFlapCustomerId: { not: null }, paymentProvider: 'STRIPE', status: 'PENDING',
+            paymentStatus: 'CAPTURED', failureCode: 'FRAUD_REVIEW_REQUIRED' },
           { paymentStatus: { in: ['REFUND_PENDING', 'VOID_PENDING'] } },
         ],
         updatedAt: { lte: new Date(staleBefore) },
@@ -601,6 +611,12 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     if (operation === 'recovery') where.paymentStatus = { in: ['AUTHORIZED', 'CAPTURED'] };
     const result = await this.prisma.mobileTopUpTransaction.updateMany({ where, data: { [operationField(operation)]: new Date(when) } });
     return result.count === 1;
+  }
+
+  async deferSecurityRefundCheck(record: MobileTopUpTransactionRecord, when: string) {
+    await this.prisma.mobileTopUpTransaction.updateMany({where: {id: record.id, updatedAt: new Date(record.updatedAt),
+      status: 'PENDING', paymentStatus: 'CAPTURED', failureCode: 'FRAUD_REVIEW_REQUIRED'},
+      data: {updatedAt: new Date(when)}});
   }
 
   async claimSecurityRefund(record: MobileTopUpTransactionRecord, reason: string, when: string) {

@@ -1001,8 +1001,10 @@ export class MobileTopUpService {
     let reason: string | undefined;
     try {
       const evidence = await this.stripeProvider.fraudEvidence(paymentId, record.id);
-      reason = automaticSecurityRefundReason(evidence);
-      if (!reason) return record;
+      // A rejected, undelivered order is cancelled rather than held indefinitely.
+      // Existing reversals/disputes still require reconciliation, never another refund.
+      if (evidence.disputed || evidence.refunded) return record;
+      reason = automaticSecurityRefundReason(evidence) ?? 'PAYMENT_POLICY_REJECTED';
       const payment = await this.stripeProvider.getPayment(paymentId);
       const metadata = payment.metadata as Record<string, unknown> | undefined;
       if (payment.id !== paymentId || payment.status !== 'succeeded' || payment.livemode !== !record.testMode ||
@@ -1581,6 +1583,11 @@ export class MobileTopUpService {
     for (const record of candidates) {
       try {
         const updated = await this.refreshTransaction(record);
+        // Rotate unresolved holds out of this batch without overwriting concurrent
+        // refunds or fulfillment. A provider outage must not starve other orders.
+        if (updated.failureCode === 'FRAUD_REVIEW_REQUIRED' && updated.paymentStatus === 'CAPTURED') {
+          await this.repository.deferSecurityRefundCheck?.(updated, this.clock().toISOString());
+        }
         if (
           ['REFUNDED', 'VOIDED'].includes(updated.paymentStatus) ||
           (['DELIVERED', 'FAILED', 'REFUNDED'].includes(updated.status) &&

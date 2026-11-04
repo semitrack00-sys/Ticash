@@ -137,11 +137,11 @@ it('does not refund when the rollout switch is disabled',async()=>{
 });
 it.each([
   {cvcCheck:'unavailable'}, {cvcCheck:'unchecked'}, {cvcCheck:undefined},
-  {cvcCheck:'pass',risk:'elevated'}, {disputed:true}, {refunded:true},
-])('keeps uncertain or already reversed evidence held: %j',async patch=>{
+  {cvcCheck:'pass',risk:'elevated'}, {review:true}, {},
+])('refunds rejected undelivered orders instead of retaining a review hold: %j',async patch=>{
   const {r,stripe,service}=await securityRefundFixture();stripe.fraudEvidence.mockResolvedValue({...safe,...patch});
-  await service.fulfillPaidRecharge(r.id);expect(stripe.refund).not.toHaveBeenCalled();
-  expect((await repo.getTransactionById(r.id))?.paymentStatus).toBe('CAPTURED');
+  await service.fulfillPaidRecharge(r.id);expect(stripe.refund).toHaveBeenCalledTimes(1);
+  expect((await repo.getTransactionById(r.id))?.paymentStatus).toBe('REFUNDED');
 });
 it.each([{amount:501},{amount_received:0},{livemode:false},{currency:'eur'},{metadata:{transactionId:'other'}},{status:'processing'}])('does not refund mismatched Stripe payment: %j',async patch=>{
   const {r,stripe,service}=await securityRefundFixture();stripe.getPayment.mockResolvedValue({...await stripe.getPayment(),...patch});
@@ -227,4 +227,30 @@ it('rejects a live order in the sandbox runtime before any provider action',asyn
   const service=new MobileTopUpService({enabled:true,environment:'sandbox'} as never,{} as never,{} as never,repo,async()=>{},undefined,stripe as never,undefined,undefined,false,undefined,undefined,undefined,undefined,true);
   await expect(service.fulfillPaidRecharge(r.id)).rejects.toMatchObject({code:'TOPUP_ENVIRONMENT_MISMATCH'});
   expect(stripe.refund).not.toHaveBeenCalled();expect(stripe.fraudEvidence).not.toHaveBeenCalled();
+});
+
+it.each([{disputed:true},{refunded:true}])('never double-refunds reversed/disputed holds: %j',async patch=>{
+  const {r,stripe,service,submit}=await securityRefundFixture();
+  stripe.fraudEvidence.mockResolvedValue({...safe,...patch});
+  await service.fulfillPaidRecharge(r.id);
+  expect(stripe.refund).not.toHaveBeenCalled();expect(submit).not.toHaveBeenCalled();
+});
+it('background reconciliation selects captured holds and refunds without a customer retry',async()=>{
+  const {r,stripe,service,submit}=await securityRefundFixture();
+  vi.spyOn(service as never,'runtimeEnvironment' as never).mockReturnValue('PRODUCTION' as never);
+  await prisma.mobileTopUpTransaction.update({where:{id:r.id},data:{updatedAt:new Date('2020-01-01')}});
+  await service.reconcilePendingTransactions(100);
+  expect((await repo.getTransactionById(r.id))?.paymentStatus).toBe('REFUNDED');
+  expect(stripe.refund).toHaveBeenCalled();expect(submit).not.toHaveBeenCalled();
+});
+it('provider lookup failure defers a hold without refunding, delivering or starving the next batch',async()=>{
+  const {r,stripe,service,submit}=await securityRefundFixture();
+  vi.spyOn(service as never,'runtimeEnvironment' as never).mockReturnValue('PRODUCTION' as never);
+  stripe.fraudEvidence.mockRejectedValue(new Error('Stripe unavailable'));
+  await prisma.mobileTopUpTransaction.update({where:{id:r.id},data:{updatedAt:new Date('2019-01-01')}});
+  await service.reconcilePendingTransactions(1);
+  const current=(await repo.getTransactionById(r.id))!;
+  expect(current.paymentStatus).toBe('CAPTURED');
+  expect(Date.parse(current.updatedAt)).toBeGreaterThan(Date.now()-15000);
+  expect(stripe.refund).not.toHaveBeenCalled();expect(submit).not.toHaveBeenCalled();
 });

@@ -26,6 +26,23 @@ export class FlupFlapIdentityRepository {
     const customer = await this.customer(id); if (!customer) throw new Error('Customer unavailable');
     const updated = { ...customer, ...input, updatedAt: new Date() }; this.customers.set(id, updated); return updated;
   }
+  async devices(id: string) {
+    if (!this.db) return [];
+    return this.db.flupFlapDevice.findMany({ where: { customerId: id }, orderBy: { lastSeenAt: 'desc' }, take: 100 });
+  }
+  async reviewClosedDevice(id: string, deviceHash: string, actor: string, reason: string) {
+    if (!this.db) return false;
+    return this.db.$transaction(async tx => {
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${deviceHash}, 0))`;
+      const customer = await tx.flupFlapCustomer.findUnique({ where: { id } });
+      if (customer?.status !== 'CLOSED') return false;
+      const changed = await tx.flupFlapDevice.updateMany({ where: { customerId: id, deviceHash, associationReviewedAt: null }, data: { associationReviewedAt: new Date() } });
+      if (!changed.count) return false;
+      await tx.auditLog.create({ data: { userId: actor, action: 'FLUPFLAP_DEVICE_ASSOCIATION_REVIEWED', entity: 'FlupFlapCustomer', entityId: id,
+        metadata: { deviceHash, reason, effect: 'CLOSED_ACCOUNT_LINK_ONLY', paymentHistoryRetained: true } } });
+      return true;
+    });
+  }
   async deactivate(id: string, actor: string, reason: string) {
     if (this.db) return this.db.$transaction(async tx => {
       const changed = await tx.flupFlapCustomer.updateMany({ where: { id, status: 'ACTIVE' },

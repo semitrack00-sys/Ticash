@@ -72,6 +72,35 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
         .then((r) => Map<String, dynamic>.from(r.data as Map));
   }
 
+  Future<void> reviewDevice(Map row) async {
+    try {
+      final response = await client.get('/admin/flupflap/customers/${row['id']}/devices');
+      final devices = (response.data['devices'] as List).where((d) => d['associationReviewedAt'] == null).toList();
+      if (!mounted) return;
+      if (devices.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No unreviewed device associations.')));
+        return;
+      }
+      final device = await showDialog<String>(context: context, builder: (dialogContext) => SimpleDialog(
+        title: const Text('Review a closed account device'),
+        children: devices.map<Widget>((d) => SimpleDialogOption(
+          onPressed: () => Navigator.pop(dialogContext, d['deviceHash'].toString()),
+          child: Text('Device ${d['deviceHash']}\nLast seen: ${d['lastSeenAt']}'),
+        )).toList()));
+      if (device == null || !mounted) return;
+      final reason = await showDialog<String>(context: context, builder: (_) => const _AdminReasonDialog(
+        title: 'Confirm device association review',
+        description: 'This closed account will no longer block this device. Failed-payment history and all other security checks remain. Confirm the association was reviewed and enter the reason.',
+        action: 'Confirm reviewed association', minimumLength: 20, maximumLength: 500));
+      if (reason == null) return;
+      await client.post('/admin/flupflap/customers/${row['id']}/devices/$device/review',
+        data: {'reason': reason, 'confirm': 'REVIEW_CLOSED_ACCOUNT_LINK'});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Device association reviewed. Other restrictions still apply.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Device review was not confirmed. Refresh before retrying.')));
+    }
+  }
+
   Future<void> deactivateCustomer(Map row) async {
     final reason = await showDialog<String>(context: context, builder: (_) => const _AdminReasonDialog(
       title: 'Deactivate customer account',
@@ -418,6 +447,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
         if (section == 'customers')
           FlupFlapRecordExplorer(key: const ValueKey('client-directory'), dio: client, title: 'FlupFlap clients', directory: true,
             onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null,
+            onReviewDevice: widget.session.can('recharge.devices.review') ? reviewDevice : null,
             onDeactivateCustomer: widget.session.can('recharge.customers.deactivate') ? deactivateCustomer : null,
             onRestrictCustomer: widget.session.can('recharge.operations') ? (row) => operate(row, customer: true) : null),
         if (section == 'stores')
@@ -463,6 +493,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                     const SizedBox(height: 18),
                     AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio, permissions: widget.session.permissions,
                       onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null,
+            onReviewDevice: widget.session.can('recharge.devices.review') ? reviewDevice : null,
             onDeactivateCustomer: widget.session.can('recharge.customers.deactivate') ? deactivateCustomer : null,
             onRestrictCustomer: widget.session.can('recharge.operations') ? (row) => operate(row, customer: true) : null),
                     const SizedBox(height: 18),

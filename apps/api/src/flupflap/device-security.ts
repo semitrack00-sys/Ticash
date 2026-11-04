@@ -15,13 +15,21 @@ export async function checkRechargeDevice(db: PrismaClient, customerId: string, 
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${deviceHash}, 0))`;
     const cutoff = new Date(now.getTime() - 30 * 86400000);
     const linked = await tx.flupFlapDevice.findMany({ where: { deviceHash, lastSeenAt: { gte: cutoff }, customerId: { not: customerId } } });
-    const restricted = linked.length ? await tx.flupFlapCustomer.findFirst({ where: {
-      id: { in: linked.map(row => row.customerId) }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
+    // A reviewed association is ignored only while its source account stays closed.
+    // Its payment-attempt history is still included below.
+    const reviewedIds = linked.filter(row => row.associationReviewedAt).map(row => row.customerId);
+    const closedReviewed = reviewedIds.length ? await tx.flupFlapCustomer.findMany({
+      where: { id: { in: reviewedIds }, status: 'CLOSED' }, select: { id: true },
+    }) : [];
+    const retired = new Set(closedReviewed.map(row => row.id));
+    const effectiveLinked = linked.filter(row => !retired.has(row.customerId));
+    const restricted = effectiveLinked.length ? await tx.flupFlapCustomer.findFirst({ where: {
+      id: { in: effectiveLinked.map(row => row.customerId) }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
     }, select: { id: true } }) : null;
     // Do not retain rejected new associations: they cannot exhaust the limit for others.
     if (restricted) return new MobileTopUpError('DEVICE_RESTRICTED_LINK','This purchase needs support review.',403,{mode:'ADMIN_REVIEW',serverTime:now.toISOString()});
-    if (linked.length >= 2) {
-      const retry=linked.map(row=>row.lastSeenAt.getTime()).sort((a,b)=>a-b)[linked.length-2]!+30*86400000+1;
+    if (effectiveLinked.length >= 2) {
+      const retry=effectiveLinked.map(row=>row.lastSeenAt.getTime()).sort((a,b)=>a-b)[effectiveLinked.length-2]!+30*86400000+1;
       return new MobileTopUpError('DEVICE_ACCOUNT_LIMIT','This device has reached its account limit.',403,temporaryPurchaseAccess(retry,now));
     }
     const attempt = await paymentAttemptAccess(tx, customerId, now, undefined, linked.map(row => row.customerId));

@@ -35,7 +35,7 @@ export async function deleteFlupFlapAccount(db: PrismaClient, raw: unknown, exec
     const unsettled = await tx.mobileTopUpTransaction.count({ where: { ...owner, OR: [
       { status: { in: ['PENDING', 'PROCESSING'] } },
       { paymentStatus: { notIn: ['CAPTURED', 'FAILED', 'VOIDED', 'REFUNDED'] } },
-      { recoveryStartedAt: { not: null }, paymentRecoveryCode: { not: null } },
+      { recoveryStartedAt: { not: null }, paymentRecoveryCode: { not: 'RECOVERY_CONFIRMED' } },
     ] } });
     const claims = await tx.flupFlapRecurringRecharge.count({ where: {
       customerId: customer.id, claimedAt: { not: null },

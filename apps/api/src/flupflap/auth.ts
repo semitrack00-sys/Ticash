@@ -197,7 +197,13 @@ export function createFlupFlapIdentity(options: {
     res.json({user:publicFlupFlapCustomer(updated)});
   });
   router.post('/forgot-password',limited,async(req,res)=>{
-    const input=z.object({email}).strict().parse(req.body); const c=await repo.byEmail(input.email);
+    const input=z.object({email}).strict().parse(req.body);
+    // Check service availability before looking up an identity so failures do
+    // not disclose which email addresses have accounts.
+    if (!options.emailService.configured || !config.resetUrl) {
+      res.status(503).json({code:'PASSWORD_RESET_UNAVAILABLE',error:'Password reset is temporarily unavailable. Contact support.'}); return;
+    }
+    const c=await repo.byEmail(input.email);
     if(active(c) && !c!.guestExpiresAt && options.emailService.configured && config.resetUrl) {
       const resetToken=randomBytes(32).toString('base64url');const expiresAt=new Date(Date.now()+30*60_000);
       await repo.resetToken(c!.id,hash(resetToken),expiresAt);

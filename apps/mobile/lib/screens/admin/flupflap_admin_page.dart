@@ -72,6 +72,21 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
         .then((r) => Map<String, dynamic>.from(r.data as Map));
   }
 
+  Future<void> deactivateCustomer(Map row) async {
+    final reason = await showDialog<String>(context: context, builder: (_) => const _AdminReasonDialog(
+      title: 'Deactivate customer account',
+      description: 'Block sign-in and purchases and revoke sessions. Payment, refund and fraud records remain. This does not cancel or refund existing payments. Enter the reason.',
+      action: 'Deactivate account', minimumLength: 20, maximumLength: 500));
+    if (reason == null) return;
+    try {
+      await client.post('/admin/flupflap/customers/${row['id']}/deactivate',
+        data: {'reason': reason, 'confirm': 'DEACTIVATE_ACCOUNT'});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Account deactivated. Records retained.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deactivation was not confirmed. Refresh and check the account status.')));
+    }
+  }
+
   Future<void> operate(Map row, {bool customer = false}) async {
     final customerOperation = customer || section == 'customers';
     String? reason;
@@ -403,6 +418,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
         if (section == 'customers')
           FlupFlapRecordExplorer(key: const ValueKey('client-directory'), dio: client, title: 'FlupFlap clients', directory: true,
             onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null,
+            onDeactivateCustomer: widget.session.can('recharge.customers.deactivate') ? deactivateCustomer : null,
             onRestrictCustomer: widget.session.can('recharge.operations') ? (row) => operate(row, customer: true) : null),
         if (section == 'stores')
           FlupFlapStoresPanel(
@@ -447,6 +463,7 @@ class _FlupFlapAdminPageState extends State<FlupFlapAdminPage> {
                     const SizedBox(height: 18),
                     AdminAnalyticsPanel(business: AnalyticsBusiness.flupflap, dio: widget.dio, permissions: widget.session.permissions,
                       onResetCustomer: widget.session.can('recharge.attempts.reset') ? resetPurchaseAttempts : null,
+            onDeactivateCustomer: widget.session.can('recharge.customers.deactivate') ? deactivateCustomer : null,
             onRestrictCustomer: widget.session.can('recharge.operations') ? (row) => operate(row, customer: true) : null),
                     const SizedBox(height: 18),
                   ],

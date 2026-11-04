@@ -20,7 +20,7 @@ const body={reason:'Customer requested account deactivation',confirm:'DEACTIVATE
 it('deactivates, revokes credentials, retains identity and prevents repeat mutation',async()=>{
  const f=await fixture();
  await request(f.app).post(`/customers/${f.customer.id}/deactivate`).send(body).expect(204);
- expect(await f.identities.customer(f.customer.id)).toMatchObject({status:'INACTIVE',rechargeRestricted:true,email:f.customer.email,authVersion:1,passwordHash:'retained'});
+ expect(await f.identities.customer(f.customer.id)).toMatchObject({status:'CLOSED',rechargeRestricted:true,email:f.customer.email,authVersion:1,passwordHash:'retained'});
  expect(await f.identities.session(f.session.id)).toBeNull();
  expect(await f.identities.resetPassword('reset','new',new Date())).toBe(false);
  await expect(f.identities.create({email:f.customer.email!})).rejects.toMatchObject({code:'P2002'});

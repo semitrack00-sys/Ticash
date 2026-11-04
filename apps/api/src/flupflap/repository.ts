@@ -29,7 +29,7 @@ export class FlupFlapIdentityRepository {
   async deactivate(id: string, actor: string, reason: string) {
     if (this.db) return this.db.$transaction(async tx => {
       const changed = await tx.flupFlapCustomer.updateMany({ where: { id, status: 'ACTIVE' },
-        data: { status: 'INACTIVE', rechargeRestricted: true, authVersion: { increment: 1 } } });
+        data: { status: 'CLOSED', rechargeRestricted: true, authVersion: { increment: 1 } } });
       if (!changed.count) return false;
       await tx.flupFlapSession.deleteMany({ where: { customerId: id } });
       await tx.flupFlapPasswordResetToken.deleteMany({ where: { customerId: id } });
@@ -39,7 +39,7 @@ export class FlupFlapIdentityRepository {
     });
     const c = this.customers.get(id);
     if (!c || c.status !== 'ACTIVE') return false;
-    this.customers.set(id, { ...c, status: 'INACTIVE', rechargeRestricted: true, authVersion: c.authVersion + 1, updatedAt: new Date() });
+    this.customers.set(id, { ...c, status: 'CLOSED', rechargeRestricted: true, authVersion: c.authVersion + 1, updatedAt: new Date() });
     for (const [key, row] of this.sessions) if (row.customerId === id) this.sessions.delete(key);
     for (const [key, row] of this.resets) if (row.customerId === id) this.resets.delete(key);
     return true;

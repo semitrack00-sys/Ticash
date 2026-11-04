@@ -116,6 +116,7 @@ export interface MobileTopUpRepository extends ReceiverNotificationStore {
   getTransactionByCheckoutResumeTokenHash(tokenHash: string): Promise<MobileTopUpTransactionRecord | undefined>;
   listReconciliationCandidates(limit: number, staleBefore: string, environment: MobileTopUpRuntimeEnvironment): Promise<MobileTopUpTransactionRecord[]>;
   claimOperation(id: string, operation: 'payment' | 'fulfillment' | 'recovery', when: string): Promise<boolean>;
+  claimSecurityRefund?(record: MobileTopUpTransactionRecord, reason: string, when: string): Promise<boolean>;
   cancelPendingByAdmin(record: MobileTopUpTransactionRecord, when: string): Promise<boolean>;
   transitionPayment(id: string, from: MobileTopUpPaymentStatus[], input: TransactionUpdate): Promise<boolean>;
   registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string, attempt?: VerifiedStripeEvent['attempt']): Promise<boolean>;
@@ -215,10 +216,23 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
     if (operation === 'fulfillment') {
       const mockAllowed = record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
       const stripeAllowed = ['STRIPE', 'STORE_BALANCE'].includes(record.paymentProvider ?? '') && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
-      if (record.providerTransactionId || record.status !== 'PENDING' || !paid(record) || (!mockAllowed && !stripeAllowed)) return false;
+      if (record.recoveryStartedAt || record.failureCode === 'FRAUD_REVIEW_REQUIRED' || record.providerTransactionId || record.status !== 'PENDING' || !paid(record) || (!mockAllowed && !stripeAllowed)) return false;
     }
     if (operation === 'recovery' && !['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)) return false;
     transactions.set(id, { ...record, [field]: when, updatedAt: now() });
+    return true;
+  }
+
+  async claimSecurityRefund(record: MobileTopUpTransactionRecord, reason: string, when: string) {
+    const current = transactions.get(record.id);
+    if (!current || current.updatedAt !== record.updatedAt || current.paymentProvider !== 'STRIPE' || current.testMode !== record.testMode ||
+        current.paymentEnvironment !== record.paymentEnvironment || current.rechargeEnvironment !== record.rechargeEnvironment ||
+        !current.userId.startsWith('flupflap:') || current.status !== 'PENDING' || current.paymentStatus !== 'CAPTURED' ||
+        current.failureCode !== 'FRAUD_REVIEW_REQUIRED' || current.fulfillmentStartedAt || current.providerTransactionId ||
+        current.operatorTransactionId || current.deliveredAt || current.recoveryStartedAt ||
+        current.paymentProviderTransactionId !== record.paymentProviderTransactionId) return false;
+    transactions.set(record.id, {...current, status: 'FAILED', paymentStatus: 'REFUND_PENDING',
+      failureCode: 'SECURITY_REFUND_REQUIRED', paymentRecoveryCode: reason, recoveryStartedAt: when, failedAt: when, updatedAt: now()});
     return true;
   }
 
@@ -244,6 +258,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
     const existing = paymentEvents.get(eventId);
     if (existing) {
+      if (acknowledgeLegacyEvent(existing, payloadHash, transactionId, existing.processed)) return false;
       assertSameEvent(existing, payloadHash, transactionId);
       return !existing.processed;
     }
@@ -576,7 +591,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       ],
     });
     if (operation === 'fulfillment') Object.assign(where, {
-      providerTransactionId: null, status: 'PENDING', OR: [
+      providerTransactionId: null, recoveryStartedAt: null, status: 'PENDING',
+      AND: [{ OR: [{ failureCode: null }, { failureCode: { not: 'FRAUD_REVIEW_REQUIRED' } }] }], OR: [
         { paymentProvider: 'MOCK', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
         { paymentProvider: 'STRIPE', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
         { paymentProvider: 'STORE_BALANCE', paymentStatus: 'CAPTURED' },
@@ -584,6 +600,18 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
     });
     if (operation === 'recovery') where.paymentStatus = { in: ['AUTHORIZED', 'CAPTURED'] };
     const result = await this.prisma.mobileTopUpTransaction.updateMany({ where, data: { [operationField(operation)]: new Date(when) } });
+    return result.count === 1;
+  }
+
+  async claimSecurityRefund(record: MobileTopUpTransactionRecord, reason: string, when: string) {
+    const result = await this.prisma.mobileTopUpTransaction.updateMany({where: {
+      id: record.id, updatedAt: new Date(record.updatedAt), paymentProvider: 'STRIPE', testMode: record.testMode,
+      paymentEnvironment: record.paymentEnvironment, rechargeEnvironment: record.rechargeEnvironment,
+      flupFlapCustomerId: {not: null}, status: 'PENDING', paymentStatus: 'CAPTURED', failureCode: 'FRAUD_REVIEW_REQUIRED',
+      fulfillmentStartedAt: null, providerTransactionId: null, operatorTransactionId: null, deliveredAt: null,
+      recoveryStartedAt: null, paymentProviderTransactionId: record.paymentProviderTransactionId,
+    }, data: {status: 'FAILED', paymentStatus: 'REFUND_PENDING', failureCode: 'SECURITY_REFUND_REQUIRED',
+      paymentRecoveryCode: reason, recoveryStartedAt: new Date(when), failedAt: new Date(when)}});
     return result.count === 1;
   }
 
@@ -622,6 +650,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
       return this.prisma.mobileTopUpPaymentEvent.findUniqueOrThrow({ where: key });
     });
+    if (acknowledgeLegacyEvent(record, payloadHash, transactionId, !!record.processedAt)) return false;
     assertSameEvent(record, payloadHash, transactionId);
     if (attempt && !record.processedAt) {
       const transaction = await this.prisma.mobileTopUpTransaction.findUnique({ where: { id: transactionId } });
@@ -927,6 +956,13 @@ function paid(record: MobileTopUpTransactionRecord) {
   return ['STRIPE', 'STORE_BALANCE'].includes(record.paymentProvider ?? '')
     ? ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)
     : record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
+}
+// Old raw-byte hashes cannot be reconstructed from a redelivery. A completed
+// legacy event may only be acknowledged, never reprocessed. The service verifies
+// signature, environment, payment identity, amount and transaction before here.
+function acknowledgeLegacyEvent(record: { payloadHash: string; transactionId: string }, hash: string,
+  transactionId: string, processed: boolean) {
+  return processed && record.transactionId === transactionId && /^[a-f0-9]{64}$/.test(record.payloadHash) && /^v2:[a-f0-9]{64}$/.test(hash);
 }
 function assertSameEvent(record: { payloadHash: string; transactionId: string }, hash: string, transactionId: string) {
   if (record.payloadHash !== hash || record.transactionId !== transactionId) {

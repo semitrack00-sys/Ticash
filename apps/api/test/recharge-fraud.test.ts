@@ -43,6 +43,28 @@ describe('payment risk decision', () => {
     expect(await gate(record)).toBe('PAYMENT_CARD_CHECK_FAILED');
     expect(customer.emailVerifiedAt).toBeNull();
   });
+  it.each(['active', 'expired', 'restricted', 'expires-under-lock'])('checks guest eligibility at fulfillment (%s)', async state => {
+    const activeGuest = { status:'ACTIVE', guestExpiresAt:new Date(Date.now()+3600000), rechargeRestricted:false };
+    const customer = { ...activeGuest,
+      ...(state === 'expired' ? {guestExpiresAt:new Date(Date.now()-1000)} : {}),
+      ...(state === 'restricted' ? {rechargeRestricted:true} : {}) };
+    const locked = state === 'expires-under-lock' ? {...customer,guestExpiresAt:new Date(Date.now()-1000)} : customer;
+    const tx = { $queryRaw:vi.fn(), flupFlapDevice:{findMany:vi.fn().mockResolvedValue([])},
+      auditLog:{findMany:vi.fn().mockResolvedValue([])},
+      flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue(locked)},
+      rechargeFraudAssessment:{findUnique:vi.fn().mockResolvedValue(null),findMany:vi.fn().mockResolvedValue([]),upsert:vi.fn()} };
+    const db = {...tx, flupFlapCustomer:{findUnique:vi.fn().mockResolvedValue(customer)},$transaction:async(fn:(t:typeof tx)=>unknown)=>fn(tx)};
+    const stripe = {fraudEvidence:vi.fn().mockResolvedValue(safe)};
+    const gate = createRechargeFraudGate(db as never,stripe as never);
+    const record = {id:'guest-tx',userId:'flupflap:guest',paymentProvider:'STRIPE'} as never;
+    expect(await gate(record)).toBe(state === 'active' ? undefined : 'ACCOUNT_REVIEW_REQUIRED');
+    if (state === 'active') {
+      stripe.fraudEvidence.mockResolvedValue({...safe,cvcCheck:'fail'});
+      expect(await gate(record)).toBe('PAYMENT_CARD_CHECK_FAILED');
+      stripe.fraudEvidence.mockResolvedValue({...safe,risk:'elevated'});
+      expect(await gate(record)).toBe('PAYMENT_RISK_REVIEW');
+    } else expect(tx.rechargeFraudAssessment.upsert).not.toHaveBeenCalled();
+  });
   it('allows authenticated normal-risk cards', () => expect(paymentReviewReason(safe)).toBeUndefined());
   it.each([undefined, 'exempted', 'not_supported'])('allows automatic 3DS outcome %s only with the other checks passing', authentication => {
     const evidence = {...safe, authentication, cardNetwork:'visa', responseEci:'07'};

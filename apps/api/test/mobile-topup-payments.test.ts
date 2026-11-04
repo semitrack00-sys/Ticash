@@ -617,6 +617,8 @@ describe('Stripe sandbox flow',()=>{
         id: 're_fixture_123',
         status: 'succeeded',
         amount: 599,
+        currency: 'usd',
+        payment_intent: 'pi_fixture_123',
         metadata: { transactionId: 'transaction-fixture' },
       }],
     }));

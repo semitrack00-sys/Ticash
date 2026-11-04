@@ -129,7 +129,9 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
       parsed.data.type === 'checkout.session.expired' ? { failureReason: 'PAYMENT_EXPIRED' as const } : {}),
     amountMinor,
     currency: 'USD',
-    payloadHash: createHash('sha256').update(raw).digest('hex'),
+    // Hash the immutable event content, not delivery counters, context, or JSON formatting.
+    // The signature above still authenticates the exact raw request bytes.
+    payloadHash: 'v2:' + createHash('sha256').update(canonicalJson(parsed.data)).digest('hex'),
     ...(parsed.data.type === 'payment_intent.payment_failed' ? { attempt: {
       eventType: parsed.data.type, attemptId: object.last_payment_error?.charge ?? parsed.data.id,
       fingerprint: object.last_payment_error?.payment_method?.card?.fingerprint
@@ -137,6 +139,14 @@ export function verifyStripeEvent(raw: Buffer, signature: string | undefined, se
       occurredAt: new Date(Math.min(parsed.data.created ? parsed.data.created * 1000 : Date.now(), Date.now())),
     } } : {}),
   };
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']';
+  if (value !== null && typeof value === 'object') return '{' + Object.entries(value)
+    .filter(([, item]) => item !== undefined).sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, item]) => JSON.stringify(key) + ':' + canonicalJson(item)).join(',') + '}';
+  return JSON.stringify(value);
 }
 
 export function assertVerifiedStripeEvent(event: VerifiedStripeEvent) {

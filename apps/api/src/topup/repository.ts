@@ -258,6 +258,7 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
   async registerPaymentEvent(eventId: string, payloadHash: string, transactionId: string) {
     const existing = paymentEvents.get(eventId);
     if (existing) {
+      if (acknowledgeLegacyEvent(existing, payloadHash, transactionId, existing.processed)) return false;
       assertSameEvent(existing, payloadHash, transactionId);
       return !existing.processed;
     }
@@ -649,6 +650,7 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
       return this.prisma.mobileTopUpPaymentEvent.findUniqueOrThrow({ where: key });
     });
+    if (acknowledgeLegacyEvent(record, payloadHash, transactionId, !!record.processedAt)) return false;
     assertSameEvent(record, payloadHash, transactionId);
     if (attempt && !record.processedAt) {
       const transaction = await this.prisma.mobileTopUpTransaction.findUnique({ where: { id: transactionId } });
@@ -954,6 +956,13 @@ function paid(record: MobileTopUpTransactionRecord) {
   return ['STRIPE', 'STORE_BALANCE'].includes(record.paymentProvider ?? '')
     ? ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus)
     : record.paymentProvider === 'MOCK' && ['AUTHORIZED', 'CAPTURED'].includes(record.paymentStatus);
+}
+// Old raw-byte hashes cannot be reconstructed from a redelivery. A completed
+// legacy event may only be acknowledged, never reprocessed. The service verifies
+// signature, environment, payment identity, amount and transaction before here.
+function acknowledgeLegacyEvent(record: { payloadHash: string; transactionId: string }, hash: string,
+  transactionId: string, processed: boolean) {
+  return processed && record.transactionId === transactionId && /^[a-f0-9]{64}$/.test(record.payloadHash) && /^v2:[a-f0-9]{64}$/.test(hash);
 }
 function assertSameEvent(record: { payloadHash: string; transactionId: string }, hash: string, transactionId: string) {
   if (record.payloadHash !== hash || record.transactionId !== transactionId) {

@@ -10,6 +10,7 @@ import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 import 'account_parity.dart';
 import 'auth_layout.dart';
+import 'auth_error_message.dart';
 import 'checkout_contract.dart';
 import 'recharge_journey.dart';
 import 'recharge_screen.dart';
@@ -506,13 +507,9 @@ class _AuthScreenState extends State<AuthScreen> {
     });
     try {
       await action();
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        setState(
-          () => message = context.ft(
-            'Unable to complete this request. Check your details and try again.',
-          ),
-        );
+        setState(() => message = context.ft(authErrorMessage(error)));
       }
     } finally {
       if (mounted) {

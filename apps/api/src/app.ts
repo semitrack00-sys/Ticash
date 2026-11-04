@@ -1,4 +1,5 @@
 import { rechargeDeviceGuard } from './flupflap/device-security.js';
+import { installProxyDiagnostics } from './proxy-diagnostics.js';
 import { fraudAlertConfig, FlupFlapFraudAlerts } from './flupflap/fraud-alerts.js';
 import { createVerificationRouter, FlupFlapVerification, verificationDelivery } from './flupflap/verification.js';
 import { createRechargeFraudGate, approveRechargeReview } from './topup/fraud-gate.js';
@@ -963,6 +964,9 @@ export function createApp(options: CreateAppOptions = {}) {
   const mobileTopUpConfig = options.mobileTopUpConfig ?? loadMobileTopUpConfig();
   const stripeConfig = options.stripeConfig ?? loadStripeConfig();
   assertMobileTopUpConfigurationCoherence(mobileTopUpConfig, stripeConfig);
+  installProxyDiagnostics(app, process.env.FLUPFLAP_PROXY_DIAGNOSTICS === 'true' &&
+    mobileTopUpConfig.environment === 'sandbox' && stripeConfig.testMode &&
+    !mobileTopUpConfig.liveRechargeEnabled && !securityConfig.liveMoneyEnabled);
   const dtOneConfig = loadDtOneConfig();
   const dingConfig = loadDingConfig();
   // Inspect configuration itself, not the public status object's constant labels.

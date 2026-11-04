@@ -108,3 +108,71 @@ it('admin cancellation cannot overwrite a concurrent authorization with unchange
   expect(await repo.cancelPendingByAdmin(r,new Date().toISOString())).toBe(false);
   expect(await repo.getTransactionById(r.id)).toMatchObject({status:'PENDING',paymentAuthorizationId:'pi_racing'});
 });
+
+async function securityRefundFixture(enabled=true) {
+  const c=await buyer(),r=(await repo.reserveTransaction(await input(c.id))).record;
+  await repo.updateTransaction(r.id,{paymentStatus:'CAPTURED',paymentProviderTransactionId:'pi_'+r.id.replaceAll('-',''),failureCode:'FRAUD_REVIEW_REQUIRED',paymentRecoveryCode:'PAYMENT_CARD_CHECK_FAILED'});
+  const held=(await repo.getTransactionById(r.id))!;
+  const stripe={fraudEvidence:vi.fn().mockResolvedValue({...safe,cvcCheck:'fail'}),
+    getPayment:vi.fn().mockResolvedValue({id:held.paymentProviderTransactionId,status:'succeeded',livemode:true,currency:'usd',amount:500,amount_received:500,metadata:{transactionId:r.id}}),
+    refund:vi.fn().mockResolvedValue('REFUNDED'),getRecoveryStatus:vi.fn().mockResolvedValue('REFUNDED')};
+  const submit=vi.fn(),audit=vi.fn();
+  const service=new MobileTopUpService({enabled:true,testMode:false} as never,{submitTopUp:submit} as never,{} as never,repo,audit,undefined,stripe as never,undefined,undefined,false,undefined,undefined,undefined,undefined,enabled);
+  vi.spyOn(service as never,'assertTransactionEnvironment' as never).mockImplementation(()=>undefined);
+  return {r:held,stripe,submit,audit,service};
+}
+it('automatically refunds one captured failure once under concurrent delivery attempts',async()=>{
+  const {r,stripe,submit,service}=await securityRefundFixture();
+  await Promise.all([service.fulfillPaidRecharge(r.id),service.fulfillPaidRecharge(r.id)]);
+  expect(stripe.refund).toHaveBeenCalledTimes(1);
+  expect(stripe.refund).toHaveBeenCalledWith({paymentId:r.paymentProviderTransactionId,transactionId:r.id,amountMinor:500});
+  expect(await repo.getTransactionById(r.id)).toMatchObject({status:'FAILED',paymentStatus:'REFUNDED',failureCode:'SECURITY_REFUND_REQUIRED'});
+  await service.fulfillPaidRecharge(r.id);
+  expect(stripe.refund).toHaveBeenCalledTimes(1);expect(submit).not.toHaveBeenCalled();
+});
+it('does not refund when the rollout switch is disabled',async()=>{
+  const {r,stripe,service}=await securityRefundFixture(false);await service.fulfillPaidRecharge(r.id);
+  expect(stripe.refund).not.toHaveBeenCalled();expect(stripe.fraudEvidence).not.toHaveBeenCalled();
+});
+it.each([
+  {cvcCheck:'unavailable'}, {cvcCheck:'unchecked'}, {cvcCheck:undefined},
+  {cvcCheck:'pass',risk:'elevated'}, {disputed:true}, {refunded:true},
+])('keeps uncertain or already reversed evidence held: %j',async patch=>{
+  const {r,stripe,service}=await securityRefundFixture();stripe.fraudEvidence.mockResolvedValue({...safe,...patch});
+  await service.fulfillPaidRecharge(r.id);expect(stripe.refund).not.toHaveBeenCalled();
+  expect((await repo.getTransactionById(r.id))?.paymentStatus).toBe('CAPTURED');
+});
+it.each([{amount:501},{amount_received:0},{livemode:false},{currency:'eur'},{metadata:{transactionId:'other'}},{status:'processing'}])('does not refund mismatched Stripe payment: %j',async patch=>{
+  const {r,stripe,service}=await securityRefundFixture();stripe.getPayment.mockResolvedValue({...await stripe.getPayment(),...patch});
+  await service.fulfillPaidRecharge(r.id);expect(stripe.refund).not.toHaveBeenCalled();
+});
+it('does not refund after delivery wins the atomic race',async()=>{
+  const {r,stripe,service}=await securityRefundFixture();
+  stripe.getPayment.mockImplementationOnce(async()=>{
+    await repo.updateTransaction(r.id,{fulfillmentStartedAt:new Date().toISOString(),status:'PROCESSING'});
+    return {id:r.paymentProviderTransactionId,status:'succeeded',livemode:true,currency:'usd',amount:500,amount_received:500,metadata:{transactionId:r.id}};
+  });
+  await service.fulfillPaidRecharge(r.id);expect(stripe.refund).not.toHaveBeenCalled();
+});
+it('keeps lost refund responses pending and never reports an unconfirmed refund as complete',async()=>{
+  const {r,stripe,service,submit}=await securityRefundFixture();stripe.refund.mockRejectedValue(new Error('timeout'));
+  await service.fulfillPaidRecharge(r.id);
+  expect(await repo.getTransactionById(r.id)).toMatchObject({status:'FAILED',paymentStatus:'REFUND_PENDING'});
+  expect(await repo.claimOperation(r.id,'fulfillment',new Date().toISOString())).toBe(false);
+  expect(submit).not.toHaveBeenCalled();
+});
+it('stops before refunding when audit persistence fails',async()=>{
+  const {r,stripe,service,audit}=await securityRefundFixture();audit.mockRejectedValue(new Error('audit unavailable'));
+  await expect(service.fulfillPaidRecharge(r.id)).rejects.toThrow('audit unavailable');expect(stripe.refund).not.toHaveBeenCalled();
+});
+it('customer refresh cannot initiate an automatic refund',async()=>{
+  const {r,stripe,service}=await securityRefundFixture();
+  await service.getTransaction(r.userId,r.id,true);
+  expect(stripe.refund).not.toHaveBeenCalled();expect(stripe.fraudEvidence).not.toHaveBeenCalled();
+});
+it('confirms a previously pending refund from Stripe without submitting it again',async()=>{
+  const {r,stripe,service}=await securityRefundFixture();stripe.refund.mockRejectedValue(new Error('lost response'));
+  await service.fulfillPaidRecharge(r.id);
+  expect((await service.getTransaction(r.userId,r.id,true)).paymentStatus).toBe('REFUNDED');
+  expect(stripe.refund).toHaveBeenCalledTimes(1);
+});

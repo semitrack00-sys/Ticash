@@ -174,4 +174,20 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
     expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
     expect(await clients[0]!.auditLog.count({where:{flupFlapCustomerId:c.id,action:'FLUPFLAP_CONTACT_VERIFIED'}})).toBe(1);
   });
+  it('allows only one independent worker to claim a security refund',async()=>{
+    const c=await customer();const repo=new PrismaMobileTopUpRepository(clients[0]!);
+    const record=(await repo.reserveTransaction({...await input(c.id),paymentProvider:'STRIPE',paymentStatus:'CAPTURED',paymentProviderTransactionId:'pi_'+randomUUID().replaceAll('-',''),failureCode:'FRAUD_REVIEW_REQUIRED'})).record;
+    const claims=await Promise.all(clients.map(db=>new PrismaMobileTopUpRepository(db).claimSecurityRefund(record,'PAYMENT_VERIFICATION_FAILED',new Date().toISOString())));
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await repo.claimOperation(record.id,'fulfillment',new Date().toISOString())).toBe(false);
+    expect(await repo.getTransactionById(record.id)).toMatchObject({status:'FAILED',paymentStatus:'REFUND_PENDING'});
+  });
+  it('never claims a security refund after another connection starts fulfillment',async()=>{
+    const c=await customer();const repo=new PrismaMobileTopUpRepository(clients[0]!);
+    const record=(await repo.reserveTransaction({...await input(c.id),paymentProvider:'STRIPE',paymentStatus:'CAPTURED',paymentProviderTransactionId:'pi_'+randomUUID().replaceAll('-',''),failureCode:'FRAUD_REVIEW_REQUIRED'})).record;
+    await clients[1]!.mobileTopUpTransaction.update({where:{id:record.id},data:{failureCode:'FRAUD_REVIEW_APPROVED'}});
+    expect(await new PrismaMobileTopUpRepository(clients[1]!).claimOperation(record.id,'fulfillment',new Date().toISOString())).toBe(true);
+    expect(await repo.claimSecurityRefund(record,'PAYMENT_VERIFICATION_FAILED',new Date().toISOString())).toBe(false);
+  });
+
 });

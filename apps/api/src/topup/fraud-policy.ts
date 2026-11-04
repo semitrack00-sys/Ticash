@@ -40,6 +40,16 @@ export type PaymentEvidence = {
   postalCodeCheck?: string; cvcCheck?: string; streetCheck?: string;
   paymentType: string; review: boolean; disputed: boolean; refunded: boolean;
 };
+
+/** Only positive failure evidence permits an automatic refund. Missing data,
+ * elevated risk, disputes and existing refunds require reconciliation/review. */
+export function automaticSecurityRefundReason(e: PaymentEvidence): string | undefined {
+  if (e.disputed || e.refunded) return undefined;
+  if (e.risk === 'highest') return 'PAYMENT_HIGHEST_RISK';
+  if (e.cvcCheck === 'fail' || e.postalCodeCheck === 'fail' || e.streetCheck === 'fail') return 'PAYMENT_VERIFICATION_FAILED';
+  if (e.authentication === 'failed') return 'PAYMENT_AUTHENTICATION_FAILED';
+  return undefined;
+}
 export function paymentReviewReason(e: PaymentEvidence): string | undefined {
   if (e.disputed || e.refunded) return 'PAYMENT_REVERSED_OR_DISPUTED';
   if (e.review || e.risk !== 'normal') return 'PAYMENT_RISK_REVIEW';

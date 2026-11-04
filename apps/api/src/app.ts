@@ -1059,6 +1059,7 @@ export function createApp(options: CreateAppOptions = {}) {
         throw new MobileTopUpError('REGISTERED_ACCOUNT_REQUIRED', 'An active recharge session is required.', 403);
       }
     } : undefined,
+    process.env.FLUPFLAP_AUTO_SECURITY_REFUNDS_ENABLED === 'true',
   );
 
   const alertConfig = fraudAlertConfig();

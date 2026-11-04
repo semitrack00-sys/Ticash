@@ -1,3 +1,4 @@
+import { automaticSecurityRefundReason } from './fraud-policy.js';
 import type { StoreBalancePayment } from '../flupflap/stores.js';
 import { productReceiverQuote, validateReceiverQuote, validReceiverValue } from './receiver-value.js';
 import { receiverLanguage, receiverLanguages, ReceiverNotificationService, type ReceiverSmsProvider } from './receiver-notification.js';
@@ -86,6 +87,7 @@ export class MobileTopUpService {
     private readonly fraudGate?: (record: MobileTopUpTransactionRecord) => Promise<string | undefined>,
     private readonly approveFraudReview?: (record: MobileTopUpTransactionRecord, actor: string, note: string) => Promise<void>,
     private readonly assertPurchaseIdentity?: (userId: string) => Promise<void>,
+    private readonly automaticSecurityRefunds = false,
   ) {
     this.config = config;
     this.provider = provider;
@@ -950,14 +952,14 @@ export class MobileTopUpService {
     if (!transaction) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     this.assertTransactionEnvironment(transaction);
     if (flupFlapCustomerId(transaction.userId) && !transaction.testMode && transaction.paymentProvider === 'STRIPE' && transaction.status === 'PENDING' && ['AUTHORIZED', 'CAPTURED'].includes(transaction.paymentStatus)) {
-      if (transaction.failureCode === 'FRAUD_REVIEW_REQUIRED') return transaction;
+      if (transaction.failureCode === 'FRAUD_REVIEW_REQUIRED') return this.refundConfirmedSecurityFailure(transaction);
       let reason: string | undefined;
       try { reason = this.fraudGate ? await this.fraudGate(transaction) : 'PAYMENT_RISK_UNAVAILABLE'; }
       catch { reason = 'PAYMENT_RISK_UNAVAILABLE'; }
       if (reason) {
         const held = await this.repository.updateTransaction(id, { failureCode: 'FRAUD_REVIEW_REQUIRED', paymentRecoveryCode: reason });
         await this.audit(transaction.userId, 'FLUPFLAP_FRAUD_REVIEW_REQUIRED', 'MobileTopUpTransaction', id, { reason });
-        return held;
+        return this.refundConfirmedSecurityFailure(held);
       }
     }
     if (!await this.repository.claimOperation(id, 'fulfillment', this.clock().toISOString())) return (await this.repository.getTransactionById(id))!;
@@ -986,6 +988,42 @@ export class MobileTopUpService {
     await this.audit(transaction.userId, 'MOBILE_TOPUP_SUBMITTED', 'MobileTopUpTransaction', id,
       { provider: transaction.provider ?? decodeOperatorId(transaction.operatorId).provider, status: updated.status, testMode: this.isTestMode() });
     return updated;
+  }
+
+  private async refundConfirmedSecurityFailure(record: MobileTopUpTransactionRecord) {
+    if (!this.automaticSecurityRefunds || !this.stripeProvider || !this.repository.claimSecurityRefund ||
+        record.testMode || !flupFlapCustomerId(record.userId) || record.paymentProvider !== 'STRIPE' ||
+        record.status !== 'PENDING' || record.paymentStatus !== 'CAPTURED' || record.failureCode !== 'FRAUD_REVIEW_REQUIRED' ||
+        record.fulfillmentStartedAt || record.providerTransactionId || record.operatorTransactionId || record.deliveredAt ||
+        record.recoveryStartedAt || !record.paymentProviderTransactionId) return record;
+    const paymentId = record.paymentProviderTransactionId;
+    let reason: string | undefined;
+    try {
+      const evidence = await this.stripeProvider.fraudEvidence(paymentId, record.id);
+      reason = automaticSecurityRefundReason(evidence);
+      if (!reason) return record;
+      const payment = await this.stripeProvider.getPayment(paymentId);
+      const metadata = payment.metadata as Record<string, unknown> | undefined;
+      if (payment.id !== paymentId || payment.status !== 'succeeded' || payment.livemode !== true ||
+          payment.currency !== 'usd' || payment.amount !== usdMinorUnits(record.totalChargeUsd) ||
+          payment.amount_received !== usdMinorUnits(record.totalChargeUsd) || metadata?.transactionId !== record.id) return record;
+    } catch { return record; } // Unknown evidence never authorizes a money movement.
+    await this.audit(record.userId, 'FLUPFLAP_SECURITY_REFUND_REQUESTED', 'MobileTopUpTransaction', record.id, {reason, paymentId});
+    if (!await this.repository.claimSecurityRefund(record, reason, this.clock().toISOString())) {
+      return (await this.repository.getTransactionById(record.id))!;
+    }
+    // The atomic claim excludes fulfillment and survives crashes. The existing
+    // recovery reconciler resumes with the same transaction-bound idempotency key.
+    try {
+      const status = await this.stripeProvider.refund({paymentId, transactionId: record.id, amountMinor: usdMinorUnits(record.totalChargeUsd)});
+      if (status === 'REFUNDED') {
+        await this.repository.transitionPayment(record.id, ['REFUND_PENDING'], {
+          paymentStatus: 'REFUNDED', paymentRecoveryCode: 'RECOVERY_CONFIRMED', refundedAt: this.clock().toISOString(),
+        });
+        await this.audit(record.userId, 'FLUPFLAP_SECURITY_REFUND_CONFIRMED', 'MobileTopUpTransaction', record.id, {reason, paymentId});
+      }
+    } catch { /* Keep REFUND_PENDING until Stripe confirms the result. */ }
+    return (await this.repository.getTransactionById(record.id))!;
   }
 
   private async recoverPayment(id: string, providerReversed = false, allowExternalActions = true) {
@@ -1438,6 +1476,9 @@ export class MobileTopUpService {
   }
 
   private async refreshTransaction(record: MobileTopUpTransactionRecord, allowExternalActions = true) {
+    if (allowExternalActions && record.failureCode === 'FRAUD_REVIEW_REQUIRED') {
+      return this.refundConfirmedSecurityFailure(record);
+    }
     if (record.paymentProvider === 'STORE_BALANCE') {
       if (record.status === 'PENDING' && record.paymentStatus === 'PENDING') {
         const quote = await this.repository.getQuote(record.userId, record.quoteId);

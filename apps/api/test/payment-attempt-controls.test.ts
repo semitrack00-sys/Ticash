@@ -176,3 +176,22 @@ it('confirms a previously pending refund from Stripe without submitting it again
   expect((await service.getTransaction(r.userId,r.id,true)).paymentStatus).toBe('REFUNDED');
   expect(stripe.refund).toHaveBeenCalledTimes(1);
 });
+
+it.each(['REFUNDED', 'REFUND_PENDING'] as const)('signed checkout replay preserves %s and never delivers held airtime', async refundStatus => {
+  const {r,stripe,service,submit}=await securityRefundFixture();
+  stripe.refund.mockResolvedValue(refundStatus);
+  vi.spyOn(service as never,'runtimeEnvironment' as never).mockReturnValue('PRODUCTION' as never);
+  await repo.updateTransaction(r.id,{paymentStatus:'SESSION_CREATED',failureCode:'PAYMENT_RECOVERED'});
+  const t=Math.floor(Date.now()/1000);
+  const raw=Buffer.from(JSON.stringify({id:'evt_'+randomUUID(),livemode:true,created:t,type:'checkout.session.completed',data:{object:{
+    id:r.paymentSessionId,payment_intent:r.paymentProviderTransactionId,payment_status:'paid',amount_total:500,currency:'usd',metadata:{transactionId:r.id},
+  }}}));
+  const signature=createHmac('sha256','fixture-secret').update(`${t}.${raw}`).digest('hex');
+  const verified=verifyStripeEvent(raw,`t=${t},v1=${signature}`,'fixture-secret');
+  await service.acceptVerifiedPaymentEvent(verified);
+  await service.acceptVerifiedPaymentEvent(verified);
+  expect((await repo.getTransactionById(r.id))?.paymentStatus).toBe(refundStatus);
+  expect(stripe.refund).toHaveBeenCalledTimes(1);
+  expect(submit).not.toHaveBeenCalled();
+  expect((await prisma.mobileTopUpPaymentEvent.findUniqueOrThrow({where:{provider_eventId:{provider:'STRIPE',eventId:verified.eventId}}})).processedAt).not.toBeNull();
+});

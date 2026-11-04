@@ -348,10 +348,13 @@ export class StripeHostedCheckoutProvider implements MobileTopUpSessionProvider,
     const matching = rows.filter((row): row is Record<string, unknown> => {
       if (!row || typeof row !== 'object') return false;
       const metadata = row.metadata;
-      const transactionMatches =
-        metadata && typeof metadata === 'object' &&
-        (metadata as Record<string, unknown>).transactionId === input.transactionId;
-      return transactionMatches || Number(row.amount) === input.amountMinor;
+      const transactionId = metadata && typeof metadata === 'object'
+        ? (metadata as Record<string, unknown>).transactionId : undefined;
+      // Metadata alone cannot prove the full amount was returned. A manual
+      // full refund may omit our metadata, but conflicting bindings fail closed.
+      return row.payment_intent === input.paymentId && row.currency === 'usd' &&
+        row.amount === input.amountMinor &&
+        (transactionId === undefined || transactionId === input.transactionId);
     });
     if (matching.some((row) => row.status === 'succeeded')) return 'REFUNDED' as const;
     return 'REFUND_PENDING' as const;

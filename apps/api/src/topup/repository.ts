@@ -225,7 +225,8 @@ export class MemoryMobileTopUpRepository implements MobileTopUpRepository {
 
   async claimSecurityRefund(record: MobileTopUpTransactionRecord, reason: string, when: string) {
     const current = transactions.get(record.id);
-    if (!current || current.updatedAt !== record.updatedAt || current.paymentProvider !== 'STRIPE' || current.testMode ||
+    if (!current || current.updatedAt !== record.updatedAt || current.paymentProvider !== 'STRIPE' || current.testMode !== record.testMode ||
+        current.paymentEnvironment !== record.paymentEnvironment || current.rechargeEnvironment !== record.rechargeEnvironment ||
         !current.userId.startsWith('flupflap:') || current.status !== 'PENDING' || current.paymentStatus !== 'CAPTURED' ||
         current.failureCode !== 'FRAUD_REVIEW_REQUIRED' || current.fulfillmentStartedAt || current.providerTransactionId ||
         current.operatorTransactionId || current.deliveredAt || current.recoveryStartedAt ||
@@ -603,7 +604,8 @@ export class PrismaMobileTopUpRepository implements MobileTopUpRepository {
 
   async claimSecurityRefund(record: MobileTopUpTransactionRecord, reason: string, when: string) {
     const result = await this.prisma.mobileTopUpTransaction.updateMany({where: {
-      id: record.id, updatedAt: new Date(record.updatedAt), paymentProvider: 'STRIPE', testMode: false,
+      id: record.id, updatedAt: new Date(record.updatedAt), paymentProvider: 'STRIPE', testMode: record.testMode,
+      paymentEnvironment: record.paymentEnvironment, rechargeEnvironment: record.rechargeEnvironment,
       flupFlapCustomerId: {not: null}, status: 'PENDING', paymentStatus: 'CAPTURED', failureCode: 'FRAUD_REVIEW_REQUIRED',
       fulfillmentStartedAt: null, providerTransactionId: null, operatorTransactionId: null, deliveredAt: null,
       recoveryStartedAt: null, paymentProviderTransactionId: record.paymentProviderTransactionId,

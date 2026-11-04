@@ -11,6 +11,7 @@ import { verifyStripeEvent } from '../src/topup/stripe-webhook.js';
 import { createRechargeFraudGate, approveRechargeReview } from '../src/topup/fraud-gate.js';
 import { checkRechargeDevice } from '../src/flupflap/device-security.js';
 import { MobileTopUpService } from '../src/topup/service.js';
+import { StripeSandboxPaymentProvider } from '../src/topup/stripe-provider.js';
 
 const db = new PGlite(); const prisma = new PrismaClient({adapter:pglitePrisma(db)});
 const repo = new PrismaMobileTopUpRepository(prisma);
@@ -194,4 +195,36 @@ it.each(['REFUNDED', 'REFUND_PENDING'] as const)('signed checkout replay preserv
   expect(stripe.refund).toHaveBeenCalledTimes(1);
   expect(submit).not.toHaveBeenCalled();
   expect((await prisma.mobileTopUpPaymentEvent.findUniqueOrThrow({where:{provider_eventId:{provider:'STRIPE',eventId:verified.eventId}}})).processedAt).not.toBeNull();
+});
+
+it.each([false, true])('runs sandbox refund orchestration with real provider parsing and database; lost response=%s',async lostResponse=>{
+  const {r}=await securityRefundFixture();
+  await prisma.mobileTopUpTransaction.update({where:{id:r.id},data:{testMode:true,paymentEnvironment:'SANDBOX',rechargeEnvironment:'SANDBOX'}});
+  let refunded=false; const posts:string[]=[];
+  const refund={id:'re_sandbox',status:'succeeded',amount:500,currency:'usd',payment_intent:r.paymentProviderTransactionId,metadata:{transactionId:r.id}};
+  const transport:typeof fetch=async(url,init)=>{
+    if(init?.method==='POST') {
+      expect(String(url)).toBe('https://api.stripe.com/v1/refunds');
+      posts.push(new Headers(init.headers).get('Idempotency-Key')!);refunded=true;
+      if(lostResponse)throw new Error('response lost');
+      return Response.json(refund);
+    }
+    if(String(url).includes('/v1/refunds?'))return Response.json({data:refunded?[refund]:[]});
+    return Response.json({id:r.paymentProviderTransactionId,status:'succeeded',livemode:false,currency:'usd',amount:500,amount_received:500,metadata:{transactionId:r.id},
+      latest_charge:{id:'ch_sandbox',paid:true,captured:true,amount_refunded:refunded?500:0,disputed:false,outcome:{risk_level:'normal'},payment_method_details:{type:'card',card:{fingerprint:'sandbox',checks:{cvc_check:'pass',address_postal_code_check:'fail'}}}}});
+  };
+  const stripe=new StripeSandboxPaymentProvider({enabled:true,environment:'sandbox',testMode:true,secretKey:'sk_test_fixture',publicKey:'pk_test_fixture',webhookSecret:'whsec_fixture',successUrl:'https://flupflap.com/success',failureUrl:'https://flupflap.com/failure'},transport);
+  const submit=vi.fn();
+  const service=new MobileTopUpService({enabled:true,environment:'sandbox'} as never,{submitTopUp:submit} as never,{} as never,repo,async()=>{},undefined,stripe,undefined,undefined,false,undefined,createRechargeFraudGate(prisma,stripe),undefined,undefined,true);
+  await service.fulfillPaidRecharge(r.id);
+  expect((await repo.getTransactionById(r.id))?.paymentStatus).toBe(lostResponse?'REFUND_PENDING':'REFUNDED');
+  expect((await service.getTransaction(r.userId,r.id,true)).paymentStatus).toBe('REFUNDED');
+  expect(posts).toEqual([r.id+':refund']);expect(submit).not.toHaveBeenCalled();
+});
+
+it('rejects a live order in the sandbox runtime before any provider action',async()=>{
+  const {r,stripe}=await securityRefundFixture();
+  const service=new MobileTopUpService({enabled:true,environment:'sandbox'} as never,{} as never,{} as never,repo,async()=>{},undefined,stripe as never,undefined,undefined,false,undefined,undefined,undefined,undefined,true);
+  await expect(service.fulfillPaidRecharge(r.id)).rejects.toMatchObject({code:'TOPUP_ENVIRONMENT_MISMATCH'});
+  expect(stripe.refund).not.toHaveBeenCalled();expect(stripe.fraudEvidence).not.toHaveBeenCalled();
 });

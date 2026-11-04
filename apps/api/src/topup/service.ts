@@ -951,7 +951,7 @@ export class MobileTopUpService {
     const transaction = await this.repository.getTransactionById(id);
     if (!transaction) throw new MobileTopUpError('TOPUP_NOT_FOUND', 'Recharge transaction was not found', 404);
     this.assertTransactionEnvironment(transaction);
-    if (flupFlapCustomerId(transaction.userId) && !transaction.testMode && transaction.paymentProvider === 'STRIPE' && transaction.status === 'PENDING' && ['AUTHORIZED', 'CAPTURED'].includes(transaction.paymentStatus)) {
+    if (flupFlapCustomerId(transaction.userId) && (!transaction.testMode || this.automaticSecurityRefunds) && transaction.paymentProvider === 'STRIPE' && transaction.status === 'PENDING' && ['AUTHORIZED', 'CAPTURED'].includes(transaction.paymentStatus)) {
       if (transaction.failureCode === 'FRAUD_REVIEW_REQUIRED') return this.refundConfirmedSecurityFailure(transaction);
       let reason: string | undefined;
       try { reason = this.fraudGate ? await this.fraudGate(transaction) : 'PAYMENT_RISK_UNAVAILABLE'; }
@@ -991,8 +991,9 @@ export class MobileTopUpService {
   }
 
   private async refundConfirmedSecurityFailure(record: MobileTopUpTransactionRecord) {
+    this.assertTransactionEnvironment(record);
     if (!this.automaticSecurityRefunds || !this.stripeProvider || !this.repository.claimSecurityRefund ||
-        record.testMode || !flupFlapCustomerId(record.userId) || record.paymentProvider !== 'STRIPE' ||
+        !flupFlapCustomerId(record.userId) || record.paymentProvider !== 'STRIPE' ||
         record.status !== 'PENDING' || record.paymentStatus !== 'CAPTURED' || record.failureCode !== 'FRAUD_REVIEW_REQUIRED' ||
         record.fulfillmentStartedAt || record.providerTransactionId || record.operatorTransactionId || record.deliveredAt ||
         record.recoveryStartedAt || !record.paymentProviderTransactionId) return record;
@@ -1004,7 +1005,7 @@ export class MobileTopUpService {
       if (!reason) return record;
       const payment = await this.stripeProvider.getPayment(paymentId);
       const metadata = payment.metadata as Record<string, unknown> | undefined;
-      if (payment.id !== paymentId || payment.status !== 'succeeded' || payment.livemode !== true ||
+      if (payment.id !== paymentId || payment.status !== 'succeeded' || payment.livemode !== !record.testMode ||
           payment.currency !== 'usd' || payment.amount !== usdMinorUnits(record.totalChargeUsd) ||
           payment.amount_received !== usdMinorUnits(record.totalChargeUsd) || metadata?.transactionId !== record.id) return record;
     } catch { return record; } // Unknown evidence never authorizes a money movement.

@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 
 export const adminPermissions = [
+  'recharge.devices.review',
+  'recharge.customers.deactivate',
   'recharge.payments.cancel',
   'recharge.attempts.reset',
   'recharge.stores.view', 'recharge.stores.manage', 'recharge.stores.funding',

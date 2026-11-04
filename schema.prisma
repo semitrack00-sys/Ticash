@@ -1219,6 +1219,7 @@ model FlupFlapVerificationChallenge {
 }
 
 model FlupFlapDevice {
+  associationReviewedAt DateTime?
   deviceHash String
   customerId String
   lastSeenAt DateTime @default(now())

@@ -22,18 +22,18 @@ String adminClientName(Map row) {
 
 class AdminInsightPage extends StatelessWidget {
   const AdminInsightPage({super.key, required this.dio, required this.title, required this.value,
-    required this.query, this.onResetCustomer, this.onRestrictCustomer});
+    required this.query, this.onResetCustomer, this.onRestrictCustomer, this.onDeactivateCustomer, this.onReviewDevice});
   final Dio dio;
   final String title, value;
   final Map<String, dynamic> query;
-  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer;
+  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer, onDeactivateCustomer, onReviewDevice;
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF5F7FB),
     appBar: AppBar(title: Text(title), backgroundColor: Colors.white, foregroundColor: _ink),
     body: SingleChildScrollView(padding: const EdgeInsets.all(20), child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 1100),
-      child: FlupFlapRecordExplorer(dio: dio, title: title, value: value, query: query, onResetCustomer: onResetCustomer, onRestrictCustomer: onRestrictCustomer),
+      child: FlupFlapRecordExplorer(dio: dio, title: title, value: value, query: query, onResetCustomer: onResetCustomer, onRestrictCustomer: onRestrictCustomer, onDeactivateCustomer: onDeactivateCustomer, onReviewDevice: onReviewDevice),
     ))),
   );
 }
@@ -41,13 +41,13 @@ class AdminInsightPage extends StatelessWidget {
 /// The same directory powers dashboard drill-down and the Customers section.
 class FlupFlapRecordExplorer extends StatefulWidget {
   const FlupFlapRecordExplorer({super.key, required this.dio, required this.title,
-    this.value, this.query = const {}, this.directory = false, this.onResetCustomer, this.onRestrictCustomer});
+    this.value, this.query = const {}, this.directory = false, this.onResetCustomer, this.onRestrictCustomer, this.onDeactivateCustomer, this.onReviewDevice});
   final Dio dio;
   final String title;
   final String? value;
   final Map<String, dynamic> query;
   final bool directory;
-  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer;
+  final Future<void> Function(Map)? onResetCustomer, onRestrictCustomer, onDeactivateCustomer, onReviewDevice;
   @override
   State<FlupFlapRecordExplorer> createState() => _FlupFlapRecordExplorerState();
 }
@@ -144,12 +144,19 @@ class _FlupFlapRecordExplorerState extends State<FlupFlapRecordExplorer> {
               Wrap(spacing: 8, runSpacing: 6, children: [
                 _badge(clients ? row['guest'] == true ? 'Guest' : 'Registered' : '${row['status']}'),
                 _badge(clients ? row['countryCode'] == 'UNKNOWN' ? 'Unknown country' : '${row['countryName'] ?? row['countryCode']}' : analyticsMoney(row['totalCents'])),
+                if (clients) _badge('${row['status']}'),
                 if (clients && row['rechargeRestricted'] == true) _badge('Recharge restricted'),
               ]),
               if (clients && widget.onResetCustomer != null && row['guest'] != true && row['status'] == 'ACTIVE' && row['rechargeRestricted'] != true) Align(alignment: Alignment.centerLeft, child: TextButton.icon(
                 onPressed: () => operate(row, widget.onResetCustomer!), icon: const Icon(Icons.restart_alt, size: 18),
                 label: const Text('Reset purchase-attempt limit'))),
-              if (clients && widget.onRestrictCustomer != null) Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+              if (clients && widget.onReviewDevice != null && row['status'] == 'CLOSED') Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+                onPressed: () => operate(row, widget.onReviewDevice!), icon: const Icon(Icons.devices, size: 18),
+                label: const Text('Review device association'))),
+              if (clients && widget.onDeactivateCustomer != null && row['status'] == 'ACTIVE') Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+                onPressed: () => operate(row, widget.onDeactivateCustomer!), icon: const Icon(Icons.person_off_outlined, size: 18),
+                label: const Text('Deactivate account'))),
+              if (clients && widget.onRestrictCustomer != null && row['status'] == 'ACTIVE') Align(alignment: Alignment.centerLeft, child: TextButton.icon(
                 onPressed: () => operate(row, widget.onRestrictCustomer!), icon: const Icon(Icons.shield_outlined, size: 18),
                 label: Text(row['rechargeRestricted'] == true ? 'Remove recharge restriction' : 'Restrict recharge'))),
             ])),

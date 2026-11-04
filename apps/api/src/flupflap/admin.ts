@@ -28,6 +28,29 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
   if(!options.recharge.resetPurchaseAttempts){res.status(503).json({code:'PURCHASE_RESET_UNAVAILABLE'});return;}
   res.json({...await options.recharge.resetPurchaseAttempts(id,req.userId,reason,requestId),otherLimitsStillApply:true});
  });
+ router.get('/customers/:id/devices',protect('recharge.devices.review'),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  res.json({devices:await options.identities.devices(z.uuid().parse(req.params.id))});
+ });
+ router.post('/customers/:id/devices/:deviceHash/review',protect('recharge.devices.review'),async(req:AdminRequest,res)=>{
+  res.set('Cache-Control','no-store');
+  const id=z.uuid().parse(req.params.id),deviceHash=z.string().regex(/^[a-f0-9]{64}$/).parse(req.params.deviceHash);
+  const {reason}=z.object({reason:z.string().trim().min(20).max(500),confirm:z.literal('REVIEW_CLOSED_ACCOUNT_LINK')}).strict().parse(req.body);
+  if(!req.userId){res.status(401).json({code:'AUTH_REQUIRED'});return;}
+  if(!await options.identities.reviewClosedDevice(id,deviceHash,req.userId,reason)){res.status(409).json({code:'DEVICE_REVIEW_NOT_ALLOWED'});return;}
+  res.status(204).end();
+ });
+ router.post('/customers/:id/deactivate',protect('recharge.customers.deactivate'),async(req:AdminRequest,res)=>{
+  res.set('Cache-Control','no-store');
+  const id=z.uuid().parse(req.params.id);
+  const {reason}=z.object({reason:z.string().trim().min(20).max(500),confirm:z.literal('DEACTIVATE_ACCOUNT')}).strict().parse(req.body);
+  if(!req.userId){res.status(401).json({code:'AUTH_REQUIRED'});return;}
+  const customer=await options.identities.customer(id);
+  if(!customer){res.status(404).json({code:'CUSTOMER_NOT_FOUND'});return;}
+  if(customer.status==='CLOSED'){res.status(204).end();return;}
+  if(!await options.identities.deactivate(id,req.userId,reason)){res.status(409).json({code:'CUSTOMER_STATE_CHANGED'});return;}
+  res.status(204).end();
+ });
  router.patch('/customers/:id/restrictions',protect('recharge.operations'),async(req:AdminRequest,res)=>{
   const id=z.uuid().parse(req.params.id);const input=z.object({rechargeRestricted:z.boolean(),reason:z.string().trim().min(5).max(300)}).strict().parse(req.body);
   if(!await options.identities.customer(id)){res.status(404).json({code:'CUSTOMER_NOT_FOUND'});return;}

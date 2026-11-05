@@ -1468,7 +1468,13 @@ class _AccountScreenState extends State<AccountScreen> {
             ),
           ),
           if (!widget.session.guest)
-            CustomerProfileDetails(user: widget.session.user ?? const {}),
+            CustomerProfileDetails(
+              user: widget.session.user ?? const {},
+              onSave: (firstName, lastName, phone) async {
+                await widget.session.updateProfile(firstName: firstName, lastName: lastName, phone: phone);
+                if (mounted) setState(() {});
+              },
+            ),
           const SizedBox(height: 12),
           Text(
             context.ft(

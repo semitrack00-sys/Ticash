@@ -191,8 +191,21 @@ export function createFlupFlapIdentity(options: {
   router.patch('/me',authenticate,async(req,res)=>{
     const c=(req as AuthRequest).flupFlapCustomer!;
     if(c.guestExpiresAt){res.status(403).json({code:'GUEST_SCOPE_RESTRICTED'});return;}
-    const input=z.object({countryCode:z.string().regex(/^[A-Z]{2}$/)}).strict().parse(req.body);
-    const updated=await repo.update(c.id,input);
+    const input=z.object({
+      firstName:z.string().trim().min(1).max(80).optional(),
+      lastName:z.string().trim().min(1).max(80).optional(),
+      phone:phone.optional(),
+      countryCode:z.string().regex(/^[A-Z]{2}$/).optional(),
+    }).strict().refine(value=>Object.keys(value).length>0).parse(req.body);
+    let updated;
+    try { updated=await repo.updateProfile(c.id,c.authVersion,input); }
+    catch(error) {
+      if(typeof error==='object' && error && 'code' in error && error.code==='P2002') {
+        res.status(409).json({code:'PROFILE_CONTACT_UNAVAILABLE',error:'This phone number cannot be used. Check the number or contact support.'});return;
+      }
+      throw error;
+    }
+    if(!updated){res.status(401).json({code:'INVALID_TOKEN',error:'Sign in again before updating your profile.'});return;}
     await options.audit(flupFlapOwner(c.id),'FLUPFLAP_PROFILE_UPDATED','FlupFlapCustomer',c.id);
     res.json({user:publicFlupFlapCustomer(updated)});
   });

@@ -462,6 +462,11 @@ void main() {
         expect(tester.takeException(), isNull);
       }
       expect(find.text('FlupFlap account'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.textContaining('separate from your TiCash'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.textContaining('separate from your TiCash'), findsOneWidget);
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();

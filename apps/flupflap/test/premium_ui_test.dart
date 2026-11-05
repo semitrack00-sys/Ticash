@@ -590,7 +590,9 @@ void main() {
       await tester.scrollUntilVisible(
         find.widgetWithText(TextField, 'Country code'),
         150,
-        scrollable: find.byType(Scrollable).last,
+        scrollable: find.descendant(
+          of: find.byType(ListView), matching: find.byType(Scrollable),
+        ).first,
       );
       await tester.pumpAndSettle();
       await tester.enterText(

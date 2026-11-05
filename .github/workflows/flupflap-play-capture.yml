@@ -1,0 +1,77 @@
+name: FlupFlap Play capture drafts
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/flupflap/test/play_capture_test.dart'
+      - '.github/workflows/flupflap-play-capture.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/flupflap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install capture font and image verification tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-roboto python3-pil fontconfig
+          echo "FLUPFLAP_CAPTURE_FONT=$(fc-match -f '%{file}' Roboto)" >> "$GITHUB_ENV"
+          echo "FLUPFLAP_CAPTURE_ICONS=$FLUTTER_ROOT/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf" >> "$GITHUB_ENV"
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Run full Flutter regression suite
+        run: flutter test
+      - name: Capture actual widgets using isolated fixtures
+        env:
+          FLUPFLAP_CAPTURE_DIR: build/play-capture-drafts
+        run: flutter test test/play_capture_test.dart
+      - name: Verify screenshot exports and record provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from PIL import Image
+          root = Path('build/play-capture-drafts')
+          images = sorted(root.glob('*.png'))
+          if len(images) != 8:
+              raise SystemExit('Expected eight captured screens')
+          manifest = {'commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
+                      'status': 'draft widget captures with fictional fixtures; review before store upload',
+                      'production_catalog_verified': False, 'images': []}
+          for path in images:
+              image = Image.open(path)
+              if image.size != (1080, 1920):
+                  raise SystemExit(f'Unexpected dimensions: {path.name}')
+              # PNG format normalization only; preserve all captured pixels.
+              if image.mode == 'RGBA' and image.getchannel('A').getextrema() != (255, 255):
+                  raise SystemExit(f'Unexpected transparent pixels: {path.name}')
+              image.convert('RGB').save(path)
+              manifest['images'].append({'file': path.name, 'width': 1080, 'height': 1920,
+                                         'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+          (root / 'capture-provenance.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          (root / 'READ-ME.txt').write_text(
+              'Actual Flutter widget captures using fictional test data. No production service calls or paid orders.\n'
+              'These are review drafts. Confirm final release appearance and product availability before upload.\n'
+              'Empty history does not represent a delivered transaction. Capture a consented test purchase separately.\n'
+              'Resolution: 1080 x 1920. Export: RGB PNG without transparency.\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flupflap-play-capture-drafts
+          path: apps/flupflap/build/play-capture-drafts/
+          if-no-files-found: error
+          retention-days: 30

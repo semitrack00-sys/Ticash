@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       level:
-        description: Maximum staging load level
+        description: Maximum staging health-check load level
         required: true
         default: smoke
         type: choice
@@ -12,50 +12,94 @@ on:
 
 permissions:
   contents: read
-
 concurrency:
   group: staging-capacity-test
   cancel-in-progress: false
 
 jobs:
-  capacity:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-    env:
-      BASE_URL: https://ticash-api-staging-v2.onrender.com
+    outputs:
+      level: ${{ steps.plan.outputs.level }}
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
+      start_at: ${{ steps.plan.outputs.start_at }}
     steps:
       - uses: actions/checkout@v4
-      - name: Verify staging target
-        shell: bash
+      - name: Verify capacity safety and aggregation gates
+        run: node --test load/capacity.test.cjs
+      - id: plan
+        env:
+          LEVEL: ${{ inputs.level }}
         run: |
-          set -euo pipefail
-          test "$BASE_URL" = "https://ticash-api-staging-v2.onrender.com"
-          case "$BASE_URL" in *ticash-api.onrender.com*) echo "Production target blocked"; exit 1 ;; esac
+          echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
+          if [ "$LEVEL" = 10000 ]; then
+            echo 'shards=[0,1,2,3]' >> "$GITHUB_OUTPUT"
+            echo 'count=4' >> "$GITHUB_OUTPUT"
+          else
+            echo 'shards=[0]' >> "$GITHUB_OUTPUT"
+            echo 'count=1' >> "$GITHUB_OUTPUT"
+          fi
+          echo "start_at=$(node -e 'console.log(Date.now() + 180000)')" >> "$GITHUB_OUTPUT"
+  capacity:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    env:
+      BASE_URL: https://ticash-api-staging-v2.onrender.com
+      CAPACITY_LEVEL: ${{ needs.prepare.outputs.level }}
+      CAPACITY_SHARDS: ${{ needs.prepare.outputs.count }}
+      CAPACITY_SHARD: ${{ matrix.shard }}
+      CAPACITY_START_AT: ${{ needs.prepare.outputs.start_at }}
+    steps:
+      - uses: actions/checkout@v4
       - name: Smoke test
-        shell: bash
         run: curl --fail --silent --show-error --retry 3 --retry-delay 2 "$BASE_URL/api/health" >/dev/null
       - name: Install k6
+        if: env.CAPACITY_LEVEL != 'smoke'
         uses: grafana/setup-k6-action@v1
-      - name: Run selected staging load
-        if: inputs.level != 'smoke'
+      - name: Run synchronized staging load
+        if: env.CAPACITY_LEVEL != 'smoke'
         shell: bash
-        env:
-          CAPACITY_LEVEL: ${{ inputs.level }}
         run: |
-          mkdir -p artifacts/capacity
+          mkdir -p "artifacts/capacity/shard-$CAPACITY_SHARD"
           set +e
-          k6 run --summary-export artifacts/capacity/summary.json \
-            -e BASE_URL="$BASE_URL" \
-            -e CAPACITY_LEVEL="$CAPACITY_LEVEL" \
-            load/flupflap-capacity.js 2>&1 | tee artifacts/capacity/k6.log
+          k6 run --log-output "file=artifacts/capacity/shard-$CAPACITY_SHARD/errors.log,level=error" load/flupflap-capacity.js 2>&1 | tee "artifacts/capacity/shard-$CAPACITY_SHARD/k6.log"
           K6_EXIT=${PIPESTATUS[0]}
-          echo "k6_exit_code=$K6_EXIT" | tee artifacts/capacity/result.txt
+          echo "k6_exit_code=$K6_EXIT" | tee "artifacts/capacity/shard-$CAPACITY_SHARD/result.txt"
           exit "$K6_EXIT"
-      - name: Upload capacity diagnostics
-        if: always() && inputs.level != 'smoke'
+      - name: Upload shard diagnostics
+        if: always() && env.CAPACITY_LEVEL != 'smoke'
         uses: actions/upload-artifact@v4
         with:
-          name: staging-capacity-${{ inputs.level }}-${{ github.run_id }}
+          name: staging-capacity-${{ github.run_id }}-shard-${{ matrix.shard }}
           path: artifacts/capacity/
-          if-no-files-found: warn
+          if-no-files-found: error
+          retention-days: 14
+  report:
+    needs: [prepare, capacity]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.level != 'smoke'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: staging-capacity-${{ github.run_id }}-shard-*
+          path: artifacts/capacity
+          merge-multiple: true
+      - name: Verify all shards and summarize
+        env:
+          LEVEL: ${{ needs.prepare.outputs.level }}
+          COUNT: ${{ needs.prepare.outputs.count }}
+          START_AT: ${{ needs.prepare.outputs.start_at }}
+        run: node load/aggregate-capacity.cjs artifacts/capacity "$LEVEL" "$COUNT" "$START_AT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-capacity-${{ needs.prepare.outputs.level }}-${{ github.run_id }}
+          path: artifacts/capacity/
           retention-days: 14

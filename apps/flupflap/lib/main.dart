@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ticash_recharge_core/localization/app_localizations.dart';
 
 import 'account_parity.dart';
+import 'customer_profile.dart';
 import 'auth_layout.dart';
 import 'auth_error_message.dart';
 import 'checkout_contract.dart';
@@ -1466,6 +1467,8 @@ class _AccountScreenState extends State<AccountScreen> {
               ),
             ),
           ),
+          if (!widget.session.guest)
+            CustomerProfileDetails(user: widget.session.user ?? const {}),
           const SizedBox(height: 12),
           Text(
             context.ft(

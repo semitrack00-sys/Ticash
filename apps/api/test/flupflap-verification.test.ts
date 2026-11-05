@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { pglitePrisma } from './helpers/pglite-prisma.js';
+import { FlupFlapIdentityRepository } from '../src/flupflap/repository.js';
 import { FlupFlapVerification } from '../src/flupflap/verification.js';
 
 const db=new PGlite(); const prisma=new PrismaClient({adapter:pglitePrisma(db)});
@@ -69,4 +70,23 @@ it('requires explicit SMS consent before storing or sending a code',async()=>{
   await expect(service.send(customer.id,'phone')).rejects.toMatchObject({code:'SMS_CONSENT_REQUIRED'});
   expect(send).not.toHaveBeenCalled();
   expect(await prisma.flupFlapVerificationChallenge.count({where:{customerId:customer.id}})).toBe(0);
+});
+
+it('profile phone changes invalidate verification and old codes even after changing back',async()=>{
+  const {customer,send,service}=await fixture();
+  const repo=new FlupFlapIdentityRepository(prisma);
+  await prisma.flupFlapCustomer.update({where:{id:customer.id},data:{phoneVerifiedAt:new Date(),rechargeRestricted:true}});
+  const challenge=await service.send(customer.id,'phone',true);
+  const updated=await repo.updateProfile(customer.id,customer.authVersion,{firstName:'Dukens',phone:'+50937050210'});
+  expect(updated).toMatchObject({firstName:'Dukens',phone:'+50937050210',phoneCountryCode:'HT',phoneVerifiedAt:null,rechargeRestricted:true});
+  await repo.updateProfile(customer.id,customer.authVersion,{phone:customer.phone!});
+  await expect(service.confirm(customer.id,'phone',challenge.challengeId,send.mock.calls[0][2])).rejects.toMatchObject({code:'VERIFICATION_CODE_INVALID'});
+});
+it('name-only profile edits preserve verified phone and duplicate updates roll back atomically',async()=>{
+  const {customer}=await fixture(); const other=await fixture();
+  const repo=new FlupFlapIdentityRepository(prisma);const verified=new Date();
+  await prisma.flupFlapCustomer.update({where:{id:customer.id},data:{phoneVerifiedAt:verified}});
+  expect((await repo.updateProfile(customer.id,0,{lastName:'Bal',phone:customer.phone!}))!.phoneVerifiedAt).toEqual(verified);
+  await expect(repo.updateProfile(customer.id,0,{lastName:'Wrong',phone:other.customer.phone!})).rejects.toMatchObject({code:'P2002'});
+  expect(await prisma.flupFlapCustomer.findUnique({where:{id:customer.id}})).toMatchObject({lastName:'Bal',phone:customer.phone,phoneVerifiedAt:verified});
 });

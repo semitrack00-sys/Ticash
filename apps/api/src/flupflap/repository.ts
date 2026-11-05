@@ -26,6 +26,29 @@ export class FlupFlapIdentityRepository {
     const customer = await this.customer(id); if (!customer) throw new Error('Customer unavailable');
     const updated = { ...customer, ...input, updatedAt: new Date() }; this.customers.set(id, updated); return updated;
   }
+  async updateProfile(id: string, authVersion: number, input: {firstName?: string; lastName?: string; phone?: string; countryCode?: string}) {
+    const apply = (customer: FlupFlapCustomer) => ({...input,
+      ...(input.phone !== undefined && input.phone !== customer.phone
+        ? {phoneVerifiedAt: null, phoneCountryCode: customerPhoneCountry(input.phone)} : {})});
+    const allowed = (customer: FlupFlapCustomer | null) => customer && customer.status === 'ACTIVE' && !customer.guestExpiresAt && customer.authVersion === authVersion;
+    if (this.db) return this.db.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "FlupFlapCustomer" WHERE id = ${id} FOR UPDATE`;
+      const customer = await tx.flupFlapCustomer.findUnique({where:{id}});
+      if (!allowed(customer)) return null;
+      if (input.phone !== undefined && input.phone !== customer!.phone) {
+        await tx.flupFlapVerificationChallenge.updateMany({where:{customerId:id,channel:'phone',consumedAt:null},data:{consumedAt:new Date()}});
+      }
+      return tx.flupFlapCustomer.update({where:{id},data:apply(customer!)});
+    });
+    const customer = this.customers.get(id) ?? null;
+    if (!allowed(customer)) return null;
+    if (input.phone && [...this.customers.values()].some(c => c.id !== id && c.phone === input.phone)) {
+      throw Object.assign(new Error('Duplicate identity'), {code:'P2002'});
+    }
+    const updated = {...customer!,...apply(customer!),updatedAt:new Date()};
+    this.customers.set(id,updated);
+    return updated;
+  }
   async devices(id: string) {
     if (!this.db) return [];
     return this.db.flupFlapDevice.findMany({ where: { customerId: id }, orderBy: { lastSeenAt: 'desc' }, take: 100 });

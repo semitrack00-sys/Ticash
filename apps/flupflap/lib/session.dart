@@ -242,6 +242,20 @@ class FlupFlapSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateProfile({required String firstName, required String lastName,
+      required String phone}) async {
+    if (!authenticated || guest) throw StateError('Registered account required');
+    final epoch = _epoch;
+    await refresh();
+    if (epoch != _epoch || !authenticated || guest) throw StateError('Session changed');
+    final response = await dio.patch('/flupflap/auth/me', data: {
+      'firstName': firstName.trim(), 'lastName': lastName.trim(), 'phone': phone.trim(),
+    }, options: Options(extra: {'expectedSessionEpoch': epoch}));
+    if (epoch != _epoch || !authenticated) throw StateError('Session changed');
+    user = Map<String, dynamic>.from((response.data as Map)['user'] as Map);
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     _loggingOut = true;
     _epoch++;

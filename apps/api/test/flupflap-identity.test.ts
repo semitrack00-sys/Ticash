@@ -38,6 +38,30 @@ const quoteInput={countryCode:'JM',phone:'+18765551234',operatorId:77,productId:
 describe('FlupFlap identity and shared recharge isolation',()=>{
  beforeEach(resetStore);
  afterEach(() => vi.unstubAllEnvs());
+ it('updates only the signed-in profile and persists names and international phone', async()=>{
+  const {app,identities}=setup(); const a=await signup(app); const b=await signup(app,'b');
+  const changed=await request(app).patch(root+'/auth/me').set(headers(a.accessToken))
+   .send({firstName:'  Dukens  ',lastName:'Bal',phone:'+17755550123'}).expect(200);
+  expect(changed.body.user).toMatchObject({id:a.user.id,firstName:'Dukens',lastName:'Bal',phone:'+17755550123',phoneVerified:false});
+  expect(await identities.customer(b.user.id)).toMatchObject({firstName:'Test',lastName:'B'});
+  const fresh=await request(app).get(root+'/auth/me').set(headers(a.accessToken)).expect(200);
+  expect(fresh.body.user.phone).toBe('+17755550123');
+  for(const input of [{firstName:''},{phone:'7755550123'},{email:'other@example.test'},{rechargeRestricted:false},{id:b.user.id},{}]) {
+   await request(app).patch(root+'/auth/me').set(headers(a.accessToken)).send(input).expect(400);
+  }
+ });
+ it('rejects duplicate phone changes without partially saving a name', async()=>{
+  const {app,identities}=setup(); const a=await signup(app); const b=await signup(app,'b');
+  await request(app).patch(root+'/auth/me').set(headers(a.accessToken))
+   .send({firstName:'Not saved',phone:b.user.phone}).expect(409);
+  expect(await identities.customer(a.user.id)).toMatchObject({firstName:'Test',phone:a.user.phone});
+ });
+ it('does not allow stale sessions or guests to modify profile identity', async()=>{
+  const {app,identities}=setup(); const a=await signup(app);
+  expect(await identities.updateProfile(a.user.id,99,{firstName:'Stale'})).toBeNull();
+  const guest=await legacyGuest(identities);
+  await request(app).patch(root+'/auth/me').set(headers(guest.accessToken)).send({firstName:'Guest'}).expect(403);
+ });
  it('reports unavailable password reset equally for existing and unknown identities', async () => {
   const sendPasswordReset=vi.fn();
   const {app}=setup({passwordResetEmailService:{configured:false,sendPasswordReset}});

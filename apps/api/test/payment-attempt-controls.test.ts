@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PrismaClient } from '@prisma/client';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { reviewDeletedCardLink } from '../src/topup/card-link-review.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
@@ -39,7 +40,31 @@ function event(transactionId:string, charge=randomUUID(), card='fixture-card', c
   return verifyStripeEvent(raw,`t=${t},v1=${signature}`,'fixture-secret');
 }
 async function save(e:ReturnType<typeof event>) {return repo.registerPaymentEvent(e.eventId,e.payloadHash,e.transactionId,e.attempt);}
-const safe={chargeId:'ch_safe',fingerprint:'safe-card',risk:'normal',authentication:'authenticated',postalCodeCheck:'pass',cvcCheck:'pass',paymentType:'card',review:false,disputed:false,refunded:false};
+const safe={chargeId:'ch_safe',fingerprint:'safe-card',risk:'normal',authentication:'authenticated',streetCheck:'pass',postalCodeCheck:'pass',cvcCheck:'pass',paymentType:'card',review:false,disputed:false,refunded:false};
+
+it('reviews a deleted card association in storage without replaying a refunded order',async()=>{
+  const current=await buyer(),old=await buyer();
+  const staff=await prisma.user.create({data:{email:randomUUID()+'@example.test',passwordHash:'fixture'}});
+  const fingerprint='review-card-'+randomUUID();
+  const hashed=createHash('sha256').update(fingerprint).digest('hex');
+  const order=(await repo.reserveTransaction(await input(current.id))).record;
+  await prisma.flupFlapCustomer.update({where:{id:old.id},data:{status:'DELETED',rechargeRestricted:true,email:null,passwordHash:null}});
+  await repo.updateTransaction(order.id,{status:'FAILED',paymentStatus:'REFUNDED',paymentProviderTransactionId:'pi_review'});
+  await prisma.rechargeFraudAssessment.createMany({data:[
+    {transactionId:randomUUID(),customerId:old.id,fingerprint:hashed,chargeId:'ch_old',risk:'normal',reason:'PAYMENT_CARD_CHECK_FAILED'},
+    {transactionId:order.id,customerId:current.id,fingerprint:hashed,chargeId:'ch_review',risk:'normal',reason:'LINKED_ACCOUNT_REVIEW'},
+  ]});
+  const stripe={fraudEvidence:vi.fn().mockResolvedValue({...safe,fingerprint,chargeId:'ch_review',refunded:true})};
+  const next=(await repo.reserveTransaction(await input(current.id))).record;
+  const gate=createRechargeFraudGate(prisma,stripe as never);
+  await reviewDeletedCardLink(prisma,stripe as never,order.id,old.id,staff.id,'Verified ownership and current Stripe issuer checks.',true);
+  stripe.fraudEvidence.mockResolvedValue({...safe,fingerprint,chargeId:'ch_next',refunded:false});
+  expect(await gate(next)).toBeUndefined();
+  expect(await repo.getTransactionById(order.id)).toMatchObject({status:'FAILED',paymentStatus:'REFUNDED'});
+  expect(await prisma.flupFlapCustomer.findUnique({where:{id:old.id}})).toMatchObject({status:'DELETED',rechargeRestricted:true});
+  await reviewDeletedCardLink(prisma,undefined,order.id,old.id,staff.id,'Revoke the scoped association approval for regression testing.',false);
+  expect(await gate(next)).toBe('LINKED_ACCOUNT_REVIEW');
+});
 it('deduplicates charge attempts, blocks new reservations without consuming quotes, and expires the cooldown',async()=>{
   const c=await buyer(),r=(await repo.reserveTransaction(await input(c.id))).record;
   const first=event(r.id,'ch_first');await save(first);await save(first);await save(event(r.id,'ch_first'));

@@ -13,9 +13,19 @@ export function createFlupFlapAdmin(options:{authenticate:RequestHandler; permis
  identities:FlupFlapIdentityRepository; recharge:MobileTopUpRepository; service:MobileTopUpService;
  audit:(actor:string|undefined,action:string,entity:string,id?:string,metadata?:Record<string,unknown>)=>Promise<void>;
  auditRows:()=>Promise<unknown[]>;
+ reviewDeletedCardLink?:(id:string,linkedCustomerId:string,actor:string,reason:string,approve:boolean)=>Promise<unknown>;
 }) {
  const router=express.Router();router.use(options.authenticate,options.permission('recharge.view'));
  const protect=(p:AdminPermission)=>options.permission(p);
+ router.post('/transactions/:id/deleted-card-link-review',protect('recharge.cards.review'),async(req:AdminRequest,res)=>{
+  res.set('Cache-Control','no-store');
+  const id=z.uuid().parse(req.params.id);
+  const input=z.object({linkedCustomerId:z.uuid(),reason:z.string().trim().min(20).max(500),
+   confirm:z.enum(['APPROVE_DELETED_CARD_LINK','REVOKE_DELETED_CARD_LINK'])}).strict().parse(req.body);
+  if(!req.userId){res.status(401).json({code:'AUTH_REQUIRED'});return;}
+  if(!options.reviewDeletedCardLink){res.status(503).json({code:'CARD_LINK_REVIEW_UNAVAILABLE'});return;}
+  res.json(await options.reviewDeletedCardLink(id,input.linkedCustomerId,req.userId,input.reason,input.confirm==='APPROVE_DELETED_CARD_LINK'));
+ });
  const publicTransaction=(t:MobileTopUpTransactionRecord)=>({id:t.id,customerId:flupFlapCustomerId(t.userId),countryCode:t.countryCode,operatorName:t.operatorName,productName:t.productName,provider:t.provider,status:t.status,paymentStatus:t.paymentStatus,reviewRequired:t.failureCode==='FRAUD_REVIEW_REQUIRED',reviewReason:t.failureCode==='FRAUD_REVIEW_REQUIRED'?t.paymentRecoveryCode:undefined,amountUsd:t.providerAmount,feeUsd:t.feeUsd,totalUsd:t.totalChargeUsd,createdAt:t.createdAt,receiverQuote:t.receiverQuote,deliveredValue:t.deliveredValue,deliveredCurrency:t.deliveredCurrency,receiverDiscrepancy:t.receiverDiscrepancy});
  const page=z.coerce.number().int().min(0).max(100000).default(0);
  router.get('/dashboard',async(_req,res)=>res.json({domain:'FLUPFLAP',...options.service.availability()}));

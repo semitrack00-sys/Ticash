@@ -118,20 +118,19 @@ describe.skipIf(!url)('fraud controls across independent PostgreSQL connections'
       expect((await clients[0]!.mobileTopUpQuote.findUniqueOrThrow({where:{id:inputs[i]!.quoteId}})).consumedAt).toBeNull();
     }
   });
-  it('holds all but the first concurrent account using the same card',async()=>{
+  it('allows verified cards shared by unrestricted accounts without requiring 3DS',async()=>{
     const buyers=await Promise.all(clients.map(()=>customer()));
     const fingerprint=randomUUID();
-    const stripe={fraudEvidence:async()=>({chargeId:'ch_fixture',fingerprint,postalCodeCheck:'pass',cvcCheck:'pass',risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})};
+    const stripe={fraudEvidence:async()=>({chargeId:'ch_fixture',fingerprint,streetCheck:'pass',postalCodeCheck:'pass',cvcCheck:'pass',risk:'normal',paymentType:'card',review:false,disputed:false,refunded:false})};
     const results=await Promise.all(buyers.map((c,i)=>createRechargeFraudGate(clients[i]!,stripe as never)({
       id:randomUUID(),userId:'flupflap:'+c.id,paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_fixture',
     } as never)));
-    expect(results.filter(r=>r===undefined)).toHaveLength(1);
-    expect(results.filter(r=>r==='SHARED_CARD_REVIEW')).toHaveLength(5);
+    expect(results.every(r=>r===undefined)).toBe(true);
   });
   it('serializes distinct paid cards across two accounts sharing an installation',async()=>{
     const buyers=await Promise.all([customer(),customer()]);const device=randomUUID().replaceAll('-','').repeat(2);
     for(const c of buyers)await checkRechargeDevice(clients[0]!,c.id,device);
-    const stripe=(fingerprint:string)=>({fraudEvidence:async()=>({chargeId:'ch_'+fingerprint,fingerprint,postalCodeCheck:'pass',cvcCheck:'pass',risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})});
+    const stripe=(fingerprint:string)=>({fraudEvidence:async()=>({chargeId:'ch_'+fingerprint,fingerprint,streetCheck:'pass',postalCodeCheck:'pass',cvcCheck:'pass',risk:'normal',authentication:'authenticated',paymentType:'card',review:false,disputed:false,refunded:false})});
     const record=(id:string)=>({id:randomUUID(),userId:'flupflap:'+id,paymentProvider:'STRIPE',paymentProviderTransactionId:'pi_fixture'});
     expect(await createRechargeFraudGate(clients[0]!,stripe(randomUUID()) as never)(record(buyers[0]!.id) as never)).toBeUndefined();
     const results=await Promise.all(buyers.map((c,i)=>createRechargeFraudGate(clients[i]!,stripe(randomUUID()) as never)(record(c.id) as never)));

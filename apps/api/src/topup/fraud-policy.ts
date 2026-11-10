@@ -57,7 +57,7 @@ export function paymentReviewReason(e: PaymentEvidence): string | undefined {
   // An issuer may authorize even when AVS/CVC fails. Normal risk and 3DS
   // authentication must never override missing, unavailable or non-passing verification.
   if (e.postalCodeCheck !== 'pass' || e.cvcCheck !== 'pass') return 'PAYMENT_CARD_CHECK_FAILED';
-  if (e.streetCheck === 'fail') return 'PAYMENT_STREET_CHECK_FAILED';
+  if (e.streetCheck !== 'pass') return 'PAYMENT_STREET_CHECK_FAILED';
   if (!e.fingerprint) return 'PAYMENT_AUTHENTICATION_REVIEW';
   // Automatic 3DS can legitimately complete without authentication. Stripe's
   // succeeded/captured payment check still enforces issuer-required actions.

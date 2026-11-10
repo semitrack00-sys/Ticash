@@ -27,8 +27,8 @@ function fixture(checks?: Record<string, unknown>, authentication: string | null
 }
 
 describe('issuer verification results from Stripe to fulfillment', () => {
-  it('accepts a successful normal-risk payment without optional 3DS only after CVC and ZIP pass', async () => {
-    const {stripe} = fixture({address_postal_code_check:'pass', cvc_check:'pass'}, null);
+  it('accepts a successful normal-risk payment without optional 3DS only after CVC, ZIP and street pass', async () => {
+    const {stripe} = fixture({address_line1_check:'pass',address_postal_code_check:'pass', cvc_check:'pass'}, null);
     const evidence = await stripe.fraudEvidence('pi_fixture', 'tx');
     expect(evidence.authentication).toBeUndefined();
     expect(paymentReviewReason(evidence)).toBeUndefined();
@@ -37,7 +37,7 @@ describe('issuer verification results from Stripe to fulfillment', () => {
   });
 
   it.each(['requires_action', 'requires_payment_method', 'processing'])('never treats %s as a paid no-3DS order', async status => {
-    const {stripe} = fixture({address_postal_code_check:'pass', cvc_check:'pass'}, null, status);
+    const {stripe} = fixture({address_line1_check:'pass',address_postal_code_check:'pass', cvc_check:'pass'}, null, status);
     await expect(stripe.fraudEvidence('pi_fixture', 'tx')).rejects.toMatchObject({code:'PAYMENT_RISK_UNAVAILABLE'});
   });
 
@@ -46,7 +46,7 @@ describe('issuer verification results from Stripe to fulfillment', () => {
       id:'pi_fixture', status:'succeeded', livemode:true, metadata:{transactionId:'tx'},
       latest_charge:{id:'ch_fixture', paid:true, captured:true, outcome:{risk_level:'normal'},
         payment_method_details:{type:'card',card:{fingerprint:'fixture-card',three_d_secure:{},
-          checks:{address_postal_code_check:'pass',cvc_check:'pass'}}}},
+          checks:{address_line1_check:'pass',address_postal_code_check:'pass',cvc_check:'pass'}}}},
     }), {status:200}));
     const stripe = new StripeHostedCheckoutProvider(config, transport);
     const evidence = await stripe.fraudEvidence('pi_fixture','tx');
@@ -57,6 +57,8 @@ describe('issuer verification results from Stripe to fulfillment', () => {
   it.each([
     {address_postal_code_check:'fail', cvc_check:'pass'},
     {address_postal_code_check:'pass', cvc_check:'pass', address_line1_check:'fail'},
+    {address_postal_code_check:'pass', cvc_check:'pass', address_line1_check:'unavailable'},
+    {address_postal_code_check:'pass', cvc_check:'pass'},
     {address_postal_code_check:'pass', cvc_check:'fail'},
     {address_postal_code_check:'unavailable', cvc_check:'pass'},
     {address_postal_code_check:'pass', cvc_check:'unchecked'},
@@ -80,8 +82,9 @@ describe('issuer verification results from Stripe to fulfillment', () => {
 
     await service.fulfillPaidRecharge('tx');
     await service.fulfillPaidRecharge('tx');
-    expect(record).toMatchObject({status:'PENDING', paymentStatus:'CAPTURED', failureCode:'FRAUD_REVIEW_REQUIRED', paymentRecoveryCode:(checks.address_line1_check === 'fail' ? 'PAYMENT_STREET_CHECK_FAILED' : 'PAYMENT_CARD_CHECK_FAILED')});
-    expect(assessments.upsert).toHaveBeenCalledWith(expect.objectContaining({create:expect.objectContaining({reason:(checks.address_line1_check === 'fail' ? 'PAYMENT_STREET_CHECK_FAILED' : 'PAYMENT_CARD_CHECK_FAILED')})}));
+    const expectedReason=checks.address_postal_code_check==='pass' && checks.cvc_check==='pass' ? 'PAYMENT_STREET_CHECK_FAILED' : 'PAYMENT_CARD_CHECK_FAILED';
+    expect(record).toMatchObject({status:'PENDING', paymentStatus:'CAPTURED', failureCode:'FRAUD_REVIEW_REQUIRED', paymentRecoveryCode:expectedReason});
+    expect(assessments.upsert).toHaveBeenCalledWith(expect.objectContaining({create:expect.objectContaining({reason:expectedReason})}));
     expect(transport).toHaveBeenCalledOnce();
     expect(submit).not.toHaveBeenCalled(); expect(claim).not.toHaveBeenCalled();
 

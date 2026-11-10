@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import type { MobileTopUpTransactionRecord } from './repository.js';
 import type { StripeHostedCheckoutProvider } from './stripe-provider.js';
 import { paymentReviewReason } from './fraud-policy.js';
+import { unreviewedCardLinks } from './card-link-review.js';
 
 export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedCheckoutProvider) {
   return async (record: MobileTopUpTransactionRecord): Promise<string | undefined> => {
@@ -37,8 +38,9 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
       const linked = fingerprint ? await tx.rechargeFraudAssessment.findMany({ where: {
         fingerprint, customerId: { not: customerId }, createdAt: { gte: new Date(Date.now() - 30 * 86400000) },
       }, select: { customerId: true } }) : [];
-      const restrictedLink = linked.length > 0 && await tx.flupFlapCustomer.findFirst({ where: {
-        id: { in: linked.map(r => r.customerId) }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
+      const unresolvedLinks = fingerprint ? await unreviewedCardLinks(tx, customerId, fingerprint, linked.map(r => r.customerId)) : [];
+      const restrictedLink = unresolvedLinks.length > 0 && await tx.flupFlapCustomer.findFirst({ where: {
+        id: { in: unresolvedLinks }, OR: [{ rechargeRestricted: true }, { status: { not: 'ACTIVE' } }],
       }, select: { id: true } });
       const attemptReason = await paymentAttemptReviewReason(tx, customerId, new Date(), fingerprint ?? undefined, [], true);
       const recipientOrders = record.recipientPhone ? await tx.mobileTopUpTransaction.findMany({ where: {
@@ -48,7 +50,8 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
       const recipientBuyers = new Set([customerId, ...recipientOrders.map(r => r.flupFlapCustomerId!)]);
       const reason = paymentReviewReason(evidence) ?? attemptReason ??
         (!reviewed && recipientBuyers.size >= 3 ? 'SHARED_RECIPIENT_REVIEW' : undefined) ?? (restrictedLink ? 'LINKED_ACCOUNT_REVIEW' : undefined) ??
-        (!reviewed && linked.length > 0 ? 'SHARED_CARD_REVIEW' : undefined) ??
+        // Sharing with an unrestricted account alone does not reject a card.
+        // Fresh issuer/Radar checks, restricted links and velocity still apply.
         (!reviewed && cards.size > 2 ? 'CARD_SWITCHING_REVIEW' : undefined);
       const data = { customerId, fingerprint, chargeId: evidence.chargeId, risk: evidence.risk,
         authentication: evidence.authentication ?? null, reason: reason ?? null };

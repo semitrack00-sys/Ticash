@@ -4,7 +4,7 @@ import { approveRechargeReview, createRechargeFraudGate } from '../src/topup/fra
 import { MobileTopUpService } from '../src/topup/service.js';
 
 const now = new Date('2026-10-24T12:00:00Z');
-const safe: PaymentEvidence = { postalCodeCheck:'pass', cvcCheck:'pass', chargeId: 'ch_test', fingerprint: 'card', risk: 'normal', authentication: 'authenticated', paymentType: 'card', review: false, disputed: false, refunded: false };
+const safe: PaymentEvidence = { streetCheck:'pass', postalCodeCheck:'pass', cvcCheck:'pass', chargeId: 'ch_test', fingerprint: 'card', risk: 'normal', authentication: 'authenticated', paymentType: 'card', review: false, disputed: false, refunded: false };
 describe('recharge purchase limits', () => {
   it.each([true, false])('enforces $100 per order and $200 per rolling day (new account: %s)', newAccount => {
     const earlier = [{ createdAt: '2026-10-24T10:00:00Z', totalChargeUsd: 100, paymentStatus: 'CAPTURED' }];
@@ -88,9 +88,8 @@ describe('payment risk decision', () => {
   it.each([{risk:'elevated'}, {risk:'highest'}, {risk:'unknown'}, {review:true}, {disputed:true}, {refunded:true}, {authentication:'attempt_acknowledged'}, {fingerprint:undefined}, {paymentType:'link'}])('holds uncertain evidence %j', patch => {
     expect(paymentReviewReason({...safe, ...patch})).toBeTruthy();
   });
-  it('holds explicit street failures but accepts unsupported street checks', () => {
-    expect(paymentReviewReason({...safe, streetCheck:'fail'})).toBe('PAYMENT_STREET_CHECK_FAILED');
-    expect(paymentReviewReason({...safe, streetCheck:'unavailable'})).toBeUndefined();
+  it.each(['fail','unavailable','unchecked','not_provided',undefined,''])('rejects non-passing street check %s', streetCheck => {
+    expect(paymentReviewReason({...safe, streetCheck})).toBe('PAYMENT_STREET_CHECK_FAILED');
   });
   it('holds network-downgraded authentication without confusing card networks', () => {
     expect(paymentReviewReason({...safe, cardNetwork:'visa', responseEci:'07'})).toBe('PAYMENT_AUTHENTICATION_REVIEW');
@@ -129,11 +128,12 @@ describe('staff review safeguards', () => {
       rechargeFraudAssessment:assessment};
     return {tx,db:{...tx,$transaction:async(fn:(t:typeof tx)=>unknown)=>fn(tx)},stripe:{fraudEvidence:vi.fn().mockResolvedValue(evidence)}};
   }
-  it('holds a shared card on a new account and keeps restricted links held after staff review',async()=>{
+  it('allows a verified shared card without requiring 3DS and keeps restricted links held',async()=>{
     const {db,stripe,tx}=fixture();
     tx.rechargeFraudAssessment.findMany.mockResolvedValue([{customerId:'other-buyer'}]);
+    stripe.fraudEvidence.mockResolvedValue({...safe,authentication:undefined});
     const gate=createRechargeFraudGate(db as never,stripe as never);
-    expect(await gate(record as never)).toBe('SHARED_CARD_REVIEW');
+    expect(await gate(record as never)).toBeUndefined();
     await approveRechargeReview(db as never,stripe as never,record as never,'staff','Reviewed legitimate family sharing');
     const approved=tx.rechargeFraudAssessment.upsert.mock.calls.at(-1)![0].create;
     tx.rechargeFraudAssessment.findUnique.mockResolvedValue(approved);

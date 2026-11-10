@@ -50,7 +50,8 @@ export function createRechargeFraudGate(db: PrismaClient, stripe?: StripeHostedC
       const recipientBuyers = new Set([customerId, ...recipientOrders.map(r => r.flupFlapCustomerId!)]);
       const reason = paymentReviewReason(evidence) ?? attemptReason ??
         (!reviewed && recipientBuyers.size >= 3 ? 'SHARED_RECIPIENT_REVIEW' : undefined) ?? (restrictedLink ? 'LINKED_ACCOUNT_REVIEW' : undefined) ??
-        (!reviewed && unresolvedLinks.length > 0 ? 'SHARED_CARD_REVIEW' : undefined) ??
+        // Sharing with an unrestricted account alone does not reject a card.
+        // Fresh issuer/Radar checks, restricted links and velocity still apply.
         (!reviewed && cards.size > 2 ? 'CARD_SWITCHING_REVIEW' : undefined);
       const data = { customerId, fingerprint, chargeId: evidence.chargeId, risk: evidence.risk,
         authentication: evidence.authentication ?? null, reason: reason ?? null };

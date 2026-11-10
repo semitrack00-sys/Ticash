@@ -40,7 +40,7 @@ function event(transactionId:string, charge=randomUUID(), card='fixture-card', c
   return verifyStripeEvent(raw,`t=${t},v1=${signature}`,'fixture-secret');
 }
 async function save(e:ReturnType<typeof event>) {return repo.registerPaymentEvent(e.eventId,e.payloadHash,e.transactionId,e.attempt);}
-const safe={chargeId:'ch_safe',fingerprint:'safe-card',risk:'normal',authentication:'authenticated',postalCodeCheck:'pass',cvcCheck:'pass',paymentType:'card',review:false,disputed:false,refunded:false};
+const safe={chargeId:'ch_safe',fingerprint:'safe-card',risk:'normal',authentication:'authenticated',streetCheck:'pass',postalCodeCheck:'pass',cvcCheck:'pass',paymentType:'card',review:false,disputed:false,refunded:false};
 
 it('reviews a deleted card association in storage without replaying a refunded order',async()=>{
   const current=await buyer(),old=await buyer();

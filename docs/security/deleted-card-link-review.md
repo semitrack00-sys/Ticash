@@ -1,5 +1,22 @@
 # Recovering a legitimate buyer from a deleted-account card link
 
+## Card acceptance policy
+
+Customers may use different supported cards within the existing two-card daily
+limit. Sharing a card between unrestricted accounts alone no longer rejects it.
+Every new payment must have normal Stripe risk, no open review/dispute/refund,
+and passing CVC, postal-code and street-address checks. Missing or unsupported
+checks are rejected too; this intentionally excludes issuers that cannot verify
+the street address. Billing name/email are collected information, not issuer
+proof of card ownership. Existing email-format validation remains; no email
+verification link or code is added. Existing automatic 3DS behavior remains,
+with no extra challenge requirement. Issuer-required authentication cannot be
+bypassed. Restricted/deleted links and all other purchase limits still apply.
+
+Rejected payments must not reach the supplier. The existing confirmed refund
+workflow handles captured, undelivered orders; no unconfirmed refund is shown as
+completed. Deploying this policy does not replay old declined or refunded orders.
+
 Deleting an account marks it restricted and retains its payment evidence. Reusing
 the same card on a different account can therefore produce `LINKED_ACCOUNT_REVIEW`
 even when the new Stripe payment is normal risk and all issuer checks pass. This

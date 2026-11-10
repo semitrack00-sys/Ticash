@@ -3,6 +3,7 @@ import { installProxyDiagnostics } from './proxy-diagnostics.js';
 import { fraudAlertConfig, FlupFlapFraudAlerts } from './flupflap/fraud-alerts.js';
 import { createVerificationRouter, FlupFlapVerification, verificationDelivery } from './flupflap/verification.js';
 import { createRechargeFraudGate, approveRechargeReview } from './topup/fraud-gate.js';
+import { reviewDeletedCardLink } from './topup/card-link-review.js';
 import { FlupFlapStores } from './flupflap/stores.js';
 import { createStoresRouter, createStoresAdminRouter } from './flupflap/stores-router.js';
 import { createAppDownloadsRouter } from './flupflap/app-downloads-router.js';
@@ -1361,6 +1362,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use('/api/admin/flupflap', createFlupFlapAdmin({
     authenticate, permission, identities:flupFlapRepository, recharge:mobileTopUpRepository,
     service:mobileTopUpService, audit:recordAudit,
+    reviewDeletedCardLink:databaseEnabled ? (id,linked,actor,note,approve)=>reviewDeletedCardLink(prisma,mobileTopUpStripeProvider,id,linked,actor,note,approve) : undefined,
     auditRows:async()=>databaseEnabled ? prisma.auditLog.findMany({
       where:{OR:[{flupFlapCustomerId:{not:null}},{action:{startsWith:'FLUPFLAP_'}}]},
       select:{id:true,action:true,entity:true,entityId:true,createdAt:true,metadata:true},orderBy:{createdAt:'desc'},take:100,
